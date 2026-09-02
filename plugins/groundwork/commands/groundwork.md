@@ -3,7 +3,19 @@ description: Parallel-subagent recon on a problem, then discuss the approach and
 argument-hint: "<problem description with file paths, GitLab issues, links, etc.>"
 ---
 
-Then invoke the `using-superpowers` skill. Then tackle the request below.
+## Required dependency — hard gate
+
+Groundwork is an extension/wrapper for `obra/superpowers`. Superpowers must be installed before this command runs.
+
+Before starting Phase 1, confirm the required Superpowers skills are available. Groundwork depends on `brainstorming` for Phase 2 and `writing-plans` for Phase 3, and hands accepted plans off to Superpowers execution workflows.
+
+If the required Superpowers skills are unavailable:
+
+- Stop immediately.
+- Tell the user Groundwork requires `obra/superpowers` and that they should install it with `/plugin install superpowers@claude-plugins-official`.
+- Do NOT substitute another skill or continue with a reduced workflow.
+
+Do not invoke `using-superpowers` as part of Groundwork. The dependency only needs to be installed and available.
 
 ## Problem
 
