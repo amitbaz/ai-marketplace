@@ -6,7 +6,7 @@ A personal Claude Code plugin marketplace for reusable development workflows, ag
 
 | Plugin | Version | Description |
 | --- | --- | --- |
-| [groundwork](./plugins/groundwork) | 1.1.0 | Parallel-subagent reconnaissance on a problem, followed by discussion and planning before committing to code. |
+| [groundwork](./plugins/groundwork) | 1.2.0 | Parallel-subagent reconnaissance on a problem, followed by discussion and planning before committing to code. |
 
 ## Installation
 
@@ -44,7 +44,7 @@ Example:
 /groundwork Investigate why the customers table in dashboard does not scroll.
 ```
 
-For the full workflow, available flags, and recon-agent details, see the [Groundwork README](./plugins/groundwork/README.md).
+For the full workflow, built-in engineering discipline, and recon-agent details, see the [Groundwork README](./plugins/groundwork/README.md).
 
 ## Repository Structure
 
