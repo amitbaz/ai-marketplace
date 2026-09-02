@@ -1,6 +1,6 @@
 {
   "name": "groundwork",
   "description": "Parallel-subagent recon on a problem, then discuss the approach and gray areas before committing to code.",
-  "version": "1.1.0",
+  "version": "1.2.0",
   "keywords": ["recon", "parallel", "brainstorming"]
 }
