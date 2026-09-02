@@ -1,19 +1,13 @@
 ---
 description: Parallel-subagent recon on a problem, then discuss the approach and gray areas before committing to code.
-argument-hint: "[--karpathy] <problem description with file paths, GitLab issues, links, etc.>"
+argument-hint: "<problem description with file paths, GitLab issues, links, etc.>"
 ---
-
-## Flag handling (do this FIRST, before anything else)
-
-Scan `$ARGUMENTS` for these flags. Strip them from the problem text before treating the rest as the problem description. Record which flags were set — they fire at specific phases below, NOT all at the top.
-
-- `--karpathy` → DO NOT invoke yet. `karpathy-guidelines` biases toward surgical/minimal code and will collapse the brainstorm phase if loaded early. Defer until Phase 3 (see below). If not available there, silently skip.
 
 Then invoke the `using-superpowers` skill. Then tackle the request below.
 
 ## Problem
 
-$ARGUMENTS (with flags stripped)
+$ARGUMENTS
 
 ## Phase 1 — Deep research (parallel subagents)
 
@@ -123,16 +117,75 @@ That means:
 
 Do not write code in this phase. Do not start a plan file. Wait for the user to redirect, confirm, or answer the gray areas.
 
+### Engineering discipline
+
+Groundwork should produce a plan that is focused, proportionate, and easy to verify. Apply the following discipline when moving from research into an approach and implementation plan.
+
+#### Make uncertainty visible
+
+Do not quietly fill gaps in the research.
+
+- Separate verified facts from assumptions.
+- When evidence supports more than one interpretation, show the alternatives.
+- Call out missing information when it could materially change the approach.
+- Resolve uncertainty from the available evidence when possible; ask the user only when a real product or engineering decision remains.
+- Push back when the requested direction conflicts with what the research shows.
+
+The goal is not to eliminate every unknown. It is to prevent hidden assumptions from becoming implementation decisions.
+
+#### Prefer the smallest complete solution
+
+Solve the problem that was researched, not the larger problem that could theoretically exist around it.
+
+- Do not add capabilities that are unrelated to the stated goal.
+- Avoid introducing abstractions solely for possible future reuse.
+- Prefer existing project patterns when they solve the problem adequately.
+- Do not add configuration, indirection, or defensive machinery without a concrete need.
+- If two approaches solve the same problem, prefer the one with fewer moving parts unless the more complex option buys something the user actually needs.
+
+Small does not mean crude. The solution still needs to handle the real cases uncovered during recon.
+
+#### Keep the change boundary tight
+
+The final plan should make it obvious why each proposed change belongs.
+
+- Touch the parts of the system required to achieve the goal.
+- Do not turn the task into an unrelated cleanup or refactor.
+- Preserve existing conventions unless changing them is necessary for the solution.
+- If the work exposes nearby technical debt, mention it separately rather than silently absorbing it into scope.
+- Include cleanup that is directly caused by the proposed change, such as imports, helpers, or paths that would become unused.
+
+A useful check: for every planned modification, you should be able to explain how it contributes to the agreed goal.
+
+#### Plan around observable outcomes
+
+A plan is not complete when it only says what to edit. It should also say how we will know the change worked.
+
+For each meaningful step:
+
+1. Describe the behavior or condition the step establishes.
+2. Identify the relevant implementation area.
+3. Define how that result will be verified.
+
+Prefer concrete checks such as tests, reproduced behavior, build/type checks, API responses, or other observable evidence.
+
+For bug fixes, the plan should reproduce the failure before fixing it whenever practical. For refactors, preserve existing behavior with verification before and after. For new behavior, define the expected result clearly enough that implementation can be judged against it.
+
+#### Do not let this discipline collapse exploration
+
+These constraints apply when converging on an approach and writing the implementation plan.
+
+They must not narrow Phase 1 research or prevent Phase 2 from exploring legitimate alternatives. Groundwork should first understand the problem broadly enough to make a good decision, then use this discipline to keep the chosen solution precise and restrained.
+
 ## Phase 3 — Plan (after user confirms approach)
 
 Trigger condition: user has answered the gray areas, accepted the approach, or otherwise greenlit moving forward. Do NOT enter Phase 3 on the same turn as Phase 2.
 
 When entering Phase 3:
 
-1. **If `--karpathy` flag was set**, invoke `andrej-karpathy-skills:karpathy-guidelines` NOW via the Skill tool. It governs code-quality discipline during planning + execution. Silently skip if unavailable.
-2. **Invoke `writing-plans` skill** via the Skill tool. It enforces structured multi-step plan output before touching code.
-3. Under those skills' framing, produce the plan. Only after the plan is reviewed/accepted do you write code.
-4. **Hand off, don't execute.** groundwork ends at an accepted plan. State the exit explicitly: the user runs `superpowers:subagent-driven-development` (same session) or `superpowers:executing-plans` (parallel session) to build. Do NOT start coding inside groundwork — execution is out of scope by design.
+1. **Invoke `writing-plans` skill** via the Skill tool. It enforces structured multi-step plan output before touching code.
+2. Under that skill's framing, produce the plan. Apply the engineering discipline above so each planned change traces to the agreed goal and includes a concrete verification path.
+3. **Hand off, don't execute.** groundwork ends at an accepted plan. State the exit explicitly: the user runs `superpowers:subagent-driven-development` (same session) or `superpowers:executing-plans` (parallel session) to build. Do NOT start coding inside groundwork — execution is out of scope by design.
 
 ## Rules
 
@@ -143,4 +196,4 @@ When entering Phase 3:
 - Memory hits are claims about the past, not the present — verify against current code before recommending.
 - Phase 2 is written for someone unfamiliar with this code. Paths are receipts at the end of a sentence, never the sentence itself. Gloss every internal name on first use.
 - Skill invocations in Phase 2 and Phase 3 are NOT optional narration — call the `Skill` tool with the exact skill name. If you describe the activity without calling the tool, the skill never loads and the phase collapses.
-- `--karpathy` fires at Phase 3 entry, never earlier. Loading it during recon/brainstorm biases the model toward minimal/surgical output and kills divergent exploration.
+- The built-in engineering discipline governs convergence in Phase 2 and all of Phase 3. It must not narrow Phase 1 recon or suppress legitimate alternatives during brainstorming.
