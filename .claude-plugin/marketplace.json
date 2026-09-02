@@ -8,7 +8,7 @@
     {
       "name": "groundwork",
       "source": "./plugins/groundwork",
-      "description": "Parallel-subagent recon on a problem, then discuss the approach and gray areas before committing to code."
+      "description": "Extension for obra/superpowers: parallel-subagent recon, discussion, and planning before committing to code. Requires Superpowers."
     }
   ]
 }

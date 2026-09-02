@@ -6,17 +6,23 @@ A personal Claude Code plugin marketplace for reusable development workflows, ag
 
 | Plugin | Version | Description |
 | --- | --- | --- |
-| [groundwork](./plugins/groundwork) | 1.2.0 | Parallel-subagent reconnaissance on a problem, followed by discussion and planning before committing to code. |
+| [groundwork](./plugins/groundwork) | 1.2.1 | Extension for `obra/superpowers` that adds parallel reconnaissance, discussion, and planning before committing to code. **Requires Superpowers.** |
 
 ## Installation
 
-Add this marketplace to Claude Code:
+Groundwork is built as an extension/wrapper around [`obra/superpowers`](https://github.com/obra/superpowers). Install Superpowers first:
+
+```text
+/plugin install superpowers@claude-plugins-official
+```
+
+Then add this marketplace to Claude Code:
 
 ```text
 /plugin marketplace add amitbaz/ai-marketplace
 ```
 
-Then install a plugin from the marketplace:
+Install Groundwork:
 
 ```text
 /plugin install groundwork@amitbaz
@@ -32,6 +38,8 @@ To refresh the marketplace after updates:
 
 ## Groundwork
 
+Groundwork depends on Superpowers and does not bundle or replace it. If the required Superpowers skills are unavailable, `/groundwork` should stop rather than fall back to a reduced workflow.
+
 Once installed, start a reconnaissance workflow with:
 
 ```text
@@ -44,7 +52,7 @@ Example:
 /groundwork Investigate why the customers table in dashboard does not scroll.
 ```
 
-For the full workflow, built-in engineering discipline, and recon-agent details, see the [Groundwork README](./plugins/groundwork/README.md).
+For the full workflow, dependency details, built-in engineering discipline, and recon-agent details, see the [Groundwork README](./plugins/groundwork/README.md).
 
 ## Repository Structure
 
