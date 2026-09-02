@@ -1,6 +1,6 @@
 ---
 description: Parallel-subagent recon on a problem, then discuss the approach and gray areas before committing to code.
-argument-hint: [--karpathy] <problem description with file paths, GitLab issues, links, etc.>
+argument-hint: "[--karpathy] <problem description with file paths, GitLab issues, links, etc.>"
 ---
 
 ## Flag handling (do this FIRST, before anything else)
