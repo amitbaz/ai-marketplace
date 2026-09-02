@@ -1,52 +1,65 @@
-# AI Plugins Marketplace
+# AI Plugin Marketplace
 
-A personal registry and distribution hub for custom AI assistant plugins and agent workflows.
+A personal Claude Code plugin marketplace for reusable development workflows, agents, and commands.
 
-## Repository Layout
-ai-marketplace/
-├── .claude-plugin/
-│   └── marketplace.json
-├── README.md
-└── groundwork.md
+## Available Plugins
 
-## 1. .claude-plugin/marketplace.json
-{
-  name: amitbaz,
-  owner: {
-    name: Amit Baz
-  },
-  plugins: [
-    {
-      name: groundwork,
-      source: ./,
-      description: Specialized reconnaissance agents and code context tools.
-    }
-  ]
-}
-
-## 2. groundwork.md
----
-name: groundwork
-description: Specialized reconnaissance agents and code context tools for deep project analysis.
-version: 1.0.0
----
-
-# Groundwork Plugin
-
-## Commands
-When the /groundwork command is invoked, execute the reconnaissance workflow to analyze code architecture, context, and external dependencies.
-
-## Reconnaissance Agents
-* recon-code: Analyzes internal code structure, patterns, and logic.
-* recon-context: Gathers structural metadata and environmental context.
-* recon-external: Evaluates external dependencies, APIs, and integrations.
-
-## 3. README.md
-# AI Plugins Marketplace
-
-A personal registry and distribution hub for custom AI assistant plugins and agent workflows.
+| Plugin | Version | Description |
+| --- | --- | --- |
+| [groundwork](./plugins/groundwork) | 1.1.0 | Parallel-subagent reconnaissance on a problem, followed by discussion and planning before committing to code. |
 
 ## Installation
 
+Add this marketplace to Claude Code:
+
+```text
 /plugin marketplace add amitbaz/ai-marketplace
+```
+
+Then install a plugin from the marketplace:
+
+```text
 /plugin install groundwork@amitbaz
+```
+
+Adding the marketplace only registers the catalog. Plugins still need to be installed separately.
+
+To refresh the marketplace after updates:
+
+```text
+/plugin marketplace update amitbaz
+```
+
+## Groundwork
+
+Once installed, start a reconnaissance workflow with:
+
+```text
+/groundwork <problem>
+```
+
+Example:
+
+```text
+/groundwork Investigate why the customers table in dashboard does not scroll.
+```
+
+For the full workflow, available flags, and recon-agent details, see the [Groundwork README](./plugins/groundwork/README.md).
+
+## Repository Structure
+
+```text
+ai-marketplace/
+├── .claude-plugin/
+│   └── marketplace.json
+├── plugins/
+│   └── groundwork/
+│       ├── .claude-plugin/
+│       │   └── plugin.json
+│       ├── agents/
+│       ├── commands/
+│       └── README.md
+└── README.md
+```
+
+The marketplace catalog is defined in `.claude-plugin/marketplace.json`. Each plugin lives under `plugins/` and contains its own manifest and documentation.
