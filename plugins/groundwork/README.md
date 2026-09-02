@@ -6,7 +6,7 @@ Parallel-subagent recon on a problem, then discuss the approach and gray areas b
 
 | Command | Description |
 |---------|-------------|
-| `/groundwork [--karpathy] <problem>` | Three-phase workflow: parallel research → brainstorm/discuss → plan |
+| `/groundwork <problem>` | Three-phase workflow: parallel research → brainstorm/discuss → plan |
 
 ## Quick Start
 
@@ -26,7 +26,20 @@ The command runs a three-phase workflow:
 
 1. **Phase 1 — Deep research.** Spawns parallel recon subagents (read files, map callers, fetch GitHub issues, search project memory, pull library docs). Threads are picked to match the problem — no spawning recon for sources you didn't reference. **Phase 1 is a hard gate:** nothing else happens until every agent has reported.
 2. **Phase 2 — Discuss & brainstorm.** Loads the `brainstorming` skill, then explains the situation in plain language, restates the goal, proposes an approach with tradeoffs, flags gray areas, and asks focused questions.
-3. **Phase 3 — Plan.** Only after you greenlight the approach. Loads `writing-plans` and produces a structured plan before any code is written.
+3. **Phase 3 — Plan.** Only after you greenlight the approach. Loads `writing-plans` and produces a structured, verifiable plan before any code is written.
+
+## Built-in engineering discipline
+
+Groundwork applies its own engineering discipline automatically when converging on an approach and writing the final plan. There is no separate flag or external skill dependency.
+
+The discipline keeps the plan grounded in four principles:
+
+- **Make uncertainty visible** — distinguish verified facts from assumptions and surface decisions that genuinely need user input.
+- **Prefer the smallest complete solution** — solve the researched problem without speculative features, abstractions, or configurability.
+- **Keep the change boundary tight** — every planned modification should trace directly to the agreed goal; unrelated cleanup stays out of scope.
+- **Plan around observable outcomes** — meaningful steps include a concrete way to verify that the intended behavior was achieved.
+
+These constraints deliberately apply during convergence and planning, not during Phase 1 research or the divergent part of Phase 2 brainstorming. Groundwork first explores broadly enough to understand the problem, then narrows toward a precise solution.
 
 ## Recon agents
 
@@ -39,14 +52,6 @@ Phase 1 dispatches three color-coded read-only agent types, so you can tell at a
 | `groundwork:recon-context` | green | Prior thinking — project memory, `docs/plans/`, `docs/architecture/`, `docs/decisions/`, git history |
 
 All three are read-only by construction and return the same report shape (findings with receipts, plus what they could not verify), so the collated Phase 2 input is uniform.
-
-## Flags
-
-| Flag | Effect | When it fires |
-|------|--------|---------------|
-| `--karpathy` | Loads `andrej-karpathy-skills:karpathy-guidelines` for surgical/minimal code discipline | Phase 3 entry only (loading earlier collapses brainstorm) |
-
-Flags are stripped from the problem text before research starts. Unavailable skills are silently skipped.
 
 ## When to Use
 
