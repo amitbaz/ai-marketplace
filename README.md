@@ -1,22 +1,40 @@
 # AI Plugin Marketplace
 
-A personal Claude Code plugin marketplace for reusable development workflows, agents, and commands.
+A plugin marketplace for reusable AI coding-agent workflows. Supports **Claude Code** and **OpenAI Codex** with native packaging for each platform.
 
 ## Available Plugins
 
 | Plugin | Version | Description |
 | --- | --- | --- |
-| [groundwork](./plugins/groundwork) | 1.2.1 | Extension for `obra/superpowers` that adds parallel reconnaissance, discussion, and planning before committing to code. **Requires Superpowers.** |
+| [groundwork](./plugins/groundwork) | 1.3.0 | Extension for `obra/superpowers` that adds parallel reconnaissance, discussion, and planning before committing to code. **Requires Superpowers.** |
 
-## Installation
+## Groundwork prerequisite: Superpowers
 
-Groundwork is built as an extension/wrapper around [`obra/superpowers`](https://github.com/obra/superpowers). Install Superpowers first:
+Groundwork extends [`obra/superpowers`](https://github.com/obra/superpowers); it does not bundle or replace it. Install Superpowers for the coding agent you use before installing Groundwork.
+
+### Claude Code
 
 ```text
 /plugin install superpowers@claude-plugins-official
 ```
 
-Then add this marketplace to Claude Code:
+### Codex CLI
+
+Open the official plugin catalog:
+
+```text
+/plugins
+```
+
+Search for **Superpowers** and select **Install Plugin**.
+
+In the Codex app, open **Plugins** in the sidebar and install **Superpowers** from Developer Tools.
+
+## Install this marketplace
+
+### Claude Code
+
+Add the marketplace:
 
 ```text
 /plugin marketplace add amitbaz/ai-marketplace
@@ -36,38 +54,70 @@ To refresh the marketplace after updates:
 /plugin marketplace update amitbaz
 ```
 
-## Groundwork
+### Codex CLI
 
-Groundwork depends on Superpowers and does not bundle or replace it. If the required Superpowers skills are unavailable, `/groundwork` should stop rather than fall back to a reduced workflow.
-
-Once installed, start a reconnaissance workflow with:
+Add the GitHub marketplace:
 
 ```text
-/groundwork <problem>
+codex plugin marketplace add amitbaz/ai-marketplace --ref main
 ```
 
-Example:
+Install Groundwork:
+
+```text
+codex plugin add groundwork@amitbaz
+```
+
+To refresh the Git-backed marketplace later:
+
+```text
+codex plugin marketplace upgrade amitbaz
+```
+
+Workspace admins can also import `https://github.com/amitbaz/ai-marketplace` from **Workspace settings → Plugins → Marketplaces**. Codex discovers the native marketplace manifest at `.agents/plugins/marketplace.json`.
+
+## Use Groundwork
+
+### Claude Code
 
 ```text
 /groundwork Investigate why the customers table in dashboard does not scroll.
 ```
 
-For the full workflow, dependency details, built-in engineering discipline, and recon-agent details, see the [Groundwork README](./plugins/groundwork/README.md).
+### Codex
+
+Invoke the installed skill:
+
+```text
+$groundwork Investigate why the customers table in dashboard does not scroll.
+```
+
+Groundwork runs the same contract on both platforms: parallel read-only reconnaissance → Superpowers brainstorming/discussion → Superpowers implementation planning. It stops before implementation and hands the accepted plan to a Superpowers execution workflow.
+
+See the [Groundwork README](./plugins/groundwork/README.md) for the complete workflow, dependency rules, and platform differences.
 
 ## Repository Structure
 
 ```text
 ai-marketplace/
+├── .agents/
+│   └── plugins/
+│       └── marketplace.json          # Codex marketplace
 ├── .claude-plugin/
-│   └── marketplace.json
+│   └── marketplace.json              # Claude Code marketplace
 ├── plugins/
 │   └── groundwork/
+│       ├── .codex-plugin/
+│       │   └── plugin.json           # Codex plugin manifest
 │       ├── .claude-plugin/
-│       │   └── plugin.json
-│       ├── agents/
-│       ├── commands/
+│       │   └── plugin.json           # Claude Code plugin manifest
+│       ├── skills/
+│       │   └── groundwork/
+│       │       └── SKILL.md          # Codex Groundwork workflow
+│       ├── agents/                    # Claude Code recon agents
+│       ├── commands/                  # Claude Code /groundwork command
 │       └── README.md
 └── README.md
 ```
 
-The marketplace catalog is defined in `.claude-plugin/marketplace.json`. Each plugin lives under `plugins/` and contains its own manifest and documentation.
+The two marketplace manifests intentionally coexist. Claude Code uses `.claude-plugin/marketplace.json`; Codex uses `.agents/plugins/marketplace.json`. Groundwork keeps platform-specific orchestration at the edges while preserving the same research → discussion → planning workflow.

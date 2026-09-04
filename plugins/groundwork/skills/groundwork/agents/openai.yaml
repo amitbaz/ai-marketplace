@@ -1,0 +1,4 @@
+interface:
+  display_name: "Groundwork"
+  short_description: "Research code before choosing an approach"
+  default_prompt: "Use $groundwork to investigate this engineering problem before choosing an implementation approach."

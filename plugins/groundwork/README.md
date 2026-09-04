@@ -1,99 +1,212 @@
 # groundwork
 
-Groundwork is a Claude Code extension/wrapper for [`obra/superpowers`](https://github.com/obra/superpowers). It adds parallel-subagent reconnaissance before Superpowers' discussion and planning workflow.
+Groundwork is a cross-platform extension/wrapper for [`obra/superpowers`](https://github.com/obra/superpowers). It adds parallel read-only reconnaissance before Superpowers' discussion and planning workflow.
 
-> **Required dependency:** Superpowers must be installed. Groundwork does not bundle or replace it, and `/groundwork` should stop if the required Superpowers skills are unavailable.
+Groundwork supports **Claude Code** and **OpenAI Codex** with native packaging for each platform.
 
-## Commands
+> **Required dependency:** Superpowers must be installed for the platform you are using. Groundwork does not bundle or replace it, and the workflow stops if the required Superpowers skills are unavailable.
 
-| Command | Description |
-|---------|-------------|
-| `/groundwork <problem>` | Three-phase workflow: parallel research → brainstorm/discuss → plan |
+## Usage
+
+| Platform | Invocation |
+| --- | --- |
+| Claude Code | `/groundwork <problem>` |
+| Codex | `$groundwork <problem>` |
+
+Example:
+
+```text
+$groundwork Investigate why the customers table in dashboard does not scroll.
+```
+
+The workflow has three phases:
+
+1. **Phase 1 — Deep research.** Dispatches only the reconnaissance threads relevant to the problem. Independent threads run in parallel and are read-only. **Phase 1 is a hard gate:** nothing downstream starts until every dispatched thread has returned or has been explicitly accounted for as failed.
+2. **Phase 2 — Discuss & brainstorm.** Invokes Superpowers' `brainstorming` skill, explains the evidence in plain language, restates the goal, compares approaches, surfaces gray areas, and gets user alignment.
+3. **Phase 3 — Plan.** Starts only after the user greenlights the approach. Invokes Superpowers' `writing-plans` skill and produces a structured, verifiable implementation plan before any code is written.
+
+Groundwork ends after planning. The accepted plan is handed to Superpowers' `subagent-driven-development` or `executing-plans` workflow for implementation.
 
 ## Installation
 
-### 1. Install Superpowers
+### Claude Code
 
-Install Superpowers from the official Claude plugin marketplace:
+Install Superpowers first:
 
 ```text
 /plugin install superpowers@claude-plugins-official
 ```
 
-Groundwork relies on Superpowers' `brainstorming` and `writing-plans` skills and hands accepted plans off to its execution workflows.
-
-### 2. Install Groundwork
-
-Add this marketplace:
+Add this marketplace and install Groundwork:
 
 ```text
 /plugin marketplace add amitbaz/ai-marketplace
-```
-
-Then install Groundwork:
-
-```text
 /plugin install groundwork@amitbaz
 ```
 
-## Usage
+### Codex CLI
 
-Hand the command a problem description with any relevant file paths, GitLab issue IDs, library names, or URLs:
+Install Superpowers from the official Codex plugin marketplace first:
 
 ```text
-/groundwork Investigate why the customers table in dashboard does not scroll.
+/plugins
 ```
 
-The command runs a three-phase workflow:
+Search for **Superpowers** and select **Install Plugin**.
 
-1. **Phase 1 — Deep research.** Spawns parallel recon subagents (read files, map callers, fetch GitHub issues, search project memory, pull library docs). Threads are picked to match the problem — no spawning recon for sources you didn't reference. **Phase 1 is a hard gate:** nothing else happens until every agent has reported.
-2. **Phase 2 — Discuss & brainstorm.** Uses Superpowers' `brainstorming` skill, then explains the situation in plain language, restates the goal, proposes an approach with tradeoffs, flags gray areas, and asks focused questions.
-3. **Phase 3 — Plan.** Only after you greenlight the approach. Uses Superpowers' `writing-plans` skill and produces a structured, verifiable plan before any code is written.
+Then add this marketplace and install Groundwork:
+
+```text
+codex plugin marketplace add amitbaz/ai-marketplace --ref main
+codex plugin add groundwork@amitbaz
+```
+
+To refresh the Git-backed marketplace later:
+
+```text
+codex plugin marketplace upgrade amitbaz
+```
+
+### Codex app / workspace
+
+For the Codex app, install **Superpowers** from the Plugins sidebar first. A workspace admin can import `https://github.com/amitbaz/ai-marketplace` from **Workspace settings → Plugins → Marketplaces**; Codex reads `.agents/plugins/marketplace.json` from the repository.
 
 ## Superpowers dependency
 
 Superpowers is part of Groundwork's workflow contract, not an optional enhancement.
 
-Groundwork expects the required Superpowers skills to be available before it begins. If they are unavailable, the workflow should stop and tell the user to install Superpowers instead of substituting other skills or continuing with a reduced version of the process.
+Groundwork requires the `brainstorming` and `writing-plans` skills before it starts. If they are unavailable, Groundwork stops and tells the user to install Superpowers instead of silently substituting another skill or continuing with a reduced workflow.
 
-Groundwork does **not** invoke `using-superpowers` itself. Installing Superpowers is the prerequisite; Groundwork directly uses the specific Superpowers skills needed by each phase.
+Groundwork does **not** need to invoke `using-superpowers` itself. Installing Superpowers is the prerequisite; Groundwork invokes the specific skills required at its phase boundaries.
+
+## Platform architecture
+
+Groundwork preserves one workflow contract while using each platform's native extension model.
+
+### Claude Code
+
+Claude uses:
+
+- `.claude-plugin/plugin.json` for plugin metadata;
+- `commands/groundwork.md` for `/groundwork`;
+- three custom read-only recon agents under `agents/`;
+- Claude's agent/subagent primitives to dispatch those recon agents in parallel.
+
+The three Claude recon agents remain color-coded in the UI:
+
+| Agent | Color | Covers |
+| --- | --- | --- |
+| `groundwork:recon-code` | cyan | Inside the repo — named files, callers/callees, tests, sibling patterns |
+| `groundwork:recon-external` | orange | Outside it — current docs, issues/MRs/PRs/pipelines, linked URLs |
+| `groundwork:recon-context` | green | Prior thinking — plans, architecture/decision docs, project memory, git history |
+
+### Codex
+
+Codex uses:
+
+- `.codex-plugin/plugin.json` for plugin metadata;
+- `skills/groundwork/SKILL.md` for `$groundwork`;
+- native Codex subagents for Phase 1 reconnaissance.
+
+Codex does not depend on Claude's `Agent(...)`, `subagent_type`, `$ARGUMENTS`, or `AskUserQuestion` primitives. Instead, the Groundwork skill gives each native subagent a self-contained read-only role packet for code recon, external recon, or prior-context recon and explicitly requires the orchestrator to account for every dispatched subagent before Phase 2 begins.
+
+The semantic roles are the same across platforms even though their UI and orchestration primitives differ.
+
+## Phase 1 — reconnaissance
+
+Groundwork chooses threads from the evidence actually needed by the problem rather than spawning every possible scout.
+
+Typical threads include:
+
+- read named files completely;
+- map callers, callees, sibling patterns, and tests;
+- verify current library/framework/API documentation;
+- read linked issues, PRs/MRs, pipelines, or URLs;
+- search prior project decisions and remembered constraints;
+- scan plans, architecture docs, ADRs, and git history.
+
+Every scout is read-only and returns evidence rather than recommendations. Code findings cite `file:line`; external findings cite links/IDs/versions; prior-context findings are dated and marked as still true, stale, or unverified where practical.
+
+### The Phase 1 gate
+
+Recon is a barrier, not a stream. Groundwork does not start brainstorming from whichever scout happens to answer first.
+
+Until every dispatched scout is accounted for, Groundwork does **not**:
+
+- invoke `brainstorming`;
+- summarize partial findings as a conclusion;
+- recommend an approach;
+- ask design questions that depend on missing recon;
+- write an implementation plan.
+
+If a scout fails, Groundwork either retries that focused thread or explicitly records the missing evidence before moving on. It never silently drops a dispatched thread.
+
+## Phase 2 — discussion and brainstorming
+
+Once the Phase 1 gate opens, Groundwork invokes Superpowers' `brainstorming` skill before converging on a design.
+
+The discussion is written for a competent developer who has not read the researched code. Internal names are explained on first use and file paths/links appear as receipts rather than forcing the reader to reconstruct the explanation from source files.
+
+Groundwork covers:
+
+1. what the research established;
+2. the problem in plain language;
+3. the goal as now understood;
+4. viable approaches and their tradeoffs;
+5. gray areas and what changes depending on each answer;
+6. only the focused questions that evidence cannot resolve.
+
+No implementation code or implementation plan is written in Phase 2. Groundwork waits for user alignment.
+
+## Phase 3 — implementation plan
+
+After the user explicitly accepts the direction, Groundwork invokes Superpowers' `writing-plans` skill and produces a concrete plan with observable verification steps.
+
+Groundwork then stops. It does not silently turn the planning workflow into an implementation workflow.
 
 ## Built-in engineering discipline
 
-Groundwork applies its own engineering discipline automatically when converging on an approach and writing the final plan. There is no separate Karpathy flag or Karpathy skill dependency.
+Groundwork applies its own engineering discipline automatically while converging on an approach and writing the final plan. There is no separate Karpathy flag or Karpathy skill dependency.
 
-The discipline keeps the plan grounded in four principles:
+The discipline keeps the result grounded in four principles:
 
 - **Make uncertainty visible** — distinguish verified facts from assumptions and surface decisions that genuinely need user input.
 - **Prefer the smallest complete solution** — solve the researched problem without speculative features, abstractions, or configurability.
 - **Keep the change boundary tight** — every planned modification should trace directly to the agreed goal; unrelated cleanup stays out of scope.
 - **Plan around observable outcomes** — meaningful steps include a concrete way to verify that the intended behavior was achieved.
 
-These constraints deliberately apply during convergence and planning, not during Phase 1 research or the divergent part of Phase 2 brainstorming. Groundwork first explores broadly enough to understand the problem, then narrows toward a precise solution.
+These constraints deliberately apply during convergence and planning, not as a reason to narrow Phase 1 research before the problem is understood.
 
-## Recon agents
+## When to use Groundwork
 
-Phase 1 dispatches three color-coded read-only agent types, so you can tell at a glance what each pill is doing:
+Use it when:
 
-| Agent | Color | Covers |
-|---|---|---|
-| `groundwork:recon-code` | cyan | Inside this repo — named files, callers/callees, tests, sibling patterns |
-| `groundwork:recon-external` | orange | Outside it — Context7 library docs, GitLab issues/MRs/pipelines, linked URLs |
-| `groundwork:recon-context` | green | Prior thinking — project memory, `docs/plans/`, `docs/architecture/`, `docs/decisions/`, git history |
+- a change is non-trivial and has multiple unknowns;
+- the code is unfamiliar or spans multiple files/services;
+- external docs, issues, or URLs can materially change the decision;
+- prior design decisions may matter;
+- you want explicit alignment before an implementation plan is committed.
 
-All three are read-only by construction and return the same report shape (findings with receipts, plus what they could not verify), so the collated Phase 2 input is uniform.
+Skip it for a genuinely trivial one-line fix where reconnaissance would add ceremony without changing the decision.
 
-## When to Use
+## Repository surfaces
 
-- Non-trivial change with multiple unknowns or unfamiliar code
-- Problem spans multiple files, services, or tickets
-- You want to avoid jumping to code before alignment on approach
+```text
+plugins/groundwork/
+├── .claude-plugin/
+│   └── plugin.json
+├── .codex-plugin/
+│   └── plugin.json
+├── agents/
+│   ├── recon-code.md
+│   ├── recon-context.md
+│   └── recon-external.md
+├── commands/
+│   └── groundwork.md
+├── skills/
+│   └── groundwork/
+│       └── SKILL.md
+└── README.md
+```
 
-Skip it for trivial one-line fixes — the command exits the ceremony early when the problem is obvious.
-
-## Notes
-
-- Phase 1 blocks. The brainstorm never starts on partial recon — reacting to the first report that lands anchors everything to whichever agent happened to be fastest, and the later reports get read as footnotes to a conclusion already drawn.
-- Phase 2 is written for a developer who has never opened the code in question. Internal names are glossed on first use, and file paths appear as receipts at the end of a sentence rather than as the sentence itself.
-- Phase 2 and Phase 3 Superpowers skill invocations are mandatory — the command calls the specific required skills explicitly, not just narrates the activity.
-- Memory hits are treated as past claims and verified against current code before recommendations.
+Claude-specific and Codex-specific orchestration stays at the platform boundary. The behavior users rely on — research first, wait for complete evidence, discuss the design, then plan — remains the same.
