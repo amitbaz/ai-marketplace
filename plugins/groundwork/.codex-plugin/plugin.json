@@ -1,0 +1,22 @@
+{
+  "name": "groundwork",
+  "version": "1.3.0",
+  "description": "Extension for obra/superpowers: parallel-subagent recon, discussion, and planning before committing to code. Requires Superpowers.",
+  "author": {
+    "name": "Amit Baz",
+    "email": "amitbaz2@gmail.com",
+    "url": "https://github.com/amitbaz"
+  },
+  "homepage": "https://github.com/amitbaz/ai-marketplace/tree/main/plugins/groundwork",
+  "repository": "https://github.com/amitbaz/ai-marketplace",
+  "keywords": ["recon", "parallel", "brainstorming", "superpowers", "codex"],
+  "skills": "./skills/",
+  "interface": {
+    "displayName": "Groundwork",
+    "shortDescription": "Research before planning code changes",
+    "longDescription": "Run parallel read-only reconnaissance, discuss the evidence, and write an implementation plan with Superpowers before coding.",
+    "developerName": "Amit Baz",
+    "category": "Developer Tools",
+    "capabilities": ["Interactive", "Read", "Write"]
+  }
+}
