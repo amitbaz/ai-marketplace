@@ -4,7 +4,7 @@ This file provides guidance to coding agents (Claude Code, Codex, and any agent 
 
 ## What this repo is
 
-A personal plugin marketplace that ships **one plugin, Groundwork, to two platforms** — Claude Code and OpenAI Codex. There is no source code, no build, no test suite, and no dependencies: every artifact is Markdown with YAML frontmatter, or a JSON manifest, consumed directly by each platform's plugin loader. "Changing behavior" here means editing prose instructions, not code.
+A personal plugin marketplace that ships **one plugin, Groundwork, to two platforms** — Claude Code and OpenAI Codex. There is no application source code and no build: every artifact is Markdown with YAML frontmatter, or a JSON manifest, consumed directly by each platform's plugin loader. The only executable is `scripts/check-adapter-boundary.py`, a stdlib-only structural check. "Changing behavior" here means editing prose instructions, not code.
 
 ## Dual-platform layout
 
@@ -14,10 +14,12 @@ A personal plugin marketplace that ships **one plugin, Groundwork, to two platfo
 plugins/groundwork/
   .claude-plugin/plugin.json           # Claude Code plugin manifest
   .codex-plugin/plugin.json            # Codex plugin manifest
-  commands/groundwork.md               # Claude Code: /groundwork
+  commands/groundwork.md               # Claude Code: /groundwork (thin adapter)
   agents/recon-*.md                    # Claude Code: groundwork:recon-* subagents
-  skills/groundwork/SKILL.md           # Codex: $groundwork
+  skills/groundwork/SKILL.md           # canonical workflow; Codex: $groundwork
   README.md
+scripts/check-adapter-boundary.py      # enforces the shared-skill/adapter split
+.github/workflows/validate.yml         # runs the checks in CI
 docs/superpowers/{specs,plans}/        # design docs from past groundwork runs
 ```
 
@@ -27,7 +29,19 @@ Things that must stay in sync when you change anything:
 
 - `version` in **both** `plugin.json` files, plus the version column in the root README table.
 - The `description` string across both `plugin.json` files and both `marketplace.json` files.
-- The workflow contract itself: `commands/groundwork.md` (Claude) and `skills/groundwork/SKILL.md` (Codex) express the *same* three-phase workflow for two runtimes. A change to one is almost always a change to both. They differ only at the edges — Claude fans out to real parallel subagents, Codex runs the recon threads within one agent.
+
+`python3 scripts/check-adapter-boundary.py` checks both of those automatically.
+
+## Shared skill, thin adapters
+
+The workflow contract lives in exactly one place: `plugins/groundwork/skills/groundwork/SKILL.md`. It is platform-neutral and owns the three phases, the Phase 1 gate, the Superpowers dependency and handoffs, the Phase 2 writing rules, the engineering discipline, and the general rules.
+
+Adapters carry only what is native to their platform:
+
+- **Claude Code** — `commands/groundwork.md` invokes `Skill(skill: "groundwork:groundwork")` first (Claude auto-discovers plugin skills at `skills/<name>/SKILL.md` and namespaces them `<plugin>:<skill>`), then adds `$ARGUMENTS`, `Agent(...)` dispatch syntax, the three `groundwork:recon-*` subagent types and their colors, `AskUserQuestion` usage, and Claude's Superpowers install string.
+- **Codex** — consumes the canonical skill directly as `$groundwork`; there is no second Codex file.
+
+Do not re-add workflow prose to an adapter. `python3 scripts/check-adapter-boundary.py` fails when an adapter reintroduces workflow headings, workflow-owned phrases (`brainstorming`, `writing-plans`, `engineering discipline`, …), or any 10-word passage copied from the canonical skill; it also checks version/description sync across the manifests. CI runs it on every push and PR.
 
 ## Loader contract
 
@@ -38,7 +52,11 @@ Things that must stay in sync when you change anything:
 
 ## Testing a change
 
-There is nothing to run. Verify by installing locally and exercising the workflow:
+Run the structural checks, then verify by installing locally and exercising the workflow:
+
+```bash
+python3 scripts/check-adapter-boundary.py
+```
 
 ```bash
 # Claude Code
@@ -54,7 +72,7 @@ Frontmatter and manifest JSON are the fragile parts — a malformed YAML block o
 
 ## Groundwork — design intent
 
-Groundwork is an **extension of `obra/superpowers`, not a replacement**. It does not bundle it. Both entrypoints open with a hard dependency gate: if `brainstorming` or `writing-plans` is unavailable, stop and tell the user to install Superpowers — never substitute another skill or run a reduced form of the workflow. Groundwork deliberately does *not* invoke `using-superpowers` itself; the dependency only needs to be installed.
+Groundwork is an **extension of `obra/superpowers`, not a replacement**. It does not bundle it. The canonical skill opens with a hard dependency gate that applies on every platform: if `brainstorming` or `writing-plans` is unavailable, stop and tell the user to install Superpowers — never substitute another skill or run a reduced form of the workflow. Groundwork deliberately does *not* invoke `using-superpowers` itself; the dependency only needs to be installed.
 
 Several rules in the workflow look redundant but are load-bearing. Don't "simplify" them without understanding why:
 

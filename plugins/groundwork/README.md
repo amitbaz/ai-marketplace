@@ -81,14 +81,30 @@ Groundwork does **not** need to invoke `using-superpowers` itself. Installing Su
 
 ## Platform architecture
 
-Groundwork preserves one workflow contract while using each platform's native extension model.
+Groundwork is built as **one shared workflow contract plus thin platform adapters**.
 
-### Claude Code
+### Canonical shared skill — the single source of truth
+
+`skills/groundwork/SKILL.md` owns every platform-neutral behavior:
+
+- the three-phase workflow and the phase entry conditions;
+- reconnaissance intent, roles, task-packet quality bar, and report shapes;
+- the Phase 1 hard gate;
+- the Superpowers dependency gate and the `brainstorming` / `writing-plans` handoffs;
+- the requirement for explicit user approval before planning;
+- stop-before-implementation and the execution handoff;
+- the built-in engineering discipline and the general workflow rules.
+
+No other file in the plugin restates this contract. If an adapter and the skill disagree about *what* Groundwork does, the skill wins; the adapter only decides *how* recon threads are spawned on that platform.
+
+A structural check enforces this: `python3 scripts/check-adapter-boundary.py` (run in CI) fails when an adapter reintroduces workflow sections, workflow-owned phrases, or passages copied from the canonical skill.
+
+### Claude Code adapter
 
 Claude uses:
 
 - `.claude-plugin/plugin.json` for plugin metadata;
-- `commands/groundwork.md` for `/groundwork`;
+- `commands/groundwork.md` for `/groundwork` — a thin adapter that invokes the canonical skill (`groundwork:groundwork`) first and then adds only Claude-specific concerns: `$ARGUMENTS`, `Agent(...)` dispatch syntax, the `groundwork:recon-*` subagent types and their colors, `AskUserQuestion` usage, and Claude's Superpowers install wording;
 - three custom read-only recon agents under `agents/`;
 - Claude's agent/subagent primitives to dispatch those recon agents in parallel.
 
@@ -100,15 +116,15 @@ The three Claude recon agents remain color-coded in the UI:
 | `groundwork:recon-external` | orange | Outside it — current docs, issues/MRs/PRs/pipelines, linked URLs |
 | `groundwork:recon-context` | green | Prior thinking — plans, architecture/decision docs, project memory, git history |
 
-### Codex
+### Codex adapter
 
 Codex uses:
 
-- `.codex-plugin/plugin.json` for plugin metadata;
-- `skills/groundwork/SKILL.md` for `$groundwork`;
-- native Codex subagents for Phase 1 reconnaissance.
+- `.codex-plugin/plugin.json` for plugin metadata, pointing at `./skills/`;
+- `skills/groundwork/SKILL.md` directly for `$groundwork` — Codex consumes the canonical skill with no separate adapter file;
+- native Codex subagents for Phase 1 reconnaissance, described by the skill's platform-neutral dispatch model.
 
-Codex does not depend on Claude's `Agent(...)`, `subagent_type`, `$ARGUMENTS`, or `AskUserQuestion` primitives. Instead, the Groundwork skill gives each native subagent a self-contained read-only role packet for code recon, external recon, or prior-context recon and explicitly requires the orchestrator to account for every dispatched subagent before Phase 2 begins.
+Codex does not depend on Claude's `Agent(...)`, `subagent_type`, `$ARGUMENTS`, or `AskUserQuestion` primitives. The skill gives each native subagent a self-contained read-only role packet for code recon, external recon, or prior-context recon, and requires the orchestrator to account for every dispatched subagent before Phase 2 begins.
 
 The semantic roles are the same across platforms even though their UI and orchestration primitives differ.
 
@@ -202,11 +218,11 @@ plugins/groundwork/
 │   ├── recon-context.md
 │   └── recon-external.md
 ├── commands/
-│   └── groundwork.md
+│   └── groundwork.md          # Claude adapter (thin)
 ├── skills/
 │   └── groundwork/
-│       └── SKILL.md
+│       └── SKILL.md           # canonical shared workflow (source of truth)
 └── README.md
 ```
 
-Claude-specific and Codex-specific orchestration stays at the platform boundary. The behavior users rely on — research first, wait for complete evidence, discuss the design, then plan — remains the same.
+Claude-specific and Codex-specific orchestration stays at the platform boundary. The behavior users rely on — research first, wait for complete evidence, discuss the design, then plan — is defined once, in the canonical skill.
