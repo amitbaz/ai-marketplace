@@ -26,7 +26,7 @@ Two findings shape the record:
 
   * A fix round does NOT create a second transcript. The controller resumes the
     original agent by message, so the same `agentId` grows: an implementer
-    observed here ran 185 turns across 3 fix rounds in one file. Fix rounds are
+    observed here ran 74 turns across 3 fix rounds in one file. Fix rounds are
     counted from the coordinator messages injected into the run, not from
     dispatch counts. Only rounds the controller labelled "fix round N" are
     counted as such; every other coordinator message is counted separately
@@ -55,7 +55,7 @@ import sys
 import tempfile
 from pathlib import Path
 
-SCHEMA = "groundwork.metrics/1"
+SCHEMA = "groundwork.metrics/2"
 
 # Published price ratios, relative to one uncached input token. Cost is reported
 # in base-input-token equivalents so the arithmetic can be checked by hand.
@@ -174,6 +174,20 @@ def is_tool_result(message: dict) -> bool:
     return any(isinstance(block, dict) and block.get("type") == "tool_result" for block in content)
 
 
+def tool_result_size(block: dict) -> int:
+    """Characters a tool result added to the run's resident context."""
+    content = block.get("content")
+    if isinstance(content, str):
+        return len(content)
+    if isinstance(content, list):
+        total = 0
+        for part in content:
+            if isinstance(part, dict):
+                total += len(part.get("text") or "")
+        return total
+    return 0
+
+
 def read_records(path: Path) -> list[dict]:
     records = []
     with path.open("r", encoding="utf-8", errors="replace") as handle:
@@ -244,10 +258,18 @@ def measure(path: Path) -> dict | None:
     dispatch_prompt = ""
     fix_rounds = 0
     coordinator_messages = 0
-    tokens = {name: 0 for name in TOKEN_FIELDS}
-    cache_turn_one = 0
-    turns = 0
+    # Claude Code writes ONE record per content block of an assistant message —
+    # a thinking block, a text block, and a tool_use block are three records
+    # carrying the same message id and the same usage. Counting records as turns
+    # inflated both turn counts and tokens by about 3.4x on the longest run
+    # measured. Usage is therefore accumulated per message id, not per record.
+    # Only output_tokens differs between a message's records: it is the running
+    # count, so the largest value is the message's real output.
+    usage_by_message: dict[str, dict[str, int]] = {}
+    message_order: list[str] = []
     tools: dict[str, int] = {}
+    result_chars: dict[str, int] = {}
+    tool_names: dict[str, str] = {}
     models: list[str] = []
     agent_types: list[str] = []
     first_ts = last_ts = None
@@ -262,6 +284,11 @@ def measure(path: Path) -> dict | None:
 
         if kind == "user":
             if is_tool_result(message):
+                for block in message.get("content") or []:
+                    if not isinstance(block, dict) or block.get("type") != "tool_result":
+                        continue
+                    name = tool_names.get(block.get("tool_use_id"), "unknown")
+                    result_chars[name] = result_chars.get(name, 0) + tool_result_size(block)
                 continue
             text = message_text(message)
             if not dispatch_prompt and not record.get("isMeta"):
@@ -277,11 +304,14 @@ def measure(path: Path) -> dict | None:
 
         usage = message.get("usage")
         if isinstance(usage, dict):
-            turns += 1
+            key = message.get("id") or f"{record.get('requestId')}:{len(message_order)}"
+            if key not in usage_by_message:
+                usage_by_message[key] = {name: 0 for name in TOKEN_FIELDS}
+                message_order.append(key)
+            counted = usage_by_message[key]
             for name, field in TOKEN_FIELDS.items():
-                tokens[name] += int(usage.get(field) or 0)
-            if turns == 1:
-                cache_turn_one = int(usage.get("cache_creation_input_tokens") or 0)
+                value = int(usage.get(field) or 0)
+                counted[name] = max(counted[name], value) if name == "output" else value
         model = message.get("model")
         if model and model not in models:
             models.append(model)
@@ -295,6 +325,12 @@ def measure(path: Path) -> dict | None:
                 if isinstance(block, dict) and block.get("type") == "tool_use":
                     name = block.get("name") or "unknown"
                     tools[name] = tools.get(name, 0) + 1
+                    if block.get("id"):
+                        tool_names[block["id"]] = name
+
+    turns = len(message_order)
+    tokens = {name: sum(u[name] for u in usage_by_message.values()) for name in TOKEN_FIELDS}
+    cache_turn_one = usage_by_message[message_order[0]]["cacheCreation"] if message_order else 0
 
     record = {
         "agentId": agent_id,
@@ -307,6 +343,10 @@ def measure(path: Path) -> dict | None:
         "tokens": tokens,
         "cacheCreation": {"turn1": cache_turn_one, "later": tokens["cacheCreation"] - cache_turn_one},
         "toolCalls": {"total": sum(tools.values()), "byName": dict(sorted(tools.items()))},
+        "toolResultChars": {
+            "total": sum(result_chars.values()),
+            "byName": dict(sorted(result_chars.items())),
+        },
         "durationSeconds": seconds_between(first_ts, last_ts),
         "coordinatorMessages": coordinator_messages,
         "fixRoundsLabelled": fix_rounds,
@@ -341,10 +381,16 @@ def summarise_runs(runs: list[dict]) -> dict:
     tokens = blank_totals()
     turns = 0
     cache_turn_one = 0
+    result_chars: dict[str, int] = {}
+    calls: dict[str, int] = {}
     for run in runs:
         add_totals(tokens, run["tokens"])
         turns += run["turns"]
         cache_turn_one += run["cacheCreation"]["turn1"]
+        for name, value in run["toolResultChars"]["byName"].items():
+            result_chars[name] = result_chars.get(name, 0) + value
+        for name, value in run["toolCalls"]["byName"].items():
+            calls[name] = calls.get(name, 0) + value
     return {
         "runs": len(runs),
         "turns": turns,
@@ -352,6 +398,27 @@ def summarise_runs(runs: list[dict]) -> dict:
         "cacheCreation": {"turn1": cache_turn_one, "later": tokens["cacheCreation"] - cache_turn_one},
         "weightedCost": weighted(tokens),
         "costSharePercent": cost_share(tokens),
+        "turnsPerRun": turn_distribution(runs),
+        "toolCalls": {"total": sum(calls.values()), "byName": dict(sorted(calls.items()))},
+        "toolResultChars": {
+            "total": sum(result_chars.values()),
+            "byName": dict(sorted(result_chars.items())),
+        },
+    }
+
+
+def turn_distribution(runs: list[dict]) -> dict:
+    """Turn counts are what cost tracks, so report the spread, not just a mean."""
+    counts = sorted(run["turns"] for run in runs)
+    if not counts:
+        return {"min": 0, "median": 0, "max": 0, "mean": 0.0}
+    middle = len(counts) // 2
+    median = counts[middle] if len(counts) % 2 else (counts[middle - 1] + counts[middle]) / 2
+    return {
+        "min": counts[0],
+        "median": median,
+        "max": counts[-1],
+        "mean": round(sum(counts) / len(counts), 1),
     }
 
 
@@ -366,6 +433,27 @@ def by_role(runs: list[dict]) -> dict:
         }
         for role, members in sorted(roles.items())
     }
+
+
+def anonymise(report: dict) -> dict:
+    """Strip identifiers that belong to the measured project, not the measurement.
+
+    Plan slugs, branch names, and session ids describe private work. The agent
+    id is opaque and stays, so every claim in a written report remains traceable
+    to a row. The slug mapping is taken in sorted order, so anonymising is as
+    reproducible as the rest of the output.
+    """
+    slugs = sorted({run["planSlug"] for run in report["runs"] if run["planSlug"]})
+    alias = {slug: f"execution-{index + 1}" for index, slug in enumerate(slugs)}
+
+    for run in report["runs"]:
+        run["planSlug"] = alias.get(run["planSlug"])
+        run["sessionId"] = None
+        run["gitBranch"] = None
+    for execution in report["executions"]:
+        execution["planSlug"] = alias.get(execution["planSlug"])
+    report["anonymised"] = True
+    return report
 
 
 def build(store: Path) -> dict:
@@ -467,22 +555,58 @@ def fixture_transcript(path: Path, agent_id: str, prompt: str, turns: int, injec
             }
         )
     for index in range(turns):
+        usage = {
+            "input_tokens": 1,
+            "cache_creation_input_tokens": 100 if index == 0 else 10,
+            "cache_read_input_tokens": 1000,
+            "output_tokens": 20,
+        }
+        # One API turn, written as two records: a text block whose output count
+        # is still running, then the tool_use block carrying the final count.
         rows.append(
             {
                 "type": "assistant",
                 "agentId": agent_id,
                 "attributionAgent": "general-purpose",
+                "apiBlockIndex": 0,
                 "timestamp": f"2026-09-06T10:{10 + index:02d}:00.000Z",
                 "message": {
+                    "id": f"msg{index}",
                     "role": "assistant",
                     "model": "claude-sonnet-5",
-                    "usage": {
-                        "input_tokens": 1,
-                        "cache_creation_input_tokens": 100 if index == 0 else 10,
-                        "cache_read_input_tokens": 1000,
-                        "output_tokens": 20,
-                    },
-                    "content": [{"type": "tool_use", "name": "Read", "input": {}}],
+                    "usage": dict(usage, output_tokens=4),
+                    "content": [{"type": "text", "text": "working"}],
+                },
+            }
+        )
+        rows.append(
+            {
+                "type": "assistant",
+                "agentId": agent_id,
+                "attributionAgent": "general-purpose",
+                "apiBlockIndex": 1,
+                "timestamp": f"2026-09-06T10:{10 + index:02d}:00.000Z",
+                "message": {
+                    "id": f"msg{index}",
+                    "role": "assistant",
+                    "model": "claude-sonnet-5",
+                    "usage": usage,
+                    "content": [
+                        {"type": "tool_use", "id": f"t{index}", "name": "Read", "input": {}}
+                    ],
+                },
+            }
+        )
+        rows.append(
+            {
+                "type": "user",
+                "agentId": agent_id,
+                "timestamp": f"2026-09-06T10:{10 + index:02d}:30.000Z",
+                "message": {
+                    "role": "user",
+                    "content": [
+                        {"type": "tool_result", "tool_use_id": f"t{index}", "content": "x" * 50}
+                    ],
                 },
             }
         )
@@ -566,13 +690,33 @@ def self_test() -> int:
             f"{runs['impl']['coordinatorMessages']}",
         )
 
-        expect(runs["impl"]["turns"] == 3, "turns are assistant records carrying usage")
+        expect(
+            runs["impl"]["turns"] == 3,
+            f"a turn is one API message, not one content block: {runs['impl']['turns']}",
+        )
+        expect(
+            runs["impl"]["tokens"]["cacheRead"] == 3000,
+            f"a message's usage must be counted once: {runs['impl']['tokens']['cacheRead']}",
+        )
+        expect(
+            runs["impl"]["tokens"]["output"] == 60,
+            f"output must take the largest count a message reported: "
+            f"{runs['impl']['tokens']['output']}",
+        )
         expect(runs["impl"]["tokens"]["cacheCreation"] == 120, "cache creation must sum every turn")
         expect(runs["impl"]["cacheCreation"]["turn1"] == 100, "turn-1 cache write must be split out")
         expect(runs["impl"]["cacheCreation"]["later"] == 20, "post-turn-1 cache write must be split out")
         expect(runs["impl"]["toolCalls"]["byName"] == {"Read": 3}, "tool calls must be counted by name")
+        expect(
+            runs["impl"]["toolResultChars"] == {"total": 150, "byName": {"Read": 150}},
+            f"tool results must be sized by tool: {runs['impl']['toolResultChars']}",
+        )
+        expect(
+            report["totals"]["turnsPerRun"] == {"min": 1, "median": 2, "max": 4, "mean": 2.4},
+            f"turn distribution wrong: {report['totals']['turnsPerRun']}",
+        )
         expect(runs["impl"]["modelChangedMidRun"] is False, "a single-model run must not be flagged")
-        expect(runs["impl"]["durationSeconds"] == 720.0, f"duration: {runs['impl']['durationSeconds']}")
+        expect(runs["impl"]["durationSeconds"] == 750.0, f"duration: {runs['impl']['durationSeconds']}")
 
         expected = 3 * 1 * 1.0 + 120 * 1.25 + 3000 * 0.1 + 60 * 5.0
         expect(
@@ -594,6 +738,26 @@ def self_test() -> int:
         expect(abs(sum(share.values()) - 100.0) < 0.5, f"cost share must total 100%: {share}")
 
         expect(build(store) == report, "two runs over the same input must produce identical output")
+
+        hidden = anonymise(build(store))
+        aliases = {run["planSlug"] for run in hidden["runs"] if run["planSlug"]}
+        expect(aliases == {"execution-1"}, f"plan slugs must be aliased: {aliases}")
+        expect(
+            all(run["gitBranch"] is None and run["sessionId"] is None for run in hidden["runs"]),
+            "anonymising must drop branch names and session ids",
+        )
+        expect(
+            "2026-09-06-a-plan" not in json.dumps(hidden),
+            "the real plan slug must not survive anonymising",
+        )
+        expect(
+            {r["agentId"] for r in hidden["runs"]} == {r["agentId"] for r in report["runs"]},
+            "agent ids must survive anonymising so claims stay traceable",
+        )
+        expect(
+            hidden["totals"] == report["totals"],
+            "anonymising must not change any measurement",
+        )
         expect(
             json.dumps(report) == json.dumps(build(store)),
             "serialised output must be byte-identical between runs",
@@ -620,6 +784,11 @@ def main(argv: list[str]) -> int:
     parser.add_argument("--store", help="transcript store to read (default: the harvester's)")
     parser.add_argument("--out", help="write the metrics JSON here instead of stdout")
     parser.add_argument("--summary", action="store_true", help="print a human summary instead of JSON")
+    parser.add_argument(
+        "--anonymize",
+        action="store_true",
+        help="replace plan slugs with execution-N and drop branch and session ids",
+    )
     parser.add_argument("--self-test", action="store_true", help="run fixtures in a temp directory")
     args = parser.parse_args(argv)
 
@@ -632,6 +801,8 @@ def main(argv: list[str]) -> int:
         return 1
 
     report = build(store)
+    if args.anonymize:
+        report = anonymise(report)
     if args.summary:
         print("\n".join(summary_lines(report)))
         return 0

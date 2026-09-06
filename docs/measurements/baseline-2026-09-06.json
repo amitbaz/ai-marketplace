@@ -1,0 +1,3548 @@
+{
+  "anonymised": true,
+  "executions": [
+    {
+      "byRole": {
+        "final-reviewer": {
+          "cacheCreation": {
+            "later": 39274,
+            "turn1": 18098
+          },
+          "costSharePercent": {
+            "cacheCreation": 38.7,
+            "cacheRead": 56.2,
+            "input": 0.0,
+            "output": 5.1
+          },
+          "models": [
+            "claude-opus-5"
+          ],
+          "runs": 1,
+          "tokens": {
+            "cacheCreation": 57372,
+            "cacheRead": 1040704,
+            "input": 34,
+            "output": 1904
+          },
+          "toolCalls": {
+            "byName": {
+              "Bash": 15,
+              "Read": 2
+            },
+            "total": 17
+          },
+          "toolResultChars": {
+            "byName": {
+              "Bash": 55364,
+              "Read": 14464
+            },
+            "total": 69828
+          },
+          "turns": 17,
+          "turnsPerRun": {
+            "max": 17,
+            "mean": 17.0,
+            "median": 17,
+            "min": 17
+          },
+          "weightedCost": 185339.4
+        },
+        "implementer": {
+          "cacheCreation": {
+            "later": 84565,
+            "turn1": 134978
+          },
+          "costSharePercent": {
+            "cacheCreation": 38.0,
+            "cacheRead": 56.3,
+            "input": 0.0,
+            "output": 5.7
+          },
+          "models": [
+            "claude-haiku-4-5-20251001",
+            "claude-sonnet-5"
+          ],
+          "runs": 4,
+          "tokens": {
+            "cacheCreation": 219543,
+            "cacheRead": 4065823,
+            "input": 228,
+            "output": 8233
+          },
+          "toolCalls": {
+            "byName": {
+              "Bash": 42,
+              "Edit": 19,
+              "Read": 10,
+              "Write": 3
+            },
+            "total": 74
+          },
+          "toolResultChars": {
+            "byName": {
+              "Bash": 42058,
+              "Edit": 4236,
+              "Read": 51094,
+              "Write": 705
+            },
+            "total": 98093
+          },
+          "turns": 75,
+          "turnsPerRun": {
+            "max": 22,
+            "mean": 18.8,
+            "median": 20.5,
+            "min": 12
+          },
+          "weightedCost": 722404.1
+        },
+        "re-reviewer": {
+          "cacheCreation": {
+            "later": 6364,
+            "turn1": 17806
+          },
+          "costSharePercent": {
+            "cacheCreation": 59.6,
+            "cacheRead": 33.1,
+            "input": 0.0,
+            "output": 7.3
+          },
+          "models": [
+            "claude-sonnet-5"
+          ],
+          "runs": 1,
+          "tokens": {
+            "cacheCreation": 24170,
+            "cacheRead": 167771,
+            "input": 8,
+            "output": 740
+          },
+          "toolCalls": {
+            "byName": {
+              "Bash": 3
+            },
+            "total": 3
+          },
+          "toolResultChars": {
+            "byName": {
+              "Bash": 4666
+            },
+            "total": 4666
+          },
+          "turns": 4,
+          "turnsPerRun": {
+            "max": 4,
+            "mean": 4.0,
+            "median": 4,
+            "min": 4
+          },
+          "weightedCost": 50697.6
+        },
+        "task-reviewer": {
+          "cacheCreation": {
+            "later": 60116,
+            "turn1": 74468
+          },
+          "costSharePercent": {
+            "cacheCreation": 55.6,
+            "cacheRead": 41.1,
+            "input": 0.0,
+            "output": 3.3
+          },
+          "models": [
+            "claude-opus-5",
+            "claude-sonnet-5"
+          ],
+          "runs": 3,
+          "tokens": {
+            "cacheCreation": 134584,
+            "cacheRead": 1244445,
+            "input": 48,
+            "output": 2010
+          },
+          "toolCalls": {
+            "byName": {
+              "Bash": 20,
+              "Read": 5
+            },
+            "total": 25
+          },
+          "toolResultChars": {
+            "byName": {
+              "Bash": 60613,
+              "Read": 46425
+            },
+            "total": 107038
+          },
+          "turns": 24,
+          "turnsPerRun": {
+            "max": 12,
+            "mean": 8.0,
+            "median": 8,
+            "min": 4
+          },
+          "weightedCost": 302772.5
+        }
+      },
+      "coordinatorMessages": 0,
+      "dispatchesByRole": {
+        "final-reviewer": 1,
+        "implementer": 4,
+        "re-reviewer": 1,
+        "task-reviewer": 3
+      },
+      "fixRoundsLabelled": 0,
+      "planSlug": "execution-1",
+      "tasks": [
+        1,
+        2,
+        3
+      ],
+      "totals": {
+        "cacheCreation": {
+          "later": 190319,
+          "turn1": 245350
+        },
+        "costSharePercent": {
+          "cacheCreation": 43.2,
+          "cacheRead": 51.7,
+          "input": 0.0,
+          "output": 5.1
+        },
+        "runs": 9,
+        "tokens": {
+          "cacheCreation": 435669,
+          "cacheRead": 6518743,
+          "input": 318,
+          "output": 12887
+        },
+        "toolCalls": {
+          "byName": {
+            "Bash": 80,
+            "Edit": 19,
+            "Read": 17,
+            "Write": 3
+          },
+          "total": 119
+        },
+        "toolResultChars": {
+          "byName": {
+            "Bash": 162701,
+            "Edit": 4236,
+            "Read": 111983,
+            "Write": 705
+          },
+          "total": 279625
+        },
+        "turns": 120,
+        "turnsPerRun": {
+          "max": 22,
+          "mean": 13.3,
+          "median": 12,
+          "min": 4
+        },
+        "weightedCost": 1261213.6
+      }
+    },
+    {
+      "byRole": {
+        "final-reviewer": {
+          "cacheCreation": {
+            "later": 67137,
+            "turn1": 40792
+          },
+          "costSharePercent": {
+            "cacheCreation": 34.0,
+            "cacheRead": 57.6,
+            "input": 0.0,
+            "output": 8.4
+          },
+          "models": [
+            "claude-opus-5"
+          ],
+          "runs": 1,
+          "tokens": {
+            "cacheCreation": 107929,
+            "cacheRead": 2286273,
+            "input": 58,
+            "output": 6641
+          },
+          "toolCalls": {
+            "byName": {
+              "Bash": 28
+            },
+            "total": 28
+          },
+          "toolResultChars": {
+            "byName": {
+              "Bash": 101277
+            },
+            "total": 101277
+          },
+          "turns": 29,
+          "turnsPerRun": {
+            "max": 29,
+            "mean": 29.0,
+            "median": 29,
+            "min": 29
+          },
+          "weightedCost": 396801.6
+        },
+        "implementer": {
+          "cacheCreation": {
+            "later": 372653,
+            "turn1": 173365
+          },
+          "costSharePercent": {
+            "cacheCreation": 40.0,
+            "cacheRead": 51.4,
+            "input": 0.0,
+            "output": 8.5
+          },
+          "models": [
+            "claude-haiku-4-5-20251001",
+            "claude-sonnet-5"
+          ],
+          "runs": 8,
+          "tokens": {
+            "cacheCreation": 546018,
+            "cacheRead": 8757073,
+            "input": 712,
+            "output": 29084
+          },
+          "toolCalls": {
+            "byName": {
+              "Bash": 100,
+              "Edit": 16,
+              "Read": 21,
+              "Write": 16
+            },
+            "total": 153
+          },
+          "toolResultChars": {
+            "byName": {
+              "Bash": 109019,
+              "Edit": 2838,
+              "Read": 133388,
+              "Write": 2929
+            },
+            "total": 248174
+          },
+          "turns": 160,
+          "turnsPerRun": {
+            "max": 37,
+            "mean": 20.0,
+            "median": 17.0,
+            "min": 11
+          },
+          "weightedCost": 1704361.8
+        },
+        "re-reviewer": {
+          "cacheCreation": {
+            "later": 46571,
+            "turn1": 48367
+          },
+          "costSharePercent": {
+            "cacheCreation": 72.1,
+            "cacheRead": 23.6,
+            "input": 0.0,
+            "output": 4.2
+          },
+          "models": [
+            "claude-haiku-4-5-20251001",
+            "claude-sonnet-5"
+          ],
+          "runs": 2,
+          "tokens": {
+            "cacheCreation": 94938,
+            "cacheRead": 389150,
+            "input": 30,
+            "output": 1390
+          },
+          "toolCalls": {
+            "byName": {
+              "Bash": 4,
+              "Read": 9
+            },
+            "total": 13
+          },
+          "toolResultChars": {
+            "byName": {
+              "Bash": 7708,
+              "Read": 77307
+            },
+            "total": 85015
+          },
+          "turns": 8,
+          "turnsPerRun": {
+            "max": 6,
+            "mean": 4.0,
+            "median": 4.0,
+            "min": 2
+          },
+          "weightedCost": 164567.5
+        },
+        "task-reviewer": {
+          "cacheCreation": {
+            "later": 181445,
+            "turn1": 162228
+          },
+          "costSharePercent": {
+            "cacheCreation": 52.2,
+            "cacheRead": 35.1,
+            "input": 0.0,
+            "output": 12.6
+          },
+          "models": [
+            "claude-sonnet-5"
+          ],
+          "runs": 7,
+          "tokens": {
+            "cacheCreation": 343673,
+            "cacheRead": 2889590,
+            "input": 98,
+            "output": 20805
+          },
+          "toolCalls": {
+            "byName": {
+              "Bash": 43,
+              "Read": 21
+            },
+            "total": 64
+          },
+          "toolResultChars": {
+            "byName": {
+              "Bash": 95854,
+              "Read": 130192
+            },
+            "total": 226046
+          },
+          "turns": 49,
+          "turnsPerRun": {
+            "max": 14,
+            "mean": 7.0,
+            "median": 6,
+            "min": 3
+          },
+          "weightedCost": 822673.2
+        }
+      },
+      "coordinatorMessages": 2,
+      "dispatchesByRole": {
+        "final-reviewer": 1,
+        "implementer": 8,
+        "re-reviewer": 2,
+        "task-reviewer": 7
+      },
+      "fixRoundsLabelled": 0,
+      "planSlug": "execution-2",
+      "tasks": [
+        2,
+        3,
+        4,
+        5,
+        6,
+        7,
+        8,
+        9
+      ],
+      "totals": {
+        "cacheCreation": {
+          "later": 667806,
+          "turn1": 424752
+        },
+        "costSharePercent": {
+          "cacheCreation": 44.2,
+          "cacheRead": 46.4,
+          "input": 0.0,
+          "output": 9.4
+        },
+        "runs": 18,
+        "tokens": {
+          "cacheCreation": 1092558,
+          "cacheRead": 14322086,
+          "input": 898,
+          "output": 57920
+        },
+        "toolCalls": {
+          "byName": {
+            "Bash": 175,
+            "Edit": 16,
+            "Read": 51,
+            "Write": 16
+          },
+          "total": 258
+        },
+        "toolResultChars": {
+          "byName": {
+            "Bash": 313858,
+            "Edit": 2838,
+            "Read": 340887,
+            "Write": 2929
+          },
+          "total": 660512
+        },
+        "turns": 246,
+        "turnsPerRun": {
+          "max": 37,
+          "mean": 13.7,
+          "median": 12.5,
+          "min": 2
+        },
+        "weightedCost": 3088404.1
+      }
+    },
+    {
+      "byRole": {
+        "implementer": {
+          "cacheCreation": {
+            "later": 689179,
+            "turn1": 154275
+          },
+          "costSharePercent": {
+            "cacheCreation": 35.9,
+            "cacheRead": 50.5,
+            "input": 0.0,
+            "output": 13.6
+          },
+          "models": [
+            "claude-haiku-4-5-20251001",
+            "claude-opus-5"
+          ],
+          "runs": 5,
+          "tokens": {
+            "cacheCreation": 843454,
+            "cacheRead": 14828220,
+            "input": 1350,
+            "output": 79847
+          },
+          "toolCalls": {
+            "byName": {
+              "Bash": 109,
+              "Edit": 47,
+              "Read": 40,
+              "Write": 10
+            },
+            "total": 206
+          },
+          "toolResultChars": {
+            "byName": {
+              "Bash": 150030,
+              "Edit": 9021,
+              "Read": 181457,
+              "Write": 1941
+            },
+            "total": 342449
+          },
+          "turns": 201,
+          "turnsPerRun": {
+            "max": 74,
+            "mean": 40.2,
+            "median": 31,
+            "min": 24
+          },
+          "weightedCost": 2937724.5
+        },
+        "re-reviewer": {
+          "cacheCreation": {
+            "later": 127532,
+            "turn1": 117894
+          },
+          "costSharePercent": {
+            "cacheCreation": 45.6,
+            "cacheRead": 44.3,
+            "input": 0.0,
+            "output": 10.0
+          },
+          "models": [
+            "claude-sonnet-5"
+          ],
+          "runs": 5,
+          "tokens": {
+            "cacheCreation": 245426,
+            "cacheRead": 2982911,
+            "input": 102,
+            "output": 13509
+          },
+          "toolCalls": {
+            "byName": {
+              "Bash": 41,
+              "Read": 10
+            },
+            "total": 51
+          },
+          "toolResultChars": {
+            "byName": {
+              "Bash": 84203,
+              "Read": 102048
+            },
+            "total": 186251
+          },
+          "turns": 51,
+          "turnsPerRun": {
+            "max": 18,
+            "mean": 10.2,
+            "median": 11,
+            "min": 3
+          },
+          "weightedCost": 672720.6
+        },
+        "task-reviewer": {
+          "cacheCreation": {
+            "later": 193322,
+            "turn1": 169638
+          },
+          "costSharePercent": {
+            "cacheCreation": 44.3,
+            "cacheRead": 45.4,
+            "input": 0.0,
+            "output": 10.2
+          },
+          "models": [
+            "claude-opus-5",
+            "claude-sonnet-5"
+          ],
+          "runs": 5,
+          "tokens": {
+            "cacheCreation": 362960,
+            "cacheRead": 4650521,
+            "input": 124,
+            "output": 20901
+          },
+          "toolCalls": {
+            "byName": {
+              "Bash": 41,
+              "Read": 26,
+              "ToolSearch": 1,
+              "ctx_execute_file": 1,
+              "mcp__plugin_context-mode_context-mode__ctx_execute_file": 1
+            },
+            "total": 70
+          },
+          "toolResultChars": {
+            "byName": {
+              "Bash": 83048,
+              "Read": 229353,
+              "ToolSearch": 0,
+              "ctx_execute_file": 80,
+              "mcp__plugin_context-mode_context-mode__ctx_execute_file": 3343
+            },
+            "total": 315824
+          },
+          "turns": 62,
+          "turnsPerRun": {
+            "max": 35,
+            "mean": 12.4,
+            "median": 7,
+            "min": 5
+          },
+          "weightedCost": 1023381.1
+        }
+      },
+      "coordinatorMessages": 6,
+      "dispatchesByRole": {
+        "implementer": 5,
+        "re-reviewer": 5,
+        "task-reviewer": 5
+      },
+      "fixRoundsLabelled": 6,
+      "planSlug": "execution-3",
+      "tasks": [
+        1,
+        2,
+        3,
+        4,
+        5
+      ],
+      "totals": {
+        "cacheCreation": {
+          "later": 1010033,
+          "turn1": 441807
+        },
+        "costSharePercent": {
+          "cacheCreation": 39.2,
+          "cacheRead": 48.5,
+          "input": 0.0,
+          "output": 12.3
+        },
+        "runs": 15,
+        "tokens": {
+          "cacheCreation": 1451840,
+          "cacheRead": 22461652,
+          "input": 1576,
+          "output": 114257
+        },
+        "toolCalls": {
+          "byName": {
+            "Bash": 191,
+            "Edit": 47,
+            "Read": 76,
+            "ToolSearch": 1,
+            "Write": 10,
+            "ctx_execute_file": 1,
+            "mcp__plugin_context-mode_context-mode__ctx_execute_file": 1
+          },
+          "total": 327
+        },
+        "toolResultChars": {
+          "byName": {
+            "Bash": 317281,
+            "Edit": 9021,
+            "Read": 512858,
+            "ToolSearch": 0,
+            "Write": 1941,
+            "ctx_execute_file": 80,
+            "mcp__plugin_context-mode_context-mode__ctx_execute_file": 3343
+          },
+          "total": 844524
+        },
+        "turns": 314,
+        "turnsPerRun": {
+          "max": 74,
+          "mean": 20.9,
+          "median": 12,
+          "min": 3
+        },
+        "weightedCost": 4633826.2
+      }
+    }
+  ],
+  "priceRatios": {
+    "cacheCreation": 1.25,
+    "cacheRead": 0.1,
+    "input": 1.0,
+    "output": 5.0
+  },
+  "runs": [
+    {
+      "agentId": "a19e27751e36c66c2",
+      "agentType": "general-purpose",
+      "attributed": true,
+      "cacheCreation": {
+        "later": 39274,
+        "turn1": 18098
+      },
+      "coordinatorMessages": 0,
+      "durationSeconds": 161.6,
+      "fixRoundsLabelled": 0,
+      "gitBranch": null,
+      "model": "claude-opus-5",
+      "modelChangedMidRun": false,
+      "planSlug": "execution-1",
+      "role": "final-reviewer",
+      "scope": "branch",
+      "sessionId": null,
+      "taskNumber": null,
+      "tokens": {
+        "cacheCreation": 57372,
+        "cacheRead": 1040704,
+        "input": 34,
+        "output": 1904
+      },
+      "toolCalls": {
+        "byName": {
+          "Bash": 15,
+          "Read": 2
+        },
+        "total": 17
+      },
+      "toolResultChars": {
+        "byName": {
+          "Bash": 55364,
+          "Read": 14464
+        },
+        "total": 69828
+      },
+      "turns": 17,
+      "weightedCost": 185339.4
+    },
+    {
+      "agentId": "a44d084c11c2be795",
+      "agentType": "general-purpose",
+      "attributed": true,
+      "cacheCreation": {
+        "later": 24535,
+        "turn1": 43932
+      },
+      "coordinatorMessages": 0,
+      "durationSeconds": 308.5,
+      "fixRoundsLabelled": 0,
+      "gitBranch": null,
+      "model": "claude-sonnet-5",
+      "modelChangedMidRun": false,
+      "planSlug": "execution-1",
+      "role": "implementer",
+      "scope": "task",
+      "sessionId": null,
+      "taskNumber": 1,
+      "tokens": {
+        "cacheCreation": 68467,
+        "cacheRead": 1256773,
+        "input": 44,
+        "output": 1892
+      },
+      "toolCalls": {
+        "byName": {
+          "Bash": 10,
+          "Edit": 5,
+          "Read": 5,
+          "Write": 1
+        },
+        "total": 21
+      },
+      "toolResultChars": {
+        "byName": {
+          "Bash": 7692,
+          "Edit": 1079,
+          "Read": 17127,
+          "Write": 235
+        },
+        "total": 26133
+      },
+      "turns": 22,
+      "weightedCost": 220765.0
+    },
+    {
+      "agentId": "afa7103e12b0fb129",
+      "agentType": "general-purpose",
+      "attributed": true,
+      "cacheCreation": {
+        "later": 17068,
+        "turn1": 17995
+      },
+      "coordinatorMessages": 0,
+      "durationSeconds": 42.6,
+      "fixRoundsLabelled": 0,
+      "gitBranch": null,
+      "model": "claude-sonnet-5",
+      "modelChangedMidRun": false,
+      "planSlug": "execution-1",
+      "role": "task-reviewer",
+      "scope": "task",
+      "sessionId": null,
+      "taskNumber": 1,
+      "tokens": {
+        "cacheCreation": 35063,
+        "cacheRead": 189031,
+        "input": 8,
+        "output": 1045
+      },
+      "toolCalls": {
+        "byName": {
+          "Bash": 3,
+          "Read": 3
+        },
+        "total": 6
+      },
+      "toolResultChars": {
+        "byName": {
+          "Bash": 706,
+          "Read": 25661
+        },
+        "total": 26367
+      },
+      "turns": 4,
+      "weightedCost": 67964.9
+    },
+    {
+      "agentId": "a84e20b128dda1207",
+      "agentType": "general-purpose",
+      "attributed": true,
+      "cacheCreation": {
+        "later": 13323,
+        "turn1": 17932
+      },
+      "coordinatorMessages": 0,
+      "durationSeconds": 46.9,
+      "fixRoundsLabelled": 0,
+      "gitBranch": null,
+      "model": "claude-sonnet-5",
+      "modelChangedMidRun": false,
+      "planSlug": "execution-1",
+      "role": "task-reviewer",
+      "scope": "task",
+      "sessionId": null,
+      "taskNumber": 2,
+      "tokens": {
+        "cacheCreation": 31255,
+        "cacheRead": 392419,
+        "input": 16,
+        "output": 236
+      },
+      "toolCalls": {
+        "byName": {
+          "Bash": 7
+        },
+        "total": 7
+      },
+      "toolResultChars": {
+        "byName": {
+          "Bash": 22258
+        },
+        "total": 22258
+      },
+      "turns": 8,
+      "weightedCost": 79506.6
+    },
+    {
+      "agentId": "ae5bb897ab196b8d4",
+      "agentType": "general-purpose",
+      "attributed": true,
+      "cacheCreation": {
+        "later": 12791,
+        "turn1": 28421
+      },
+      "coordinatorMessages": 0,
+      "durationSeconds": 77.5,
+      "fixRoundsLabelled": 0,
+      "gitBranch": null,
+      "model": "claude-haiku-4-5-20251001",
+      "modelChangedMidRun": false,
+      "planSlug": "execution-1",
+      "role": "implementer",
+      "scope": "task",
+      "sessionId": null,
+      "taskNumber": 2,
+      "tokens": {
+        "cacheCreation": 41212,
+        "cacheRead": 404476,
+        "input": 102,
+        "output": 628
+      },
+      "toolCalls": {
+        "byName": {
+          "Bash": 5,
+          "Edit": 2,
+          "Read": 3,
+          "Write": 1
+        },
+        "total": 11
+      },
+      "toolResultChars": {
+        "byName": {
+          "Bash": 4104,
+          "Edit": 430,
+          "Read": 9081,
+          "Write": 235
+        },
+        "total": 13850
+      },
+      "turns": 12,
+      "weightedCost": 95204.6
+    },
+    {
+      "agentId": "a02ff7cd5ea61b78f",
+      "agentType": "general-purpose",
+      "attributed": true,
+      "cacheCreation": {
+        "later": 29725,
+        "turn1": 38541
+      },
+      "coordinatorMessages": 0,
+      "durationSeconds": 87.9,
+      "fixRoundsLabelled": 0,
+      "gitBranch": null,
+      "model": "claude-opus-5",
+      "modelChangedMidRun": false,
+      "planSlug": "execution-1",
+      "role": "task-reviewer",
+      "scope": "task",
+      "sessionId": null,
+      "taskNumber": 3,
+      "tokens": {
+        "cacheCreation": 68266,
+        "cacheRead": 662995,
+        "input": 24,
+        "output": 729
+      },
+      "toolCalls": {
+        "byName": {
+          "Bash": 10,
+          "Read": 2
+        },
+        "total": 12
+      },
+      "toolResultChars": {
+        "byName": {
+          "Bash": 37649,
+          "Read": 20764
+        },
+        "total": 58413
+      },
+      "turns": 12,
+      "weightedCost": 155301.0
+    },
+    {
+      "agentId": "a3439ac01cfa68fbb",
+      "agentType": "general-purpose",
+      "attributed": true,
+      "cacheCreation": {
+        "later": 19325,
+        "turn1": 44086
+      },
+      "coordinatorMessages": 0,
+      "durationSeconds": 112.3,
+      "fixRoundsLabelled": 0,
+      "gitBranch": null,
+      "model": "claude-sonnet-5",
+      "modelChangedMidRun": false,
+      "planSlug": "execution-1",
+      "role": "implementer",
+      "scope": "task",
+      "sessionId": null,
+      "taskNumber": 3,
+      "tokens": {
+        "cacheCreation": 63411,
+        "cacheRead": 1097791,
+        "input": 40,
+        "output": 1521
+      },
+      "toolCalls": {
+        "byName": {
+          "Bash": 17,
+          "Edit": 5
+        },
+        "total": 22
+      },
+      "toolResultChars": {
+        "byName": {
+          "Bash": 23728,
+          "Edit": 1117
+        },
+        "total": 24845
+      },
+      "turns": 20,
+      "weightedCost": 196687.9
+    },
+    {
+      "agentId": "aba6daf299dcadad2",
+      "agentType": "general-purpose",
+      "attributed": true,
+      "cacheCreation": {
+        "later": 6364,
+        "turn1": 17806
+      },
+      "coordinatorMessages": 0,
+      "durationSeconds": 24.6,
+      "fixRoundsLabelled": 0,
+      "gitBranch": null,
+      "model": "claude-sonnet-5",
+      "modelChangedMidRun": false,
+      "planSlug": "execution-1",
+      "role": "re-reviewer",
+      "scope": "task",
+      "sessionId": null,
+      "taskNumber": 3,
+      "tokens": {
+        "cacheCreation": 24170,
+        "cacheRead": 167771,
+        "input": 8,
+        "output": 740
+      },
+      "toolCalls": {
+        "byName": {
+          "Bash": 3
+        },
+        "total": 3
+      },
+      "toolResultChars": {
+        "byName": {
+          "Bash": 4666
+        },
+        "total": 4666
+      },
+      "turns": 4,
+      "weightedCost": 50697.6
+    },
+    {
+      "agentId": "af9befa2f6a8ec097",
+      "agentType": "general-purpose",
+      "attributed": true,
+      "cacheCreation": {
+        "later": 27914,
+        "turn1": 18539
+      },
+      "coordinatorMessages": 0,
+      "durationSeconds": 190.4,
+      "fixRoundsLabelled": 0,
+      "gitBranch": null,
+      "model": "claude-sonnet-5",
+      "modelChangedMidRun": false,
+      "planSlug": "execution-1",
+      "role": "implementer",
+      "scope": "task",
+      "sessionId": null,
+      "taskNumber": 3,
+      "tokens": {
+        "cacheCreation": 46453,
+        "cacheRead": 1306783,
+        "input": 42,
+        "output": 4192
+      },
+      "toolCalls": {
+        "byName": {
+          "Bash": 10,
+          "Edit": 7,
+          "Read": 2,
+          "Write": 1
+        },
+        "total": 20
+      },
+      "toolResultChars": {
+        "byName": {
+          "Bash": 6534,
+          "Edit": 1610,
+          "Read": 24886,
+          "Write": 235
+        },
+        "total": 33265
+      },
+      "turns": 21,
+      "weightedCost": 209746.5
+    },
+    {
+      "agentId": "a01366d8ca423b627",
+      "agentType": "general-purpose",
+      "attributed": true,
+      "cacheCreation": {
+        "later": 36271,
+        "turn1": 19464
+      },
+      "coordinatorMessages": 0,
+      "durationSeconds": 84.4,
+      "fixRoundsLabelled": 0,
+      "gitBranch": null,
+      "model": "claude-sonnet-5",
+      "modelChangedMidRun": false,
+      "planSlug": "execution-2",
+      "role": "re-reviewer",
+      "scope": "branch",
+      "sessionId": null,
+      "taskNumber": null,
+      "tokens": {
+        "cacheCreation": 55735,
+        "cacheRead": 360247,
+        "input": 12,
+        "output": 1388
+      },
+      "toolCalls": {
+        "byName": {
+          "Bash": 4,
+          "Read": 6
+        },
+        "total": 10
+      },
+      "toolResultChars": {
+        "byName": {
+          "Bash": 7708,
+          "Read": 55782
+        },
+        "total": 63490
+      },
+      "turns": 6,
+      "weightedCost": 112645.5
+    },
+    {
+      "agentId": "a13b57fb415a455c5",
+      "agentType": "general-purpose",
+      "attributed": true,
+      "cacheCreation": {
+        "later": 67137,
+        "turn1": 40792
+      },
+      "coordinatorMessages": 0,
+      "durationSeconds": 411.5,
+      "fixRoundsLabelled": 0,
+      "gitBranch": null,
+      "model": "claude-opus-5",
+      "modelChangedMidRun": false,
+      "planSlug": "execution-2",
+      "role": "final-reviewer",
+      "scope": "branch",
+      "sessionId": null,
+      "taskNumber": null,
+      "tokens": {
+        "cacheCreation": 107929,
+        "cacheRead": 2286273,
+        "input": 58,
+        "output": 6641
+      },
+      "toolCalls": {
+        "byName": {
+          "Bash": 28
+        },
+        "total": 28
+      },
+      "toolResultChars": {
+        "byName": {
+          "Bash": 101277
+        },
+        "total": 101277
+      },
+      "turns": 29,
+      "weightedCost": 396801.6
+    },
+    {
+      "agentId": "a2b4548871eb2b324",
+      "agentType": "general-purpose",
+      "attributed": true,
+      "cacheCreation": {
+        "later": 17831,
+        "turn1": 45255
+      },
+      "coordinatorMessages": 0,
+      "durationSeconds": 72.4,
+      "fixRoundsLabelled": 0,
+      "gitBranch": null,
+      "model": "claude-sonnet-5",
+      "modelChangedMidRun": false,
+      "planSlug": "execution-2",
+      "role": "task-reviewer",
+      "scope": "task",
+      "sessionId": null,
+      "taskNumber": 2,
+      "tokens": {
+        "cacheCreation": 63086,
+        "cacheRead": 283430,
+        "input": 12,
+        "output": 239
+      },
+      "toolCalls": {
+        "byName": {
+          "Bash": 3,
+          "Read": 3
+        },
+        "total": 6
+      },
+      "toolResultChars": {
+        "byName": {
+          "Bash": 1200,
+          "Read": 20421
+        },
+        "total": 21621
+      },
+      "turns": 6,
+      "weightedCost": 108407.5
+    },
+    {
+      "agentId": "acaaafb5c33abb294",
+      "agentType": "general-purpose",
+      "attributed": true,
+      "cacheCreation": {
+        "later": 21773,
+        "turn1": 28890
+      },
+      "coordinatorMessages": 0,
+      "durationSeconds": 160.4,
+      "fixRoundsLabelled": 0,
+      "gitBranch": null,
+      "model": "claude-haiku-4-5-20251001",
+      "modelChangedMidRun": false,
+      "planSlug": "execution-2",
+      "role": "implementer",
+      "scope": "task",
+      "sessionId": null,
+      "taskNumber": 2,
+      "tokens": {
+        "cacheCreation": 50663,
+        "cacheRead": 636720,
+        "input": 130,
+        "output": 2345
+      },
+      "toolCalls": {
+        "byName": {
+          "Bash": 8,
+          "Edit": 3,
+          "Read": 2,
+          "Write": 2
+        },
+        "total": 15
+      },
+      "toolResultChars": {
+        "byName": {
+          "Bash": 8752,
+          "Edit": 531,
+          "Read": 23070,
+          "Write": 369
+        },
+        "total": 32722
+      },
+      "turns": 16,
+      "weightedCost": 138855.8
+    },
+    {
+      "agentId": "a06815c4577341f85",
+      "agentType": "general-purpose",
+      "attributed": true,
+      "cacheCreation": {
+        "later": 13356,
+        "turn1": 19359
+      },
+      "coordinatorMessages": 0,
+      "durationSeconds": 48.6,
+      "fixRoundsLabelled": 0,
+      "gitBranch": null,
+      "model": "claude-sonnet-5",
+      "modelChangedMidRun": false,
+      "planSlug": "execution-2",
+      "role": "task-reviewer",
+      "scope": "task",
+      "sessionId": null,
+      "taskNumber": 3,
+      "tokens": {
+        "cacheCreation": 32715,
+        "cacheRead": 125803,
+        "input": 6,
+        "output": 1477
+      },
+      "toolCalls": {
+        "byName": {
+          "Read": 4
+        },
+        "total": 4
+      },
+      "toolResultChars": {
+        "byName": {
+          "Read": 15921
+        },
+        "total": 15921
+      },
+      "turns": 3,
+      "weightedCost": 60865.1
+    },
+    {
+      "agentId": "ab4b88edcd814a6f5",
+      "agentType": "general-purpose",
+      "attributed": true,
+      "cacheCreation": {
+        "later": 17398,
+        "turn1": 9172
+      },
+      "coordinatorMessages": 0,
+      "durationSeconds": 140.7,
+      "fixRoundsLabelled": 0,
+      "gitBranch": null,
+      "model": "claude-haiku-4-5-20251001",
+      "modelChangedMidRun": false,
+      "planSlug": "execution-2",
+      "role": "implementer",
+      "scope": "task",
+      "sessionId": null,
+      "taskNumber": 3,
+      "tokens": {
+        "cacheCreation": 26570,
+        "cacheRead": 644694,
+        "input": 138,
+        "output": 2306
+      },
+      "toolCalls": {
+        "byName": {
+          "Bash": 10,
+          "Edit": 2,
+          "Read": 3,
+          "Write": 1
+        },
+        "total": 16
+      },
+      "toolResultChars": {
+        "byName": {
+          "Bash": 11790,
+          "Edit": 346,
+          "Read": 11793,
+          "Write": 195
+        },
+        "total": 24124
+      },
+      "turns": 17,
+      "weightedCost": 109349.9
+    },
+    {
+      "agentId": "a14ab67ac80eba942",
+      "agentType": "general-purpose",
+      "attributed": true,
+      "cacheCreation": {
+        "later": 21456,
+        "turn1": 19568
+      },
+      "coordinatorMessages": 0,
+      "durationSeconds": 131.7,
+      "fixRoundsLabelled": 0,
+      "gitBranch": null,
+      "model": "claude-sonnet-5",
+      "modelChangedMidRun": false,
+      "planSlug": "execution-2",
+      "role": "task-reviewer",
+      "scope": "task",
+      "sessionId": null,
+      "taskNumber": 4,
+      "tokens": {
+        "cacheCreation": 41024,
+        "cacheRead": 314681,
+        "input": 12,
+        "output": 374
+      },
+      "toolCalls": {
+        "byName": {
+          "Bash": 3,
+          "Read": 3
+        },
+        "total": 6
+      },
+      "toolResultChars": {
+        "byName": {
+          "Bash": 3952,
+          "Read": 19656
+        },
+        "total": 23608
+      },
+      "turns": 6,
+      "weightedCost": 84630.1
+    },
+    {
+      "agentId": "a5fa0ab6abfd4ae38",
+      "agentType": "general-purpose",
+      "attributed": true,
+      "cacheCreation": {
+        "later": 18031,
+        "turn1": 19219
+      },
+      "coordinatorMessages": 0,
+      "durationSeconds": 208.9,
+      "fixRoundsLabelled": 0,
+      "gitBranch": null,
+      "model": "claude-sonnet-5",
+      "modelChangedMidRun": false,
+      "planSlug": "execution-2",
+      "role": "implementer",
+      "scope": "task",
+      "sessionId": null,
+      "taskNumber": 4,
+      "tokens": {
+        "cacheCreation": 37250,
+        "cacheRead": 931829,
+        "input": 34,
+        "output": 313
+      },
+      "toolCalls": {
+        "byName": {
+          "Bash": 11,
+          "Edit": 1,
+          "Read": 1,
+          "Write": 3
+        },
+        "total": 16
+      },
+      "toolResultChars": {
+        "byName": {
+          "Bash": 6737,
+          "Edit": 167,
+          "Read": 7446,
+          "Write": 539
+        },
+        "total": 14889
+      },
+      "turns": 17,
+      "weightedCost": 141344.4
+    },
+    {
+      "agentId": "a1682ccbecc606e0d",
+      "agentType": "general-purpose",
+      "attributed": true,
+      "cacheCreation": {
+        "later": 111376,
+        "turn1": 19534
+      },
+      "coordinatorMessages": 1,
+      "durationSeconds": 365.1,
+      "fixRoundsLabelled": 0,
+      "gitBranch": null,
+      "model": "claude-sonnet-5",
+      "modelChangedMidRun": false,
+      "planSlug": "execution-2",
+      "role": "implementer",
+      "scope": "task",
+      "sessionId": null,
+      "taskNumber": 5,
+      "tokens": {
+        "cacheCreation": 130910,
+        "cacheRead": 1682408,
+        "input": 52,
+        "output": 4199
+      },
+      "toolCalls": {
+        "byName": {
+          "Bash": 14,
+          "Edit": 5,
+          "Read": 4,
+          "Write": 3
+        },
+        "total": 26
+      },
+      "toolResultChars": {
+        "byName": {
+          "Bash": 15134,
+          "Edit": 941,
+          "Read": 20063,
+          "Write": 543
+        },
+        "total": 36681
+      },
+      "turns": 26,
+      "weightedCost": 352925.3
+    },
+    {
+      "agentId": "a1773fafb5c41e6b4",
+      "agentType": "general-purpose",
+      "attributed": true,
+      "cacheCreation": {
+        "later": 27669,
+        "turn1": 20008
+      },
+      "coordinatorMessages": 0,
+      "durationSeconds": 130.5,
+      "fixRoundsLabelled": 0,
+      "gitBranch": null,
+      "model": "claude-sonnet-5",
+      "modelChangedMidRun": false,
+      "planSlug": "execution-2",
+      "role": "task-reviewer",
+      "scope": "task",
+      "sessionId": null,
+      "taskNumber": 5,
+      "tokens": {
+        "cacheCreation": 47677,
+        "cacheRead": 330928,
+        "input": 12,
+        "output": 3170
+      },
+      "toolCalls": {
+        "byName": {
+          "Bash": 3,
+          "Read": 4
+        },
+        "total": 7
+      },
+      "toolResultChars": {
+        "byName": {
+          "Bash": 975,
+          "Read": 37787
+        },
+        "total": 38762
+      },
+      "turns": 6,
+      "weightedCost": 108551.1
+    },
+    {
+      "agentId": "a63a1b34e24c70330",
+      "agentType": "general-purpose",
+      "attributed": true,
+      "cacheCreation": {
+        "later": 11438,
+        "turn1": 19078
+      },
+      "coordinatorMessages": 0,
+      "durationSeconds": 40.2,
+      "fixRoundsLabelled": 0,
+      "gitBranch": null,
+      "model": "claude-sonnet-5",
+      "modelChangedMidRun": false,
+      "planSlug": "execution-2",
+      "role": "task-reviewer",
+      "scope": "task",
+      "sessionId": null,
+      "taskNumber": 6,
+      "tokens": {
+        "cacheCreation": 30516,
+        "cacheRead": 178548,
+        "input": 8,
+        "output": 15
+      },
+      "toolCalls": {
+        "byName": {
+          "Bash": 3,
+          "Read": 4
+        },
+        "total": 7
+      },
+      "toolResultChars": {
+        "byName": {
+          "Bash": 1137,
+          "Read": 10681
+        },
+        "total": 11818
+      },
+      "turns": 4,
+      "weightedCost": 56082.8
+    },
+    {
+      "agentId": "a829f2aac1310ffda",
+      "agentType": "general-purpose",
+      "attributed": true,
+      "cacheCreation": {
+        "later": 17374,
+        "turn1": 29215
+      },
+      "coordinatorMessages": 0,
+      "durationSeconds": 151.2,
+      "fixRoundsLabelled": 0,
+      "gitBranch": null,
+      "model": "claude-haiku-4-5-20251001",
+      "modelChangedMidRun": false,
+      "planSlug": "execution-2",
+      "role": "implementer",
+      "scope": "task",
+      "sessionId": null,
+      "taskNumber": 6,
+      "tokens": {
+        "cacheCreation": 46589,
+        "cacheRead": 770279,
+        "input": 162,
+        "output": 2600
+      },
+      "toolCalls": {
+        "byName": {
+          "Bash": 13,
+          "Edit": 1,
+          "Read": 3,
+          "Write": 2
+        },
+        "total": 19
+      },
+      "toolResultChars": {
+        "byName": {
+          "Bash": 3284,
+          "Edit": 165,
+          "Read": 22001,
+          "Write": 339
+        },
+        "total": 25789
+      },
+      "turns": 20,
+      "weightedCost": 148426.2
+    },
+    {
+      "agentId": "a091f002e668d0b5c",
+      "agentType": "general-purpose",
+      "attributed": true,
+      "cacheCreation": {
+        "later": 10300,
+        "turn1": 28903
+      },
+      "coordinatorMessages": 0,
+      "durationSeconds": 40.3,
+      "fixRoundsLabelled": 0,
+      "gitBranch": null,
+      "model": "claude-haiku-4-5-20251001",
+      "modelChangedMidRun": false,
+      "planSlug": "execution-2",
+      "role": "re-reviewer",
+      "scope": "task",
+      "sessionId": null,
+      "taskNumber": 7,
+      "tokens": {
+        "cacheCreation": 39203,
+        "cacheRead": 28903,
+        "input": 18,
+        "output": 2
+      },
+      "toolCalls": {
+        "byName": {
+          "Read": 3
+        },
+        "total": 3
+      },
+      "toolResultChars": {
+        "byName": {
+          "Read": 21525
+        },
+        "total": 21525
+      },
+      "turns": 2,
+      "weightedCost": 51922.1
+    },
+    {
+      "agentId": "a117599f5edb327d2",
+      "agentType": "general-purpose",
+      "attributed": true,
+      "cacheCreation": {
+        "later": 46762,
+        "turn1": 19558
+      },
+      "coordinatorMessages": 0,
+      "durationSeconds": 165.7,
+      "fixRoundsLabelled": 0,
+      "gitBranch": null,
+      "model": "claude-sonnet-5",
+      "modelChangedMidRun": false,
+      "planSlug": "execution-2",
+      "role": "task-reviewer",
+      "scope": "task",
+      "sessionId": null,
+      "taskNumber": 7,
+      "tokens": {
+        "cacheCreation": 66320,
+        "cacheRead": 730250,
+        "input": 20,
+        "output": 5530
+      },
+      "toolCalls": {
+        "byName": {
+          "Bash": 16,
+          "Read": 3
+        },
+        "total": 19
+      },
+      "toolResultChars": {
+        "byName": {
+          "Bash": 51011,
+          "Read": 25726
+        },
+        "total": 76737
+      },
+      "turns": 10,
+      "weightedCost": 183595.0
+    },
+    {
+      "agentId": "a82851d20781ae7e8",
+      "agentType": "general-purpose",
+      "attributed": true,
+      "cacheCreation": {
+        "later": 132551,
+        "turn1": 19566
+      },
+      "coordinatorMessages": 1,
+      "durationSeconds": 578.4,
+      "fixRoundsLabelled": 0,
+      "gitBranch": null,
+      "model": "claude-sonnet-5",
+      "modelChangedMidRun": false,
+      "planSlug": "execution-2",
+      "role": "implementer",
+      "scope": "task",
+      "sessionId": null,
+      "taskNumber": 7,
+      "tokens": {
+        "cacheCreation": 152117,
+        "cacheRead": 2724062,
+        "input": 74,
+        "output": 6522
+      },
+      "toolCalls": {
+        "byName": {
+          "Bash": 27,
+          "Edit": 3,
+          "Read": 3,
+          "Write": 2
+        },
+        "total": 35
+      },
+      "toolResultChars": {
+        "byName": {
+          "Bash": 48944,
+          "Edit": 526,
+          "Read": 8681,
+          "Write": 382
+        },
+        "total": 58533
+      },
+      "turns": 37,
+      "weightedCost": 495236.5
+    },
+    {
+      "agentId": "aefd2691a6d16a0e8",
+      "agentType": "general-purpose",
+      "attributed": true,
+      "cacheCreation": {
+        "later": 36598,
+        "turn1": 18998
+      },
+      "coordinatorMessages": 0,
+      "durationSeconds": 289.1,
+      "fixRoundsLabelled": 0,
+      "gitBranch": null,
+      "model": "claude-sonnet-5",
+      "modelChangedMidRun": false,
+      "planSlug": "execution-2",
+      "role": "implementer",
+      "scope": "task",
+      "sessionId": null,
+      "taskNumber": 8,
+      "tokens": {
+        "cacheCreation": 55596,
+        "cacheRead": 991682,
+        "input": 32,
+        "output": 9365
+      },
+      "toolCalls": {
+        "byName": {
+          "Bash": 12,
+          "Read": 2,
+          "Write": 2
+        },
+        "total": 16
+      },
+      "toolResultChars": {
+        "byName": {
+          "Bash": 11958,
+          "Read": 7732,
+          "Write": 367
+        },
+        "total": 20057
+      },
+      "turns": 16,
+      "weightedCost": 215520.2
+    },
+    {
+      "agentId": "af39bd4deea27c9da",
+      "agentType": "general-purpose",
+      "attributed": true,
+      "cacheCreation": {
+        "later": 42933,
+        "turn1": 19402
+      },
+      "coordinatorMessages": 0,
+      "durationSeconds": 344.5,
+      "fixRoundsLabelled": 0,
+      "gitBranch": null,
+      "model": "claude-sonnet-5",
+      "modelChangedMidRun": false,
+      "planSlug": "execution-2",
+      "role": "task-reviewer",
+      "scope": "task",
+      "sessionId": null,
+      "taskNumber": 8,
+      "tokens": {
+        "cacheCreation": 62335,
+        "cacheRead": 925950,
+        "input": 28,
+        "output": 10000
+      },
+      "toolCalls": {
+        "byName": {
+          "Bash": 15
+        },
+        "total": 15
+      },
+      "toolResultChars": {
+        "byName": {
+          "Bash": 37579
+        },
+        "total": 37579
+      },
+      "turns": 14,
+      "weightedCost": 220541.8
+    },
+    {
+      "agentId": "af674fc07687193dc",
+      "agentType": "general-purpose",
+      "attributed": true,
+      "cacheCreation": {
+        "later": 17552,
+        "turn1": 28771
+      },
+      "coordinatorMessages": 0,
+      "durationSeconds": 116.9,
+      "fixRoundsLabelled": 0,
+      "gitBranch": null,
+      "model": "claude-haiku-4-5-20251001",
+      "modelChangedMidRun": false,
+      "planSlug": "execution-2",
+      "role": "implementer",
+      "scope": "task",
+      "sessionId": null,
+      "taskNumber": 9,
+      "tokens": {
+        "cacheCreation": 46323,
+        "cacheRead": 375399,
+        "input": 90,
+        "output": 1434
+      },
+      "toolCalls": {
+        "byName": {
+          "Bash": 5,
+          "Edit": 1,
+          "Read": 3,
+          "Write": 1
+        },
+        "total": 10
+      },
+      "toolResultChars": {
+        "byName": {
+          "Bash": 2420,
+          "Edit": 162,
+          "Read": 32602,
+          "Write": 195
+        },
+        "total": 35379
+      },
+      "turns": 11,
+      "weightedCost": 102703.6
+    },
+    {
+      "agentId": "a1290d7821feffafb",
+      "agentType": "general-purpose",
+      "attributed": true,
+      "cacheCreation": {
+        "later": 79546,
+        "turn1": 28330
+      },
+      "coordinatorMessages": 1,
+      "durationSeconds": 409.4,
+      "fixRoundsLabelled": 1,
+      "gitBranch": null,
+      "model": "claude-haiku-4-5-20251001",
+      "modelChangedMidRun": false,
+      "planSlug": "execution-3",
+      "role": "implementer",
+      "scope": "task",
+      "sessionId": null,
+      "taskNumber": 1,
+      "tokens": {
+        "cacheCreation": 107876,
+        "cacheRead": 1087017,
+        "input": 212,
+        "output": 7745
+      },
+      "toolCalls": {
+        "byName": {
+          "Bash": 12,
+          "Edit": 4,
+          "Read": 5,
+          "Write": 3
+        },
+        "total": 24
+      },
+      "toolResultChars": {
+        "byName": {
+          "Bash": 9807,
+          "Edit": 680,
+          "Read": 28124,
+          "Write": 574
+        },
+        "total": 39185
+      },
+      "turns": 26,
+      "weightedCost": 282483.7
+    },
+    {
+      "agentId": "a82d9673725fae074",
+      "agentType": "general-purpose",
+      "attributed": true,
+      "cacheCreation": {
+        "later": 33110,
+        "turn1": 18029
+      },
+      "coordinatorMessages": 0,
+      "durationSeconds": 218.6,
+      "fixRoundsLabelled": 0,
+      "gitBranch": null,
+      "model": "claude-sonnet-5",
+      "modelChangedMidRun": false,
+      "planSlug": "execution-3",
+      "role": "re-reviewer",
+      "scope": "task",
+      "sessionId": null,
+      "taskNumber": 1,
+      "tokens": {
+        "cacheCreation": 51139,
+        "cacheRead": 1154806,
+        "input": 36,
+        "output": 2830
+      },
+      "toolCalls": {
+        "byName": {
+          "Bash": 14,
+          "Read": 4
+        },
+        "total": 18
+      },
+      "toolResultChars": {
+        "byName": {
+          "Bash": 12685,
+          "Read": 25227
+        },
+        "total": 37912
+      },
+      "turns": 18,
+      "weightedCost": 193590.4
+    },
+    {
+      "agentId": "af6946e7bb5f18805",
+      "agentType": "general-purpose",
+      "attributed": true,
+      "cacheCreation": {
+        "later": 25425,
+        "turn1": 43968
+      },
+      "coordinatorMessages": 0,
+      "durationSeconds": 108.2,
+      "fixRoundsLabelled": 0,
+      "gitBranch": null,
+      "model": "claude-sonnet-5",
+      "modelChangedMidRun": false,
+      "planSlug": "execution-3",
+      "role": "task-reviewer",
+      "scope": "task",
+      "sessionId": null,
+      "taskNumber": 1,
+      "tokens": {
+        "cacheCreation": 69393,
+        "cacheRead": 358971,
+        "input": 14,
+        "output": 1969
+      },
+      "toolCalls": {
+        "byName": {
+          "Bash": 3,
+          "Read": 5
+        },
+        "total": 8
+      },
+      "toolResultChars": {
+        "byName": {
+          "Bash": 2827,
+          "Read": 39687
+        },
+        "total": 42514
+      },
+      "turns": 7,
+      "weightedCost": 132497.4
+    },
+    {
+      "agentId": "ab1128fe90e99bd55",
+      "agentType": "general-purpose",
+      "attributed": true,
+      "cacheCreation": {
+        "later": 23373,
+        "turn1": 28762
+      },
+      "coordinatorMessages": 0,
+      "durationSeconds": 279.3,
+      "fixRoundsLabelled": 0,
+      "gitBranch": null,
+      "model": "claude-haiku-4-5-20251001",
+      "modelChangedMidRun": false,
+      "planSlug": "execution-3",
+      "role": "implementer",
+      "scope": "task",
+      "sessionId": null,
+      "taskNumber": 2,
+      "tokens": {
+        "cacheCreation": 52135,
+        "cacheRead": 1004055,
+        "input": 194,
+        "output": 3531
+      },
+      "toolCalls": {
+        "byName": {
+          "Bash": 13,
+          "Edit": 5,
+          "Read": 4,
+          "Write": 2
+        },
+        "total": 24
+      },
+      "toolResultChars": {
+        "byName": {
+          "Bash": 11681,
+          "Edit": 975,
+          "Read": 20473,
+          "Write": 393
+        },
+        "total": 33522
+      },
+      "turns": 24,
+      "weightedCost": 183423.2
+    },
+    {
+      "agentId": "ad4fd8e0a52107b60",
+      "agentType": "general-purpose",
+      "attributed": true,
+      "cacheCreation": {
+        "later": 18515,
+        "turn1": 44024
+      },
+      "coordinatorMessages": 0,
+      "durationSeconds": 41.2,
+      "fixRoundsLabelled": 0,
+      "gitBranch": null,
+      "model": "claude-sonnet-5",
+      "modelChangedMidRun": false,
+      "planSlug": "execution-3",
+      "role": "task-reviewer",
+      "scope": "task",
+      "sessionId": null,
+      "taskNumber": 2,
+      "tokens": {
+        "cacheCreation": 62539,
+        "cacheRead": 220336,
+        "input": 10,
+        "output": 18
+      },
+      "toolCalls": {
+        "byName": {
+          "Bash": 2,
+          "Read": 5
+        },
+        "total": 7
+      },
+      "toolResultChars": {
+        "byName": {
+          "Bash": 1928,
+          "Read": 27874
+        },
+        "total": 29802
+      },
+      "turns": 5,
+      "weightedCost": 100307.4
+    },
+    {
+      "agentId": "a1ab4aa3753d8c9ec",
+      "agentType": "general-purpose",
+      "attributed": true,
+      "cacheCreation": {
+        "later": 75870,
+        "turn1": 28729
+      },
+      "coordinatorMessages": 1,
+      "durationSeconds": 399.7,
+      "fixRoundsLabelled": 1,
+      "gitBranch": null,
+      "model": "claude-haiku-4-5-20251001",
+      "modelChangedMidRun": false,
+      "planSlug": "execution-3",
+      "role": "implementer",
+      "scope": "task",
+      "sessionId": null,
+      "taskNumber": 3,
+      "tokens": {
+        "cacheCreation": 104599,
+        "cacheRead": 1322878,
+        "input": 252,
+        "output": 5845
+      },
+      "toolCalls": {
+        "byName": {
+          "Bash": 14,
+          "Edit": 7,
+          "Read": 7,
+          "Write": 1
+        },
+        "total": 29
+      },
+      "toolResultChars": {
+        "byName": {
+          "Bash": 11872,
+          "Edit": 1373,
+          "Read": 21460,
+          "Write": 202
+        },
+        "total": 34907
+      },
+      "turns": 31,
+      "weightedCost": 292513.6
+    },
+    {
+      "agentId": "a1ecc4cc243216945",
+      "agentType": "general-purpose",
+      "attributed": true,
+      "cacheCreation": {
+        "later": 26295,
+        "turn1": 44070
+      },
+      "coordinatorMessages": 0,
+      "durationSeconds": 139.5,
+      "fixRoundsLabelled": 0,
+      "gitBranch": null,
+      "model": "claude-sonnet-5",
+      "modelChangedMidRun": false,
+      "planSlug": "execution-3",
+      "role": "task-reviewer",
+      "scope": "task",
+      "sessionId": null,
+      "taskNumber": 3,
+      "tokens": {
+        "cacheCreation": 70365,
+        "cacheRead": 410811,
+        "input": 16,
+        "output": 2059
+      },
+      "toolCalls": {
+        "byName": {
+          "Bash": 4,
+          "Read": 6
+        },
+        "total": 10
+      },
+      "toolResultChars": {
+        "byName": {
+          "Bash": 5884,
+          "Read": 30984
+        },
+        "total": 36868
+      },
+      "turns": 8,
+      "weightedCost": 139348.4
+    },
+    {
+      "agentId": "add66fdbd93988a0f",
+      "agentType": "general-purpose",
+      "attributed": true,
+      "cacheCreation": {
+        "later": 12588,
+        "turn1": 18251
+      },
+      "coordinatorMessages": 0,
+      "durationSeconds": 59.3,
+      "fixRoundsLabelled": 0,
+      "gitBranch": null,
+      "model": "claude-sonnet-5",
+      "modelChangedMidRun": false,
+      "planSlug": "execution-3",
+      "role": "re-reviewer",
+      "scope": "task",
+      "sessionId": null,
+      "taskNumber": 3,
+      "tokens": {
+        "cacheCreation": 30839,
+        "cacheRead": 117662,
+        "input": 6,
+        "output": 328
+      },
+      "toolCalls": {
+        "byName": {
+          "Bash": 1,
+          "Read": 3
+        },
+        "total": 4
+      },
+      "toolResultChars": {
+        "byName": {
+          "Bash": 78,
+          "Read": 19556
+        },
+        "total": 19634
+      },
+      "turns": 3,
+      "weightedCost": 51960.9
+    },
+    {
+      "agentId": "a17e1424abadbc0d1",
+      "agentType": "general-purpose",
+      "attributed": true,
+      "cacheCreation": {
+        "later": 84486,
+        "turn1": 19122
+      },
+      "coordinatorMessages": 0,
+      "durationSeconds": 365.2,
+      "fixRoundsLabelled": 0,
+      "gitBranch": null,
+      "model": "claude-opus-5",
+      "modelChangedMidRun": false,
+      "planSlug": "execution-3",
+      "role": "task-reviewer",
+      "scope": "task",
+      "sessionId": null,
+      "taskNumber": 4,
+      "tokens": {
+        "cacheCreation": 103608,
+        "cacheRead": 3258698,
+        "input": 70,
+        "output": 9961
+      },
+      "toolCalls": {
+        "byName": {
+          "Bash": 28,
+          "Read": 4,
+          "ToolSearch": 1,
+          "ctx_execute_file": 1,
+          "mcp__plugin_context-mode_context-mode__ctx_execute_file": 1
+        },
+        "total": 35
+      },
+      "toolResultChars": {
+        "byName": {
+          "Bash": 69303,
+          "Read": 63382,
+          "ToolSearch": 0,
+          "ctx_execute_file": 80,
+          "mcp__plugin_context-mode_context-mode__ctx_execute_file": 3343
+        },
+        "total": 136108
+      },
+      "turns": 35,
+      "weightedCost": 505254.8
+    },
+    {
+      "agentId": "a7e235dadd634b21c",
+      "agentType": "general-purpose",
+      "attributed": true,
+      "cacheCreation": {
+        "later": 285192,
+        "turn1": 39374
+      },
+      "coordinatorMessages": 1,
+      "durationSeconds": 1741.3,
+      "fixRoundsLabelled": 1,
+      "gitBranch": null,
+      "model": "claude-opus-5",
+      "modelChangedMidRun": false,
+      "planSlug": "execution-3",
+      "role": "implementer",
+      "scope": "task",
+      "sessionId": null,
+      "taskNumber": 4,
+      "tokens": {
+        "cacheCreation": 324566,
+        "cacheRead": 5281540,
+        "input": 92,
+        "output": 51778
+      },
+      "toolCalls": {
+        "byName": {
+          "Bash": 40,
+          "Edit": 11,
+          "Read": 1,
+          "Write": 3
+        },
+        "total": 55
+      },
+      "toolResultChars": {
+        "byName": {
+          "Bash": 88748,
+          "Edit": 2195,
+          "Read": 5385,
+          "Write": 570
+        },
+        "total": 96898
+      },
+      "turns": 46,
+      "weightedCost": 1192843.5
+    },
+    {
+      "agentId": "a87c766b2e4f8375b",
+      "agentType": "general-purpose",
+      "attributed": true,
+      "cacheCreation": {
+        "later": 35167,
+        "turn1": 44710
+      },
+      "coordinatorMessages": 0,
+      "durationSeconds": 89.2,
+      "fixRoundsLabelled": 0,
+      "gitBranch": null,
+      "model": "claude-sonnet-5",
+      "modelChangedMidRun": false,
+      "planSlug": "execution-3",
+      "role": "re-reviewer",
+      "scope": "task",
+      "sessionId": null,
+      "taskNumber": 4,
+      "tokens": {
+        "cacheCreation": 79877,
+        "cacheRead": 424622,
+        "input": 14,
+        "output": 901
+      },
+      "toolCalls": {
+        "byName": {
+          "Bash": 4,
+          "Read": 3
+        },
+        "total": 7
+      },
+      "toolResultChars": {
+        "byName": {
+          "Bash": 4288,
+          "Read": 57265
+        },
+        "total": 61553
+      },
+      "turns": 7,
+      "weightedCost": 146827.5
+    },
+    {
+      "agentId": "a6484ef0039efe223",
+      "agentType": "general-purpose",
+      "attributed": true,
+      "cacheCreation": {
+        "later": 24797,
+        "turn1": 18543
+      },
+      "coordinatorMessages": 0,
+      "durationSeconds": 119.7,
+      "fixRoundsLabelled": 0,
+      "gitBranch": null,
+      "model": "claude-sonnet-5",
+      "modelChangedMidRun": false,
+      "planSlug": "execution-3",
+      "role": "re-reviewer",
+      "scope": "task",
+      "sessionId": null,
+      "taskNumber": 5,
+      "tokens": {
+        "cacheCreation": 43340,
+        "cacheRead": 621216,
+        "input": 22,
+        "output": 5193
+      },
+      "toolCalls": {
+        "byName": {
+          "Bash": 11
+        },
+        "total": 11
+      },
+      "toolResultChars": {
+        "byName": {
+          "Bash": 33453
+        },
+        "total": 33453
+      },
+      "turns": 11,
+      "weightedCost": 142283.6
+    },
+    {
+      "agentId": "aa10e214ab30924ee",
+      "agentType": "general-purpose",
+      "attributed": true,
+      "cacheCreation": {
+        "later": 38601,
+        "turn1": 18454
+      },
+      "coordinatorMessages": 0,
+      "durationSeconds": 95.1,
+      "fixRoundsLabelled": 0,
+      "gitBranch": null,
+      "model": "claude-sonnet-5",
+      "modelChangedMidRun": false,
+      "planSlug": "execution-3",
+      "role": "task-reviewer",
+      "scope": "task",
+      "sessionId": null,
+      "taskNumber": 5,
+      "tokens": {
+        "cacheCreation": 57055,
+        "cacheRead": 401705,
+        "input": 14,
+        "output": 6894
+      },
+      "toolCalls": {
+        "byName": {
+          "Bash": 4,
+          "Read": 6
+        },
+        "total": 10
+      },
+      "toolResultChars": {
+        "byName": {
+          "Bash": 3106,
+          "Read": 67426
+        },
+        "total": 70532
+      },
+      "turns": 7,
+      "weightedCost": 145973.2
+    },
+    {
+      "agentId": "aabbdbd875e3298a7",
+      "agentType": "general-purpose",
+      "attributed": true,
+      "cacheCreation": {
+        "later": 21870,
+        "turn1": 18361
+      },
+      "coordinatorMessages": 0,
+      "durationSeconds": 97.1,
+      "fixRoundsLabelled": 0,
+      "gitBranch": null,
+      "model": "claude-sonnet-5",
+      "modelChangedMidRun": false,
+      "planSlug": "execution-3",
+      "role": "re-reviewer",
+      "scope": "task",
+      "sessionId": null,
+      "taskNumber": 5,
+      "tokens": {
+        "cacheCreation": 40231,
+        "cacheRead": 664605,
+        "input": 24,
+        "output": 4257
+      },
+      "toolCalls": {
+        "byName": {
+          "Bash": 11
+        },
+        "total": 11
+      },
+      "toolResultChars": {
+        "byName": {
+          "Bash": 33699
+        },
+        "total": 33699
+      },
+      "turns": 12,
+      "weightedCost": 138058.2
+    },
+    {
+      "agentId": "aaddd8a4aed0294bb",
+      "agentType": "general-purpose",
+      "attributed": true,
+      "cacheCreation": {
+        "later": 225198,
+        "turn1": 29080
+      },
+      "coordinatorMessages": 3,
+      "durationSeconds": 1174.7,
+      "fixRoundsLabelled": 3,
+      "gitBranch": null,
+      "model": "claude-haiku-4-5-20251001",
+      "modelChangedMidRun": false,
+      "planSlug": "execution-3",
+      "role": "implementer",
+      "scope": "task",
+      "sessionId": null,
+      "taskNumber": 5,
+      "tokens": {
+        "cacheCreation": 254278,
+        "cacheRead": 6132730,
+        "input": 600,
+        "output": 10948
+      },
+      "toolCalls": {
+        "byName": {
+          "Bash": 30,
+          "Edit": 20,
+          "Read": 23,
+          "Write": 1
+        },
+        "total": 74
+      },
+      "toolResultChars": {
+        "byName": {
+          "Bash": 27922,
+          "Edit": 3798,
+          "Read": 106015,
+          "Write": 202
+        },
+        "total": 137937
+      },
+      "turns": 74,
+      "weightedCost": 986460.5
+    },
+    {
+      "agentId": "a28be62dd55511811",
+      "agentType": "groundwork:recon-context",
+      "attributed": false,
+      "cacheCreation": {
+        "later": 46430,
+        "turn1": 19014
+      },
+      "coordinatorMessages": 0,
+      "durationSeconds": 210.3,
+      "fixRoundsLabelled": 0,
+      "gitBranch": null,
+      "model": "claude-fable-5-1",
+      "modelChangedMidRun": false,
+      "planSlug": null,
+      "role": null,
+      "scope": null,
+      "sessionId": null,
+      "taskNumber": null,
+      "tokens": {
+        "cacheCreation": 65444,
+        "cacheRead": 225787,
+        "input": 194,
+        "output": 739
+      },
+      "toolCalls": {
+        "byName": {
+          "Bash": 23,
+          "ToolSearch": 1
+        },
+        "total": 24
+      },
+      "toolResultChars": {
+        "byName": {
+          "Bash": 93589,
+          "ToolSearch": 146
+        },
+        "total": 93735
+      },
+      "turns": 7,
+      "weightedCost": 108272.7
+    },
+    {
+      "agentId": "a390a527cb418e19a",
+      "agentType": "groundwork:recon-code",
+      "attributed": false,
+      "cacheCreation": {
+        "later": 36671,
+        "turn1": 4720
+      },
+      "coordinatorMessages": 0,
+      "durationSeconds": 140.0,
+      "fixRoundsLabelled": 0,
+      "gitBranch": null,
+      "model": "claude-opus-5",
+      "modelChangedMidRun": false,
+      "planSlug": null,
+      "role": null,
+      "scope": null,
+      "sessionId": null,
+      "taskNumber": null,
+      "tokens": {
+        "cacheCreation": 41391,
+        "cacheRead": 277622,
+        "input": 24,
+        "output": 8873
+      },
+      "toolCalls": {
+        "byName": {
+          "Bash": 17,
+          "ToolSearch": 1
+        },
+        "total": 18
+      },
+      "toolResultChars": {
+        "byName": {
+          "Bash": 65453,
+          "ToolSearch": 146
+        },
+        "total": 65599
+      },
+      "turns": 12,
+      "weightedCost": 123889.9
+    },
+    {
+      "agentId": "a47cb7b08bfa8e531",
+      "agentType": "groundwork:recon-context",
+      "attributed": false,
+      "cacheCreation": {
+        "later": 47418,
+        "turn1": 19076
+      },
+      "coordinatorMessages": 0,
+      "durationSeconds": 219.7,
+      "fixRoundsLabelled": 0,
+      "gitBranch": null,
+      "model": "claude-opus-5",
+      "modelChangedMidRun": false,
+      "planSlug": null,
+      "role": null,
+      "scope": null,
+      "sessionId": null,
+      "taskNumber": null,
+      "tokens": {
+        "cacheCreation": 66494,
+        "cacheRead": 548438,
+        "input": 26,
+        "output": 7491
+      },
+      "toolCalls": {
+        "byName": {
+          "Bash": 18,
+          "Read": 4
+        },
+        "total": 22
+      },
+      "toolResultChars": {
+        "byName": {
+          "Bash": 76708,
+          "Read": 21945
+        },
+        "total": 98653
+      },
+      "turns": 13,
+      "weightedCost": 175442.3
+    },
+    {
+      "agentId": "a529b5da506778b23",
+      "agentType": "groundwork:recon-code",
+      "attributed": false,
+      "cacheCreation": {
+        "later": 37507,
+        "turn1": 7918
+      },
+      "coordinatorMessages": 0,
+      "durationSeconds": 175.9,
+      "fixRoundsLabelled": 0,
+      "gitBranch": null,
+      "model": "claude-opus-5",
+      "modelChangedMidRun": false,
+      "planSlug": null,
+      "role": null,
+      "scope": null,
+      "sessionId": null,
+      "taskNumber": null,
+      "tokens": {
+        "cacheCreation": 45425,
+        "cacheRead": 353435,
+        "input": 28,
+        "output": 2672
+      },
+      "toolCalls": {
+        "byName": {
+          "Bash": 17,
+          "Read": 1,
+          "ToolSearch": 1
+        },
+        "total": 19
+      },
+      "toolResultChars": {
+        "byName": {
+          "Bash": 54390,
+          "Read": 15036,
+          "ToolSearch": 146
+        },
+        "total": 69572
+      },
+      "turns": 14,
+      "weightedCost": 105512.8
+    },
+    {
+      "agentId": "a5d9609beb73a5bd7",
+      "agentType": "groundwork:recon-code",
+      "attributed": false,
+      "cacheCreation": {
+        "later": 34433,
+        "turn1": 7641
+      },
+      "coordinatorMessages": 0,
+      "durationSeconds": 111.3,
+      "fixRoundsLabelled": 0,
+      "gitBranch": null,
+      "model": "claude-fable-5-1",
+      "modelChangedMidRun": false,
+      "planSlug": null,
+      "role": null,
+      "scope": null,
+      "sessionId": null,
+      "taskNumber": null,
+      "tokens": {
+        "cacheCreation": 42074,
+        "cacheRead": 101956,
+        "input": 130,
+        "output": 1001
+      },
+      "toolCalls": {
+        "byName": {
+          "Bash": 7,
+          "Read": 3
+        },
+        "total": 10
+      },
+      "toolResultChars": {
+        "byName": {
+          "Bash": 37276,
+          "Read": 28333
+        },
+        "total": 65609
+      },
+      "turns": 5,
+      "weightedCost": 67923.1
+    },
+    {
+      "agentId": "a66fe11d06787326f",
+      "agentType": "groundwork:recon-context",
+      "attributed": false,
+      "cacheCreation": {
+        "later": 43924,
+        "turn1": 19105
+      },
+      "coordinatorMessages": 0,
+      "durationSeconds": 161.9,
+      "fixRoundsLabelled": 0,
+      "gitBranch": null,
+      "model": "claude-opus-5",
+      "modelChangedMidRun": false,
+      "planSlug": null,
+      "role": null,
+      "scope": null,
+      "sessionId": null,
+      "taskNumber": null,
+      "tokens": {
+        "cacheCreation": 63029,
+        "cacheRead": 719617,
+        "input": 36,
+        "output": 2587
+      },
+      "toolCalls": {
+        "byName": {
+          "Bash": 31
+        },
+        "total": 31
+      },
+      "toolResultChars": {
+        "byName": {
+          "Bash": 87998
+        },
+        "total": 87998
+      },
+      "turns": 18,
+      "weightedCost": 163719.0
+    },
+    {
+      "agentId": "a8013c8b9ce5c8905",
+      "agentType": "groundwork:recon-code",
+      "attributed": false,
+      "cacheCreation": {
+        "later": 27600,
+        "turn1": 4658
+      },
+      "coordinatorMessages": 0,
+      "durationSeconds": 107.4,
+      "fixRoundsLabelled": 0,
+      "gitBranch": null,
+      "model": "claude-opus-5",
+      "modelChangedMidRun": false,
+      "planSlug": null,
+      "role": null,
+      "scope": null,
+      "sessionId": null,
+      "taskNumber": null,
+      "tokens": {
+        "cacheCreation": 32258,
+        "cacheRead": 174776,
+        "input": 18,
+        "output": 5938
+      },
+      "toolCalls": {
+        "byName": {
+          "Bash": 11,
+          "Read": 5
+        },
+        "total": 16
+      },
+      "toolResultChars": {
+        "byName": {
+          "Bash": 17261,
+          "Read": 36029
+        },
+        "total": 53290
+      },
+      "turns": 9,
+      "weightedCost": 87508.1
+    },
+    {
+      "agentId": "a86a1b04f06a98c10",
+      "agentType": "groundwork:recon-external",
+      "attributed": false,
+      "cacheCreation": {
+        "later": 39821,
+        "turn1": 21375
+      },
+      "coordinatorMessages": 0,
+      "durationSeconds": 258.2,
+      "fixRoundsLabelled": 0,
+      "gitBranch": null,
+      "model": "claude-opus-5",
+      "modelChangedMidRun": false,
+      "planSlug": null,
+      "role": null,
+      "scope": null,
+      "sessionId": null,
+      "taskNumber": null,
+      "tokens": {
+        "cacheCreation": 61196,
+        "cacheRead": 959691,
+        "input": 44,
+        "output": 8896
+      },
+      "toolCalls": {
+        "byName": {
+          "Bash": 15,
+          "WebFetch": 3,
+          "mcp__context7__query-docs": 9,
+          "mcp__context7__resolve-library-id": 2
+        },
+        "total": 29
+      },
+      "toolResultChars": {
+        "byName": {
+          "Bash": 32011,
+          "WebFetch": 3604,
+          "mcp__context7__query-docs": 34177,
+          "mcp__context7__resolve-library-id": 3431
+        },
+        "total": 73223
+      },
+      "turns": 22,
+      "weightedCost": 216988.1
+    },
+    {
+      "agentId": "a87df310aabbd76f5",
+      "agentType": "groundwork:recon-code",
+      "attributed": false,
+      "cacheCreation": {
+        "later": 50478,
+        "turn1": 4908
+      },
+      "coordinatorMessages": 0,
+      "durationSeconds": 136.9,
+      "fixRoundsLabelled": 0,
+      "gitBranch": null,
+      "model": "claude-opus-5",
+      "modelChangedMidRun": false,
+      "planSlug": null,
+      "role": null,
+      "scope": null,
+      "sessionId": null,
+      "taskNumber": null,
+      "tokens": {
+        "cacheCreation": 55386,
+        "cacheRead": 349063,
+        "input": 22,
+        "output": 2050
+      },
+      "toolCalls": {
+        "byName": {
+          "Bash": 10,
+          "Read": 5,
+          "ToolSearch": 1
+        },
+        "total": 16
+      },
+      "toolResultChars": {
+        "byName": {
+          "Bash": 57143,
+          "Read": 45916,
+          "ToolSearch": 146
+        },
+        "total": 103205
+      },
+      "turns": 11,
+      "weightedCost": 114410.8
+    },
+    {
+      "agentId": "a8861ffcbab091c2e",
+      "agentType": "groundwork:recon-code",
+      "attributed": false,
+      "cacheCreation": {
+        "later": 34255,
+        "turn1": 4834
+      },
+      "coordinatorMessages": 0,
+      "durationSeconds": 123.7,
+      "fixRoundsLabelled": 0,
+      "gitBranch": null,
+      "model": "claude-opus-5",
+      "modelChangedMidRun": false,
+      "planSlug": null,
+      "role": null,
+      "scope": null,
+      "sessionId": null,
+      "taskNumber": null,
+      "tokens": {
+        "cacheCreation": 39089,
+        "cacheRead": 286320,
+        "input": 26,
+        "output": 5710
+      },
+      "toolCalls": {
+        "byName": {
+          "Bash": 11,
+          "Read": 8,
+          "ToolSearch": 1
+        },
+        "total": 20
+      },
+      "toolResultChars": {
+        "byName": {
+          "Bash": 40657,
+          "Read": 21817,
+          "ToolSearch": 146
+        },
+        "total": 62620
+      },
+      "turns": 13,
+      "weightedCost": 106069.2
+    },
+    {
+      "agentId": "a8865e775aa8b6414",
+      "agentType": "groundwork:recon-code",
+      "attributed": false,
+      "cacheCreation": {
+        "later": 38845,
+        "turn1": 4858
+      },
+      "coordinatorMessages": 0,
+      "durationSeconds": 121.3,
+      "fixRoundsLabelled": 0,
+      "gitBranch": null,
+      "model": "claude-opus-5",
+      "modelChangedMidRun": false,
+      "planSlug": null,
+      "role": null,
+      "scope": null,
+      "sessionId": null,
+      "taskNumber": null,
+      "tokens": {
+        "cacheCreation": 43703,
+        "cacheRead": 258436,
+        "input": 20,
+        "output": 1716
+      },
+      "toolCalls": {
+        "byName": {
+          "Bash": 12,
+          "Read": 6,
+          "ToolSearch": 1
+        },
+        "total": 19
+      },
+      "toolResultChars": {
+        "byName": {
+          "Bash": 35710,
+          "Read": 40771,
+          "ToolSearch": 146
+        },
+        "total": 76627
+      },
+      "turns": 10,
+      "weightedCost": 89072.4
+    },
+    {
+      "agentId": "a8c102314980e3c13",
+      "agentType": "groundwork:recon-context",
+      "attributed": false,
+      "cacheCreation": {
+        "later": 30308,
+        "turn1": 18811
+      },
+      "coordinatorMessages": 0,
+      "durationSeconds": 102.8,
+      "fixRoundsLabelled": 0,
+      "gitBranch": null,
+      "model": "claude-opus-5",
+      "modelChangedMidRun": false,
+      "planSlug": null,
+      "role": null,
+      "scope": null,
+      "sessionId": null,
+      "taskNumber": null,
+      "tokens": {
+        "cacheCreation": 49119,
+        "cacheRead": 188818,
+        "input": 14,
+        "output": 5422
+      },
+      "toolCalls": {
+        "byName": {
+          "Bash": 11
+        },
+        "total": 11
+      },
+      "toolResultChars": {
+        "byName": {
+          "Bash": 72113
+        },
+        "total": 72113
+      },
+      "turns": 7,
+      "weightedCost": 107404.6
+    },
+    {
+      "agentId": "a94bcdd2dd209d706",
+      "agentType": "general-purpose",
+      "attributed": false,
+      "cacheCreation": {
+        "later": 78299,
+        "turn1": 45833
+      },
+      "coordinatorMessages": 0,
+      "durationSeconds": 577.5,
+      "fixRoundsLabelled": 0,
+      "gitBranch": null,
+      "model": "claude-sonnet-5",
+      "modelChangedMidRun": false,
+      "planSlug": null,
+      "role": null,
+      "scope": null,
+      "sessionId": null,
+      "taskNumber": null,
+      "tokens": {
+        "cacheCreation": 124132,
+        "cacheRead": 5667411,
+        "input": 118,
+        "output": 5013
+      },
+      "toolCalls": {
+        "byName": {
+          "Bash": 42,
+          "Edit": 13,
+          "Read": 16,
+          "Write": 1
+        },
+        "total": 72
+      },
+      "toolResultChars": {
+        "byName": {
+          "Bash": 41035,
+          "Edit": 2387,
+          "Read": 66755,
+          "Write": 198
+        },
+        "total": 110375
+      },
+      "turns": 59,
+      "weightedCost": 747089.1
+    },
+    {
+      "agentId": "a9668b8d1479481d7",
+      "agentType": "groundwork:recon-code",
+      "attributed": false,
+      "cacheCreation": {
+        "later": 42206,
+        "turn1": 4690
+      },
+      "coordinatorMessages": 0,
+      "durationSeconds": 136.3,
+      "fixRoundsLabelled": 0,
+      "gitBranch": null,
+      "model": "claude-fable-5-1",
+      "modelChangedMidRun": false,
+      "planSlug": null,
+      "role": null,
+      "scope": null,
+      "sessionId": null,
+      "taskNumber": null,
+      "tokens": {
+        "cacheCreation": 46896,
+        "cacheRead": 139973,
+        "input": 194,
+        "output": 5114
+      },
+      "toolCalls": {
+        "byName": {
+          "Bash": 14
+        },
+        "total": 14
+      },
+      "toolResultChars": {
+        "byName": {
+          "Bash": 88045
+        },
+        "total": 88045
+      },
+      "turns": 7,
+      "weightedCost": 98381.3
+    },
+    {
+      "agentId": "a97f4e1c5c52a655f",
+      "agentType": "groundwork:recon-code",
+      "attributed": false,
+      "cacheCreation": {
+        "later": 21422,
+        "turn1": 7684
+      },
+      "coordinatorMessages": 0,
+      "durationSeconds": 106.1,
+      "fixRoundsLabelled": 0,
+      "gitBranch": null,
+      "model": "claude-opus-5",
+      "modelChangedMidRun": false,
+      "planSlug": null,
+      "role": null,
+      "scope": null,
+      "sessionId": null,
+      "taskNumber": null,
+      "tokens": {
+        "cacheCreation": 29106,
+        "cacheRead": 169194,
+        "input": 20,
+        "output": 1394
+      },
+      "toolCalls": {
+        "byName": {
+          "Bash": 11,
+          "Read": 2
+        },
+        "total": 13
+      },
+      "toolResultChars": {
+        "byName": {
+          "Bash": 16603,
+          "Read": 19858
+        },
+        "total": 36461
+      },
+      "turns": 10,
+      "weightedCost": 60291.9
+    },
+    {
+      "agentId": "a986322f8e9cae4ff",
+      "agentType": "claude-code-guide",
+      "attributed": false,
+      "cacheCreation": {
+        "later": 40129,
+        "turn1": 28525
+      },
+      "coordinatorMessages": 0,
+      "durationSeconds": 265.9,
+      "fixRoundsLabelled": 0,
+      "gitBranch": null,
+      "model": "claude-haiku-4-5-20251001",
+      "modelChangedMidRun": false,
+      "planSlug": null,
+      "role": null,
+      "scope": null,
+      "sessionId": null,
+      "taskNumber": null,
+      "tokens": {
+        "cacheCreation": 68654,
+        "cacheRead": 1210400,
+        "input": 206,
+        "output": 4627
+      },
+      "toolCalls": {
+        "byName": {
+          "Bash": 24,
+          "Read": 2,
+          "WebFetch": 5,
+          "WebSearch": 1
+        },
+        "total": 32
+      },
+      "toolResultChars": {
+        "byName": {
+          "Bash": 38117,
+          "Read": 25418,
+          "WebFetch": 18438,
+          "WebSearch": 2765
+        },
+        "total": 84738
+      },
+      "turns": 25,
+      "weightedCost": 230198.5
+    },
+    {
+      "agentId": "aa24910011a7f1feb",
+      "agentType": "groundwork:recon-external",
+      "attributed": false,
+      "cacheCreation": {
+        "later": 15088,
+        "turn1": 20998
+      },
+      "coordinatorMessages": 0,
+      "durationSeconds": 109.3,
+      "fixRoundsLabelled": 0,
+      "gitBranch": null,
+      "model": "claude-opus-5",
+      "modelChangedMidRun": false,
+      "planSlug": null,
+      "role": null,
+      "scope": null,
+      "sessionId": null,
+      "taskNumber": null,
+      "tokens": {
+        "cacheCreation": 36086,
+        "cacheRead": 188838,
+        "input": 16,
+        "output": 1277
+      },
+      "toolCalls": {
+        "byName": {
+          "Bash": 11
+        },
+        "total": 11
+      },
+      "toolResultChars": {
+        "byName": {
+          "Bash": 34592
+        },
+        "total": 34592
+      },
+      "turns": 8,
+      "weightedCost": 70392.3
+    },
+    {
+      "agentId": "aa6cdc83e2049465b",
+      "agentType": "groundwork:recon-external",
+      "attributed": false,
+      "cacheCreation": {
+        "later": 22884,
+        "turn1": 21083
+      },
+      "coordinatorMessages": 0,
+      "durationSeconds": 95.5,
+      "fixRoundsLabelled": 0,
+      "gitBranch": null,
+      "model": "claude-fable-5-1",
+      "modelChangedMidRun": false,
+      "planSlug": null,
+      "role": null,
+      "scope": null,
+      "sessionId": null,
+      "taskNumber": null,
+      "tokens": {
+        "cacheCreation": 43967,
+        "cacheRead": 119129,
+        "input": 130,
+        "output": 349
+      },
+      "toolCalls": {
+        "byName": {
+          "mcp__context7__query-docs": 13,
+          "mcp__context7__resolve-library-id": 2
+        },
+        "total": 15
+      },
+      "toolResultChars": {
+        "byName": {
+          "mcp__context7__query-docs": 45052,
+          "mcp__context7__resolve-library-id": 3768
+        },
+        "total": 48820
+      },
+      "turns": 5,
+      "weightedCost": 68746.6
+    },
+    {
+      "agentId": "aaf21b4cb992f11ed",
+      "agentType": "groundwork:recon-code",
+      "attributed": false,
+      "cacheCreation": {
+        "later": 41121,
+        "turn1": 7956
+      },
+      "coordinatorMessages": 0,
+      "durationSeconds": 97.9,
+      "fixRoundsLabelled": 0,
+      "gitBranch": null,
+      "model": "claude-opus-5",
+      "modelChangedMidRun": false,
+      "planSlug": null,
+      "role": null,
+      "scope": null,
+      "sessionId": null,
+      "taskNumber": null,
+      "tokens": {
+        "cacheCreation": 49077,
+        "cacheRead": 214384,
+        "input": 16,
+        "output": 916
+      },
+      "toolCalls": {
+        "byName": {
+          "Bash": 8,
+          "Read": 3,
+          "ToolSearch": 1
+        },
+        "total": 12
+      },
+      "toolResultChars": {
+        "byName": {
+          "Bash": 44004,
+          "Read": 43080,
+          "ToolSearch": 146
+        },
+        "total": 87230
+      },
+      "turns": 8,
+      "weightedCost": 87380.6
+    },
+    {
+      "agentId": "ac05c2f19fa400fc5",
+      "agentType": "groundwork:recon-external",
+      "attributed": false,
+      "cacheCreation": {
+        "later": 17144,
+        "turn1": 14864
+      },
+      "coordinatorMessages": 0,
+      "durationSeconds": 117.0,
+      "fixRoundsLabelled": 0,
+      "gitBranch": null,
+      "model": "claude-opus-5",
+      "modelChangedMidRun": false,
+      "planSlug": null,
+      "role": null,
+      "scope": null,
+      "sessionId": null,
+      "taskNumber": null,
+      "tokens": {
+        "cacheCreation": 32008,
+        "cacheRead": 223928,
+        "input": 16,
+        "output": 430
+      },
+      "toolCalls": {
+        "byName": {
+          "WebFetch": 3,
+          "mcp__context7__query-docs": 9,
+          "mcp__context7__resolve-library-id": 2
+        },
+        "total": 14
+      },
+      "toolResultChars": {
+        "byName": {
+          "WebFetch": 956,
+          "mcp__context7__query-docs": 30852,
+          "mcp__context7__resolve-library-id": 3723
+        },
+        "total": 35531
+      },
+      "turns": 8,
+      "weightedCost": 64568.8
+    },
+    {
+      "agentId": "ac07fc1228351fe3a",
+      "agentType": "groundwork:recon-external",
+      "attributed": false,
+      "cacheCreation": {
+        "later": 23388,
+        "turn1": 15247
+      },
+      "coordinatorMessages": 0,
+      "durationSeconds": 150.8,
+      "fixRoundsLabelled": 0,
+      "gitBranch": null,
+      "model": "claude-opus-5",
+      "modelChangedMidRun": false,
+      "planSlug": null,
+      "role": null,
+      "scope": null,
+      "sessionId": null,
+      "taskNumber": null,
+      "tokens": {
+        "cacheCreation": 38635,
+        "cacheRead": 326691,
+        "input": 24,
+        "output": 3123
+      },
+      "toolCalls": {
+        "byName": {
+          "Bash": 17,
+          "ToolSearch": 1
+        },
+        "total": 18
+      },
+      "toolResultChars": {
+        "byName": {
+          "Bash": 43327,
+          "ToolSearch": 146
+        },
+        "total": 43473
+      },
+      "turns": 12,
+      "weightedCost": 96601.9
+    }
+  ],
+  "schema": "groundwork.metrics/2",
+  "totals": {
+    "cacheCreation": {
+      "later": 2637529,
+      "turn1": 1415707
+    },
+    "costSharePercent": {
+      "cacheCreation": 42.3,
+      "cacheRead": 46.8,
+      "input": 0.0,
+      "output": 10.9
+    },
+    "runs": 63,
+    "tokens": {
+      "cacheCreation": 4053236,
+      "cacheRead": 56006388,
+      "input": 4114,
+      "output": 260402
+    },
+    "toolCalls": {
+      "byName": {
+        "Bash": 756,
+        "Edit": 95,
+        "Read": 199,
+        "ToolSearch": 9,
+        "WebFetch": 11,
+        "WebSearch": 1,
+        "Write": 30,
+        "ctx_execute_file": 1,
+        "mcp__context7__query-docs": 31,
+        "mcp__context7__resolve-library-id": 6,
+        "mcp__plugin_context-mode_context-mode__ctx_execute_file": 1
+      },
+      "total": 1140
+    },
+    "toolResultChars": {
+      "byName": {
+        "Bash": 1769872,
+        "Edit": 18482,
+        "Read": 1330686,
+        "ToolSearch": 1168,
+        "WebFetch": 22998,
+        "WebSearch": 2765,
+        "Write": 5773,
+        "ctx_execute_file": 80,
+        "mcp__context7__query-docs": 110081,
+        "mcp__context7__resolve-library-id": 10922,
+        "mcp__plugin_context-mode_context-mode__ctx_execute_file": 3343
+      },
+      "total": 3276170
+    },
+    "turns": 963,
+    "turnsPerRun": {
+      "max": 74,
+      "mean": 15.3,
+      "median": 12,
+      "min": 2
+    },
+    "weightedCost": 11973307.8
+  },
+  "unattributed": {
+    "cacheCreation": {
+      "later": 769371,
+      "turn1": 303798
+    },
+    "costSharePercent": {
+      "cacheCreation": 44.9,
+      "cacheRead": 42.5,
+      "input": 0.0,
+      "output": 12.6
+    },
+    "runs": 21,
+    "tokens": {
+      "cacheCreation": 1073169,
+      "cacheRead": 12703907,
+      "input": 1322,
+      "output": 75338
+    },
+    "toolCalls": {
+      "byName": {
+        "Bash": 310,
+        "Edit": 13,
+        "Read": 55,
+        "ToolSearch": 8,
+        "WebFetch": 11,
+        "WebSearch": 1,
+        "Write": 1,
+        "mcp__context7__query-docs": 31,
+        "mcp__context7__resolve-library-id": 6
+      },
+      "total": 436
+    },
+    "toolResultChars": {
+      "byName": {
+        "Bash": 976032,
+        "Edit": 2387,
+        "Read": 364958,
+        "ToolSearch": 1168,
+        "WebFetch": 22998,
+        "WebSearch": 2765,
+        "Write": 198,
+        "mcp__context7__query-docs": 110081,
+        "mcp__context7__resolve-library-id": 10922
+      },
+      "total": 1491509
+    },
+    "turns": 283,
+    "turnsPerRun": {
+      "max": 59,
+      "mean": 13.5,
+      "median": 10,
+      "min": 5
+    },
+    "weightedCost": 2989864.0
+  },
+  "weightedUnit": "base input token equivalents"
+}
