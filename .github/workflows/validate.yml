@@ -22,3 +22,20 @@ jobs:
 
       - name: Check Groundwork shared-skill / adapter boundary
         run: python3 scripts/check-adapter-boundary.py
+
+      - name: Check the script boundary rule itself fires
+        run: python3 scripts/check-adapter-boundary.py --self-test
+
+      - name: Reject workflow prose in a plugin script
+        run: |
+          set -e
+          mkdir -p plugins/groundwork/scripts
+          fixture=plugins/groundwork/scripts/ci-boundary-fixture.py
+          printf '# Apply the engineering discipline while converging.\n' > "$fixture"
+          if python3 scripts/check-adapter-boundary.py; then
+            rm -f "$fixture"
+            echo "FAIL: the check passed on a script carrying workflow prose"
+            exit 1
+          fi
+          rm -f "$fixture"
+          echo "ok: workflow prose in a plugin script is rejected"

@@ -4,7 +4,39 @@ This file provides guidance to coding agents (Claude Code, Codex, and any agent 
 
 ## What this repo is
 
-A personal plugin marketplace that ships **one plugin, Groundwork, to two platforms** — Claude Code and OpenAI Codex. There is no application source code and no build: every artifact is Markdown with YAML frontmatter, or a JSON manifest, consumed directly by each platform's plugin loader. The only executable is `scripts/check-adapter-boundary.py`, a stdlib-only structural check. "Changing behavior" here means editing prose instructions, not code.
+A personal plugin marketplace that ships **one plugin, Groundwork, to two platforms** — Claude Code and OpenAI Codex. Nearly every artifact is Markdown with YAML frontmatter, or a JSON manifest, consumed directly by each platform's plugin loader, so "changing behavior" here usually means editing prose instructions rather than code. The repo also ships executable scripts and hook definitions, under the constraint below.
+
+### The invariant: no build step, no third-party dependencies
+
+Installing this plugin is copying files. There is nothing to compile, nothing to fetch, and no package-manager step at install time, on any platform.
+
+**Why.** The constraint exists for adoption, not for purity. A plugin that installs by copying files works the moment the marketplace is added — no toolchain, no lockfile, no network access beyond the clone, and nothing to break on a machine that is not this one. Weaken it and installation becomes a support problem on every platform that was never tested.
+
+Because the rationale is adoption, it says precisely what the invariant does and does not forbid:
+
+- **Forbidden**: third-party packages; anything needing `pip`, `npm`, `uv`, `brew`, or `cargo` at install time; compiled or generated artifacts; lockfiles; any build or bundling step.
+- **Allowed**: executable scripts and hook definitions, as long as they depend on nothing that is not already on the machine.
+
+An earlier wording said "no application source code" and named `scripts/check-adapter-boundary.py` as the only executable. That was a proxy for the real rule, and it was too narrow. Upstream `obra/superpowers` ships plain executables alongside its Markdown — `skills/subagent-driven-development/scripts/task-brief`, `review-package`, and `sdd-workspace` — and still asks the user to install nothing. Do not re-tighten this back to "no code". If the invariant is revisited, argue from adoption; "it is only one small dependency" is not an adoption argument.
+
+### Dependency rule for executables
+
+- **Python 3 standard library only, or POSIX shell.** No imports from outside the stdlib.
+- Must run on macOS and Linux with the interpreters already present (`python3`, `/bin/sh`), with no version pin beyond "Python 3".
+- No install-time step of any kind: a user who copies the plugin directory has a working plugin.
+- Executables are subject to the shared-skill boundary too — they carry mechanism, never workflow prose. See *Shared skill, thin adapters* below.
+
+### Artifact classes and where they live
+
+| Class | Location | Shipped to users |
+| --- | --- | --- |
+| Workflow prose | `plugins/groundwork/skills/`, `commands/`, `agents/` | yes |
+| Manifests | `.claude-plugin/`, `.codex-plugin/`, `.agents/plugins/` | yes |
+| Plugin executables | `plugins/groundwork/scripts/` | yes |
+| Hook definitions | `plugins/groundwork/hooks/hooks.json` | yes |
+| Repo structural checks | `scripts/` at the repo root | no — CI and local development only |
+
+Claude Code discovers a plugin's hooks at `hooks/hooks.json` in the plugin root and exports `${CLAUDE_PLUGIN_ROOT}` to the hook process, so a hook entry invokes a bundled script as `"${CLAUDE_PLUGIN_ROOT}"/scripts/<name>`. Do not put executables in a top-level `bin/`: Claude Code adds that directory to the Bash tool's `PATH`, and a plugin distributed through claude.ai organization settings may not contain one.
 
 ## Dual-platform layout
 
@@ -17,8 +49,10 @@ plugins/groundwork/
   commands/groundwork.md               # Claude Code: /groundwork (thin adapter)
   agents/recon-*.md                    # Claude Code: groundwork:recon-* subagents
   skills/groundwork/SKILL.md           # canonical workflow; Codex: $groundwork
+  scripts/                             # stdlib-only plugin executables — not on disk yet; arrives with #13
+  hooks/hooks.json                     # Claude Code hook entries — not on disk yet; arrives with #13
   README.md
-scripts/check-adapter-boundary.py      # enforces the shared-skill/adapter split
+scripts/check-adapter-boundary.py      # enforces the shared-skill/adapter split, for adapters and scripts alike
 .github/workflows/validate.yml         # runs the checks in CI
 docs/superpowers/{specs,plans}/        # design docs from past groundwork runs
 ```
@@ -43,6 +77,8 @@ Adapters carry only what is native to their platform:
 
 Do not re-add workflow prose to an adapter. `python3 scripts/check-adapter-boundary.py` fails when an adapter reintroduces workflow headings, workflow-owned phrases (`brainstorming`, `writing-plans`, `engineering discipline`, …), or any 10-word passage copied from the canonical skill; it also checks version/description sync across the manifests. CI runs it on every push and PR.
 
+The same boundary applies to executables. Any file under `plugins/*/scripts/` or `plugins/*/hooks/` is scanned for workflow-owned prose and for 10-word passages copied from the canonical skill: a script carries mechanism — paths, parsing, I/O — and points at the skill for the workflow rather than restating it. Scripts are held to a slightly narrower phrase list than adapters, because a script may legitimately *reference* an upstream skill as data (the metrics collector reads `subagent-driven-development`'s workspace directory). Naming the skill is fine; reproducing its instructions is not. `python3 scripts/check-adapter-boundary.py --self-test` exercises that rule against fixtures in a temp directory, and CI runs it.
+
 ## Loader contract
 
 - `marketplace.json` `plugins[].name` must match the `name` in that plugin's `plugin.json`, and the source path must point at the plugin directory.
@@ -55,7 +91,8 @@ Do not re-add workflow prose to an adapter. `python3 scripts/check-adapter-bound
 Run the structural checks, then verify by installing locally and exercising the workflow:
 
 ```bash
-python3 scripts/check-adapter-boundary.py
+python3 scripts/check-adapter-boundary.py             # adapters, scripts, manifest sync
+python3 scripts/check-adapter-boundary.py --self-test  # proves the script rule still fires
 ```
 
 ```bash
