@@ -1,6 +1,6 @@
 ---
 description: Parallel-subagent recon on a problem, then discuss the approach and gray areas before committing to code.
-argument-hint: "<problem description with file paths, GitLab issues, links, etc.>"
+argument-hint: "<problem description with file paths, issue IDs, links, etc.>"
 ---
 
 # Groundwork — Claude Code adapter
@@ -48,14 +48,14 @@ tool calls — sequential calls waste turns. Each call MUST include:
   Never spawn a recon agent without one; unnamed agents render as anonymous
   pills the user cannot tell apart.
 - `description:` — 3-5 word label shown next to the pill (e.g. `"Read named
-  files"`, `"Map callers + tests"`, `"Pull library docs"`, `"Fetch GitLab
+  files"`, `"Map callers + tests"`, `"Pull library docs"`, `"Fetch linked
   issues"`, `"Search project memory"`, `"Scan prior plans"`).
 - `subagent_type:` — one of the three `groundwork:recon-*` agents below.
 - `prompt:` — the self-contained task packet described by the skill. The agent
   has zero conversation context.
 
-Do NOT pass `run_in_background` — it is not an `Agent` parameter. Subagents
-already run concurrently, and the harness re-invokes you as each one finishes.
+Leave `run_in_background` at its default. Recon agents already run concurrently,
+and the harness re-invokes you as each one finishes.
 
 Example spawn shape (single message, multiple blocks):
 
@@ -81,8 +81,7 @@ The colors are load-bearing for the user, not decoration: at a glance they can
 tell which pills are reading code, which are reaching outside, and which are
 digging up old decisions. Never fall back to bare `Explore` or
 `general-purpose` for a recon thread — those render as uncolored pills and lose
-the fixed report shape. (`gsd-codebase-mapper` remains a valid exception if a
-`.planning/codebase/` structure already exists and you need it refreshed.)
+the fixed report shape.
 
 Pick the threads that match the problem, using the skill's thread menu; do not
 spawn an agent for a source the user did not reference.

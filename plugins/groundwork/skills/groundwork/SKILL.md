@@ -46,6 +46,16 @@ If either skill is unavailable:
 Groundwork does not invoke `using-superpowers` itself. Superpowers only needs to
 be installed and its required skills available.
 
+**Why this gate is a hard stop rather than a partial run.** Phase 1 does not
+technically need Superpowers — recon, the barrier, and collation are Groundwork's
+own. Running Phase 1 without Superpowers and stopping before Phase 2 is therefore
+possible, and is deliberately not done. Groundwork's value is the whole arc from
+evidence to accepted plan; a run that gathers evidence and then strands the user
+before the brainstorm has spent the research budget without reaching the decision
+it exists to support. One loud failure at the start is a better outcome than a
+quiet degraded mode the user has to notice for themselves. Treat this as settled
+unless the trade-off itself changes.
+
 ## Input
 
 Treat the user's request that invoked Groundwork as the problem statement.
@@ -161,9 +171,16 @@ Include these instructions in the task packet:
 > `## Findings`, `## Dead ends already tried`, and optionally
 > `## Out of scope, noticed anyway`.
 
-All three roles are read-only by construction and return the same report shape,
-so the collated Phase 2 input is uniform. Keep that shape if a platform adds a
-fourth role.
+All three roles are read-only and return the same report shape, so the collated
+Phase 2 input is uniform. Keep that shape if a platform adds a fourth role.
+
+Read-only is enforced two different ways, and it is worth knowing which applies.
+Code recon should be read-only *by construction* — grant it file-reading and
+search tools only, with no shell, since it never needs one. External and context
+recon are read-only *by instruction*: they need shell or remote access to do
+their job at all (`git log`, `git show`, fetching a ticket), so the constraint
+lives in their prompts rather than in their tool grants. Never describe a role
+as read-only by construction while granting it a shell.
 
 ## Canonical thread choices
 

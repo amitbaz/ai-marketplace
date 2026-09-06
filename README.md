@@ -6,7 +6,7 @@ A plugin marketplace for reusable AI coding-agent workflows. Supports **Claude C
 
 | Plugin | Version | Description |
 | --- | --- | --- |
-| [groundwork](./plugins/groundwork) | 1.4.0 | Extension for `obra/superpowers` that adds parallel reconnaissance, discussion, and planning before committing to code. **Requires Superpowers.** |
+| [groundwork](./plugins/groundwork) | 1.4.1 | Extension for `obra/superpowers` that adds parallel reconnaissance, discussion, and planning before committing to code. **Requires Superpowers.** |
 
 ## Groundwork prerequisite: Superpowers
 
