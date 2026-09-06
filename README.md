@@ -6,7 +6,7 @@ A plugin marketplace for reusable AI coding-agent workflows. Supports **Claude C
 
 | Plugin | Version | Description |
 | --- | --- | --- |
-| [groundwork](./plugins/groundwork) | 1.3.0 | Extension for `obra/superpowers` that adds parallel reconnaissance, discussion, and planning before committing to code. **Requires Superpowers.** |
+| [groundwork](./plugins/groundwork) | 1.4.0 | Extension for `obra/superpowers` that adds parallel reconnaissance, discussion, and planning before committing to code. **Requires Superpowers.** |
 
 ## Groundwork prerequisite: Superpowers
 
@@ -100,6 +100,11 @@ See the [Groundwork README](./plugins/groundwork/README.md) for the complete wor
 
 ```text
 ai-marketplace/
+├── .github/
+│   └── workflows/
+│       └── validate.yml              # manifest + adapter-boundary checks
+├── scripts/
+│   └── check-adapter-boundary.py     # enforces shared-skill/thin-adapter split
 ├── .agents/
 │   └── plugins/
 │       └── marketplace.json          # Codex marketplace
@@ -113,11 +118,13 @@ ai-marketplace/
 │       │   └── plugin.json           # Claude Code plugin manifest
 │       ├── skills/
 │       │   └── groundwork/
-│       │       └── SKILL.md          # Codex Groundwork workflow
+│       │       └── SKILL.md          # canonical Groundwork workflow (both platforms)
 │       ├── agents/                    # Claude Code recon agents
-│       ├── commands/                  # Claude Code /groundwork command
+│       ├── commands/                  # Claude Code /groundwork adapter
 │       └── README.md
 └── README.md
 ```
 
-The two marketplace manifests intentionally coexist. Claude Code uses `.claude-plugin/marketplace.json`; Codex uses `.agents/plugins/marketplace.json`. Groundwork keeps platform-specific orchestration at the edges while preserving the same research → discussion → planning workflow.
+The two marketplace manifests intentionally coexist. Claude Code uses `.claude-plugin/marketplace.json`; Codex uses `.agents/plugins/marketplace.json`.
+
+Groundwork follows a **shared workflow contract → thin platform adapters** architecture. `plugins/groundwork/skills/groundwork/SKILL.md` is the single source of truth for the workflow on every platform. Codex consumes it directly as `$groundwork`; Claude's `commands/groundwork.md` invokes it and adds only Claude's dispatch syntax, recon subagent types, and `$ARGUMENTS` handling. `scripts/check-adapter-boundary.py` fails CI when an adapter starts duplicating the shared workflow.
