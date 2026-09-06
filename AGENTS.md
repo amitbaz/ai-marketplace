@@ -47,6 +47,9 @@ plugins/groundwork/
   .claude-plugin/plugin.json           # Claude Code plugin manifest
   .codex-plugin/plugin.json            # Codex plugin manifest
   commands/groundwork.md               # Claude Code: /groundwork (thin adapter)
+  commands/groundwork-capture.md       # Claude Code: /groundwork-capture (capture on/off)
+  commands/groundwork-stats.md         # Claude Code: /groundwork-stats
+  commands/groundwork-report.md        # Claude Code: /groundwork-report
   agents/recon-*.md                    # Claude Code: groundwork:recon-* subagents
   skills/groundwork/SKILL.md           # canonical workflow; Codex: $groundwork
   scripts/harvest-transcripts          # stdlib-only subagent transcript capture
@@ -76,7 +79,7 @@ Adapters carry only what is native to their platform:
 - **Claude Code** — `commands/groundwork.md` invokes `Skill(skill: "groundwork:groundwork")` first (Claude auto-discovers plugin skills at `skills/<name>/SKILL.md` and namespaces them `<plugin>:<skill>`), then adds `$ARGUMENTS`, `Agent(...)` dispatch syntax, the three `groundwork:recon-*` subagent types and their colors, `AskUserQuestion` usage, and Claude's Superpowers install string.
 - **Codex** — consumes the canonical skill directly as `$groundwork`; there is no second Codex file.
 
-Do not re-add workflow prose to an adapter. `python3 scripts/check-adapter-boundary.py` fails when an adapter reintroduces workflow headings, workflow-owned phrases (`brainstorming`, `writing-plans`, `engineering discipline`, …), or any 10-word passage copied from the canonical skill; it also checks version/description sync across the manifests. CI runs it on every push and PR.
+Do not re-add workflow prose to an adapter. Every file in `commands/` and `agents/` is scanned as an adapter. `python3 scripts/check-adapter-boundary.py` fails when an adapter reintroduces workflow headings, workflow-owned phrases (`brainstorming`, `writing-plans`, `engineering discipline`, …), or any 10-word passage copied from the canonical skill; it also checks version/description sync across the manifests. CI runs it on every push and PR.
 
 The same boundary applies to executables. Any file under `plugins/*/scripts/` or `plugins/*/hooks/` is scanned for workflow-owned prose and for 10-word passages copied from the canonical skill: a script carries mechanism — paths, parsing, I/O — and points at the skill for the workflow rather than restating it. Scripts are held to a slightly narrower phrase list than adapters, because a script may legitimately *reference* an upstream skill as data (the metrics collector reads `subagent-driven-development`'s workspace directory). Naming the skill is fine; reproducing its instructions is not. `python3 scripts/check-adapter-boundary.py --self-test` exercises that rule against fixtures in a temp directory, and CI runs it.
 

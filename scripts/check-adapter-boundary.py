@@ -33,6 +33,7 @@ REPO = Path(__file__).resolve().parent.parent
 PLUGIN = REPO / "plugins" / "groundwork"
 SKILL = PLUGIN / "skills" / "groundwork" / "SKILL.md"
 CLAUDE_COMMAND = PLUGIN / "commands" / "groundwork.md"
+COMMAND_DIR = PLUGIN / "commands"
 AGENT_DIR = PLUGIN / "agents"
 
 # Sections the canonical skill must own. If one disappears from SKILL.md, the
@@ -336,7 +337,7 @@ def main(argv: list[str]) -> int:
     check_canonical_skill(skill_text)
     check_manifest_sync()
 
-    adapters = [CLAUDE_COMMAND, *sorted(AGENT_DIR.glob("*.md"))]
+    adapters = [*sorted(COMMAND_DIR.glob("*.md")), *sorted(AGENT_DIR.glob("*.md"))]
     for path in adapters:
         if not path.exists():
             fail(f"missing adapter file {path.relative_to(REPO)}")
