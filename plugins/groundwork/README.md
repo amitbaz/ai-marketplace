@@ -193,6 +193,73 @@ The discipline keeps the result grounded in four principles:
 
 These constraints deliberately apply during convergence and planning, not as a reason to narrow Phase 1 research before the problem is understood.
 
+## Subagent transcript harvest (Claude Code only)
+
+Claude Code writes a separate JSONL transcript for every subagent it dispatches, carrying the agent id, the parent session id, the model used on each turn, and a full token-usage block with its cache splits. It is the only source that can attribute cost to one specific dispatch — the parent session transcript does not contain subagent turns, and Claude Code's OpenTelemetry metrics do not identify which dispatch spent what.
+
+Those transcripts live under a per-user temp root and are deleted within roughly three days. Capture therefore has to happen while the session is warm; nothing can be recovered afterwards.
+
+Groundwork ships a capture step for them, and nothing more. Parsing the records and computing cost is deliberately not part of it.
+
+### What runs, and when
+
+`hooks/hooks.json` registers `scripts/harvest-transcripts` on two events, which overlap on purpose:
+
+| Event | Purpose |
+| --- | --- |
+| `SubagentStop` | Copy transcripts as soon as a dispatch ends, while the source file certainly still exists. |
+| `SessionStart` | Sweep for anything a previous session left behind — including sessions that were killed before their stop hook could run. |
+
+Each run is a full sweep rather than a lookup of one file, because the path cannot be derived from a session id. Measured across 61 transcripts on macOS, the session directory name disagreed with the session id recorded inside its own transcripts 37 times, and one directory held transcripts belonging to two different sessions. The sweep enumerates directories and reads identity out of each file instead. Transcripts are matched to the current project by the `cwd` each one records, so another project's runs are never pulled in.
+
+Concurrent dispatches finish at the same moment, so a lock file serialises sweeps; a run that cannot take the lock exits quietly and the next trigger picks up whatever it missed. A hook run never fails and never blocks a session — errors go to the store's log and the exit status stays 0.
+
+### What is stored, and where
+
+Default location: `.groundwork/transcripts/` inside the project directory. It is created with a `.gitignore` of its own containing `*`, so the store is ignored in any repository without editing that repository's `.gitignore`.
+
+```text
+.groundwork/transcripts/
+├── .gitignore
+├── harvest.log
+└── <parent session id>/
+    ├── <agentId>.jsonl        # the transcript, copied whole
+    └── <agentId>.meta.json    # source path, byte count, source mtime, capture time,
+                               # line count, whether the last line is a complete record
+```
+
+Transcripts are stored whole rather than reduced to metrics, because the fields worth extracting are expected to change once real executions are analysed and the source files cannot be regenerated.
+
+Capture is idempotent on `agentId`. Re-running over an already-harvested session copies nothing and reports nothing new. A transcript whose source has since grown — a copy taken while the file was still being written — is copied again on the next sweep, and `endsWithCompleteRecord` in the metadata records whether the stored copy ends on a whole JSON record.
+
+### Retention and purging
+
+Defaults: 90 days, capped at 1 GiB. Whichever bites first wins, and the oldest transcripts are dropped first. For scale, 61 real transcripts measured 15.8 MB in total, with a median of 231 KB.
+
+| Environment variable | Default | Effect |
+| --- | --- | --- |
+| `GROUNDWORK_HARVEST_DIR` | `<project>/.groundwork/transcripts` | Where transcripts are stored. |
+| `GROUNDWORK_HARVEST_MAX_DAYS` | `90` | Age cap, measured from the source file's modification time. |
+| `GROUNDWORK_HARVEST_MAX_BYTES` | `1073741824` | Total size cap for the store. |
+| `GROUNDWORK_TEMP_ROOT` | discovered | Overrides temp-root discovery. |
+
+Run it by hand, inspect the store, or delete what it holds:
+
+```bash
+harvest-transcripts                      # sweep this project now
+harvest-transcripts --all-projects       # sweep every project under the temp root
+harvest-transcripts --list               # what is stored, and how much
+harvest-transcripts --purge              # delete everything in the store
+harvest-transcripts --purge --older-than-days 30
+harvest-transcripts --self-test          # fixtures in a temp directory
+```
+
+Purging deletes only the local copies. It has no effect on Claude Code's own transcripts, which the operating system removes on its own schedule.
+
+### Platform scope
+
+Capture is specific to Claude Code, because the file format and the temp layout are. Codex ships no equivalent, and the harvest hooks are registered only in the Claude Code manifest.
+
 ## When to use Groundwork
 
 Use it when:
@@ -219,6 +286,10 @@ plugins/groundwork/
 │   └── recon-external.md
 ├── commands/
 │   └── groundwork.md          # Claude adapter (thin)
+├── hooks/
+│   └── hooks.json             # Claude Code hook entries (transcript harvest)
+├── scripts/
+│   └── harvest-transcripts    # stdlib-only Python 3 executable
 ├── skills/
 │   └── groundwork/
 │       └── SKILL.md           # canonical shared workflow (source of truth)

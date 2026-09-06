@@ -49,8 +49,8 @@ plugins/groundwork/
   commands/groundwork.md               # Claude Code: /groundwork (thin adapter)
   agents/recon-*.md                    # Claude Code: groundwork:recon-* subagents
   skills/groundwork/SKILL.md           # canonical workflow; Codex: $groundwork
-  scripts/                             # stdlib-only plugin executables — not on disk yet; arrives with #13
-  hooks/hooks.json                     # Claude Code hook entries — not on disk yet; arrives with #13
+  scripts/harvest-transcripts          # stdlib-only subagent transcript capture
+  hooks/hooks.json                     # Claude Code hook entries (SubagentStop, SessionStart)
   README.md
 scripts/check-adapter-boundary.py      # enforces the shared-skill/adapter split, for adapters and scripts alike
 .github/workflows/validate.yml         # runs the checks in CI
@@ -93,6 +93,7 @@ Run the structural checks, then verify by installing locally and exercising the 
 ```bash
 python3 scripts/check-adapter-boundary.py             # adapters, scripts, manifest sync
 python3 scripts/check-adapter-boundary.py --self-test  # proves the script rule still fires
+python3 plugins/groundwork/scripts/harvest-transcripts --self-test  # transcript capture
 ```
 
 ```bash

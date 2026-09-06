@@ -1,6 +1,6 @@
 {
   "name": "groundwork",
-  "version": "1.4.1",
+  "version": "1.5.0",
   "description": "Extension for obra/superpowers: parallel-subagent recon, discussion, and planning before committing to code. Requires Superpowers.",
   "author": {
     "name": "Amit Baz",

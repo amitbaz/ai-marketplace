@@ -1,0 +1,706 @@
+#!/usr/bin/env python3
+"""Copy Claude Code subagent transcripts out of the temp root before the OS deletes them.
+
+Claude Code writes one JSONL transcript per subagent dispatch, separate from the
+parent session's transcript, under a per-user temp root:
+
+    <temp root>/claude-<uid>/<project slug>/<session dir>/tasks/<agentId>.output
+
+Those files are removed within roughly three days, so anything not copied while
+the session is warm is gone. This script is the capture step only: it copies
+whole transcripts and records capture-level facts about each copy. Parsing the
+records, attributing them to a role, and computing cost belong downstream.
+
+Observed on macOS, Claude Code 2.1.261, across 61 transcripts in 13 tasks
+directories:
+
+  * A tasks directory holds two kinds of `.output` file. Transcripts are JSONL
+    whose first line carries `isSidechain: true`, an `agentId`, and the parent
+    `sessionId`. The others are short plain-text result files and are ignored.
+  * The `<session dir>` name is NOT reliably the `sessionId` recorded inside the
+    transcripts it holds: 37 of 61 disagreed, and one directory held transcripts
+    from two different sessions. Nothing here derives a path from a session id.
+    The sweep enumerates directories and reads identity out of the file.
+  * Transcripts carry the subagent's `cwd`, which is what scopes a sweep to the
+    current project. Path slugs are not parsed for that.
+
+Usage:
+    harvest-transcripts                     sweep and report (default)
+    harvest-transcripts --event <name>      hook entry point; reads hook JSON on
+                                            stdin, stays quiet, never fails
+    harvest-transcripts --all-projects      do not scope the sweep to this project
+    harvest-transcripts --list              summarise the durable store
+    harvest-transcripts --purge [--older-than-days N]
+    harvest-transcripts --self-test         fixtures in a temp directory
+"""
+
+from __future__ import annotations
+
+import argparse
+import errno
+import json
+import os
+import shutil
+import sys
+import tempfile
+import time
+from datetime import datetime, timezone
+from pathlib import Path
+
+STORE_RELATIVE = Path(".groundwork") / "transcripts"
+
+# Retention defaults. Measured store growth on a development machine: 61
+# transcripts, 15.8 MB, median 231 KB, largest 0.7 MB. 1 GiB therefore holds
+# thousands of runs, and the age cap is what normally bites first.
+DEFAULT_MAX_DAYS = 90
+DEFAULT_MAX_BYTES = 1024 * 1024 * 1024
+
+LOCK_NAME = ".harvest.lock"
+LOCK_STALE_SECONDS = 300
+LOG_NAME = "harvest.log"
+LOG_MAX_BYTES = 1024 * 1024
+
+STORE_GITIGNORE = """# Groundwork transcript store: local capture, never committed.
+*
+"""
+
+
+# ---------------------------------------------------------------- resolution
+
+
+def temp_root(env: dict[str, str] | None = None) -> Path | None:
+    """Locate <temp>/claude-<uid>, without hardcoding a temp path or a uid."""
+    env = os.environ if env is None else env
+
+    override = env.get("GROUNDWORK_TEMP_ROOT")
+    if override:
+        path = Path(override)
+        return path if path.is_dir() else None
+
+    getuid = getattr(os, "getuid", None)
+    if getuid is None:  # platform without POSIX uids
+        return None
+    name = f"claude-{getuid()}"
+
+    seen: list[Path] = []
+    for base in (Path("/tmp"), Path(tempfile.gettempdir()), Path(env.get("TMPDIR", "/tmp"))):
+        candidate = base / name
+        if candidate in seen:
+            continue
+        seen.append(candidate)
+        if candidate.is_dir():
+            return candidate
+    return None
+
+
+def project_root(payload: dict, env: dict[str, str] | None = None) -> Path:
+    """The directory a sweep is scoped to, and the parent of the default store."""
+    env = os.environ if env is None else env
+    for value in (env.get("CLAUDE_PROJECT_DIR"), payload.get("cwd")):
+        if value and Path(value).is_dir():
+            return Path(value).resolve()
+    return Path.cwd().resolve()
+
+
+def store_dir(root: Path, env: dict[str, str] | None = None) -> Path:
+    env = os.environ if env is None else env
+    override = env.get("GROUNDWORK_HARVEST_DIR")
+    return Path(override).expanduser().resolve() if override else root / STORE_RELATIVE
+
+
+def retention(env: dict[str, str] | None = None) -> tuple[int, int]:
+    env = os.environ if env is None else env
+
+    def number(name: str, fallback: int) -> int:
+        raw = env.get(name)
+        if raw is None:
+            return fallback
+        try:
+            value = int(raw)
+        except ValueError:
+            return fallback
+        return value if value > 0 else fallback
+
+    return (
+        number("GROUNDWORK_HARVEST_MAX_DAYS", DEFAULT_MAX_DAYS),
+        number("GROUNDWORK_HARVEST_MAX_BYTES", DEFAULT_MAX_BYTES),
+    )
+
+
+def ensure_store(store: Path) -> None:
+    store.mkdir(parents=True, exist_ok=True)
+    marker = store / ".gitignore"
+    if not marker.exists():
+        marker.write_text(STORE_GITIGNORE, encoding="utf-8")
+
+
+# --------------------------------------------------------------------- store
+
+
+def is_within(child: Path, parent: Path) -> bool:
+    try:
+        child.resolve().relative_to(parent.resolve())
+    except (ValueError, OSError):
+        return False
+    return True
+
+
+def now_iso() -> str:
+    return datetime.now(timezone.utc).isoformat(timespec="seconds")
+
+
+def stamp(epoch: float) -> str:
+    return datetime.fromtimestamp(epoch, timezone.utc).isoformat(timespec="seconds")
+
+
+def existing_records(store: Path) -> dict[str, dict]:
+    """Every already-harvested transcript, keyed on agentId.
+
+    The key is the agent id rather than the source path, because the same
+    transcript can be reached through more than one directory and must not be
+    stored twice.
+    """
+    records: dict[str, dict] = {}
+    if not store.is_dir():
+        return records
+    for meta_path in sorted(store.rglob("*.meta.json")):
+        try:
+            meta = json.loads(meta_path.read_text(encoding="utf-8"))
+        except (OSError, ValueError):
+            continue
+        agent_id = meta.get("agentId")
+        if not agent_id:
+            continue
+        meta["_meta_path"] = str(meta_path)
+        records[agent_id] = meta
+    return records
+
+
+def transcript_head(path: Path) -> dict | None:
+    """First JSONL record, if this file is a subagent transcript at all."""
+    try:
+        with path.open("r", encoding="utf-8", errors="replace") as handle:
+            first = handle.readline()
+    except OSError:
+        return None
+    if not first.strip():
+        return None
+    try:
+        head = json.loads(first)
+    except ValueError:
+        return None  # plain-text result file living in the same directory
+    if not isinstance(head, dict) or not head.get("isSidechain") or not head.get("agentId"):
+        return None
+    return head
+
+
+def summarise(path: Path) -> dict:
+    """Capture-level facts: enough to tell a torn copy from a whole one."""
+    lines = 0
+    last_parsed = False
+    first_ts = last_ts = None
+    try:
+        with path.open("r", encoding="utf-8", errors="replace") as handle:
+            for raw in handle:
+                if not raw.strip():
+                    continue
+                lines += 1
+                try:
+                    record = json.loads(raw)
+                except ValueError:
+                    last_parsed = False
+                    continue
+                last_parsed = True
+                timestamp = record.get("timestamp")
+                if timestamp:
+                    first_ts = first_ts or timestamp
+                    last_ts = timestamp
+    except OSError:
+        return {"lines": 0, "endsWithCompleteRecord": False}
+    return {
+        "lines": lines,
+        "endsWithCompleteRecord": last_parsed,
+        "firstTimestamp": first_ts,
+        "lastTimestamp": last_ts,
+    }
+
+
+def copy_transcript(source: Path, destination: Path) -> None:
+    destination.parent.mkdir(parents=True, exist_ok=True)
+    handle, temporary = tempfile.mkstemp(dir=str(destination.parent), prefix=".partial-")
+    os.close(handle)
+    try:
+        shutil.copyfile(source, temporary)
+        os.replace(temporary, destination)
+    finally:
+        if os.path.exists(temporary):
+            os.unlink(temporary)
+
+
+# --------------------------------------------------------------------- sweep
+
+
+def candidate_files(root: Path) -> list[Path]:
+    found: list[Path] = []
+    try:
+        projects = sorted(p for p in root.iterdir() if p.is_dir())
+    except OSError:
+        return found
+    for project in projects:
+        try:
+            sessions = sorted(s for s in project.iterdir() if s.is_dir())
+        except OSError:
+            continue
+        for session in sessions:
+            tasks = session / "tasks"
+            if not tasks.is_dir():
+                continue
+            try:
+                found.extend(sorted(f for f in tasks.iterdir() if f.is_file()))
+            except OSError:
+                continue
+    return found
+
+
+def sweep(
+    root: Path,
+    store: Path,
+    scope: Path | None,
+    max_days: int,
+    max_bytes: int,
+) -> dict:
+    ensure_store(store)
+    known = existing_records(store)
+    result = {
+        "harvested": 0,
+        "refreshed": 0,
+        "unchanged": 0,
+        "out_of_scope": 0,
+        "not_transcripts": 0,
+        "errors": 0,
+        "bytes": 0,
+        "incomplete": 0,
+    }
+
+    for source in candidate_files(root):
+        head = transcript_head(source)
+        if head is None:
+            result["not_transcripts"] += 1
+            continue
+
+        agent_cwd = head.get("cwd")
+        if scope is not None and not (agent_cwd and is_within(Path(agent_cwd), scope)):
+            result["out_of_scope"] += 1
+            continue
+
+        agent_id = head["agentId"]
+        session_id = head.get("sessionId") or "unknown-session"
+        try:
+            stat = source.stat()
+        except OSError:
+            result["errors"] += 1
+            continue
+
+        previous = known.get(agent_id)
+        if previous is not None:
+            stored = Path(previous.get("storedPath", ""))
+            if stored.is_file() and previous.get("sourceBytes", -1) >= stat.st_size:
+                result["unchanged"] += 1
+                continue
+
+        destination = store / session_id / f"{agent_id}.jsonl"
+        try:
+            copy_transcript(source, destination)
+        except OSError:
+            result["errors"] += 1
+            continue
+
+        meta = {
+            "agentId": agent_id,
+            "sessionId": session_id,
+            "sessionDirectory": source.parent.parent.name,
+            "sourcePath": str(source),
+            "sourceBytes": stat.st_size,
+            "sourceModified": stamp(stat.st_mtime),
+            "storedPath": str(destination),
+            "harvestedAt": now_iso(),
+            "cwd": agent_cwd,
+            "gitBranch": head.get("gitBranch"),
+            "claudeCodeVersion": head.get("version"),
+        }
+        meta.update(summarise(destination))
+        try:
+            (store / session_id / f"{agent_id}.meta.json").write_text(
+                json.dumps(meta, indent=2, sort_keys=True) + "\n", encoding="utf-8"
+            )
+        except OSError:
+            result["errors"] += 1
+            continue
+
+        known[agent_id] = meta
+        result["refreshed" if previous is not None else "harvested"] += 1
+        result["bytes"] += stat.st_size
+        if not meta.get("endsWithCompleteRecord", False):
+            result["incomplete"] += 1
+
+    result["pruned"] = prune(store, max_days, max_bytes)
+    return result
+
+
+def stored_entries(store: Path) -> list[dict]:
+    entries = []
+    for meta in existing_records(store).values():
+        stored = Path(meta.get("storedPath", ""))
+        if not stored.is_file():
+            continue
+        try:
+            size = stored.stat().st_size
+        except OSError:
+            continue
+        entries.append({"meta": meta, "path": stored, "bytes": size})
+    entries.sort(key=lambda item: item["meta"].get("sourceModified") or "")
+    return entries
+
+
+def drop(entry: dict) -> None:
+    for path in (entry["path"], Path(entry["meta"].get("_meta_path", ""))):
+        try:
+            if path and path.is_file():
+                path.unlink()
+        except OSError:
+            pass
+
+
+def prune(store: Path, max_days: int, max_bytes: int) -> int:
+    entries = stored_entries(store)
+    removed = 0
+    cutoff = time.time() - max_days * 86400
+
+    survivors = []
+    for entry in entries:
+        try:
+            when = datetime.fromisoformat(entry["meta"]["sourceModified"]).timestamp()
+        except (KeyError, TypeError, ValueError):
+            survivors.append(entry)
+            continue
+        if when < cutoff:
+            drop(entry)
+            removed += 1
+        else:
+            survivors.append(entry)
+
+    total = sum(entry["bytes"] for entry in survivors)
+    for entry in survivors:  # oldest first
+        if total <= max_bytes:
+            break
+        drop(entry)
+        total -= entry["bytes"]
+        removed += 1
+
+    for directory in sorted(store.glob("*")):
+        if directory.is_dir() and not any(directory.iterdir()):
+            try:
+                directory.rmdir()
+            except OSError:
+                pass
+    return removed
+
+
+# ------------------------------------------------------------------ plumbing
+
+
+def acquire_lock(store: Path) -> int | None:
+    """Serialise concurrent sweeps. Parallel dispatches stop at the same moment.
+
+    A sweep that cannot take the lock exits quietly: another one is already
+    walking the same directories, and the triggers overlap by design, so
+    anything it misses is picked up by the next stop or the next session start.
+    """
+    lock = store / LOCK_NAME
+    try:
+        return os.open(str(lock), os.O_CREAT | os.O_EXCL | os.O_WRONLY, 0o600)
+    except OSError as error:
+        if error.errno != errno.EEXIST:
+            return None
+        try:
+            if time.time() - lock.stat().st_mtime > LOCK_STALE_SECONDS:
+                lock.unlink()
+                return os.open(str(lock), os.O_CREAT | os.O_EXCL | os.O_WRONLY, 0o600)
+        except OSError:
+            pass
+        return None
+
+
+def release_lock(store: Path, handle: int | None) -> None:
+    if handle is None:
+        return
+    try:
+        os.close(handle)
+    except OSError:
+        pass
+    try:
+        (store / LOCK_NAME).unlink()
+    except OSError:
+        pass
+
+
+def log(store: Path, message: str) -> None:
+    path = store / LOG_NAME
+    try:
+        if path.is_file() and path.stat().st_size > LOG_MAX_BYTES:
+            path.replace(store / (LOG_NAME + ".1"))
+        with path.open("a", encoding="utf-8") as handle:
+            handle.write(f"{now_iso()} {message}\n")
+    except OSError:
+        pass
+
+
+def read_payload(stream) -> dict:
+    if stream is None or stream.isatty():
+        return {}
+    try:
+        raw = stream.read()
+    except (OSError, ValueError):
+        return {}
+    try:
+        payload = json.loads(raw)
+    except ValueError:
+        return {}
+    return payload if isinstance(payload, dict) else {}
+
+
+def describe(result: dict) -> str:
+    return (
+        "harvested={harvested} refreshed={refreshed} unchanged={unchanged} "
+        "pruned={pruned} incomplete={incomplete} out_of_scope={out_of_scope} "
+        "skipped_non_transcript={not_transcripts} errors={errors} bytes={bytes}"
+    ).format(**result)
+
+
+# ------------------------------------------------------------------ commands
+
+
+def run_sweep(args: argparse.Namespace, payload: dict) -> int:
+    root = temp_root()
+    project = project_root(payload)
+    store = store_dir(project)
+    max_days, max_bytes = retention()
+
+    if root is None:
+        if not args.event:
+            print("no Claude Code temp root found; nothing to harvest", file=sys.stderr)
+        return 0
+
+    ensure_store(store)
+    handle = acquire_lock(store)
+    if handle is None:
+        if not args.event:
+            print("another harvest is running; skipped")
+        return 0
+    try:
+        result = sweep(root, store, None if args.all_projects else project, max_days, max_bytes)
+    finally:
+        release_lock(store, handle)
+
+    log(store, f"{args.event or 'manual'} {describe(result)}")
+    if not args.event:
+        print(f"store: {store}")
+        print(describe(result))
+    return 0
+
+
+def run_list(args: argparse.Namespace) -> int:
+    store = store_dir(project_root({}))
+    entries = stored_entries(store)
+    total = sum(entry["bytes"] for entry in entries)
+    print(f"store: {store}")
+    print(f"transcripts: {len(entries)}  bytes: {total}")
+    max_days, max_bytes = retention()
+    print(f"retention: {max_days} days, {max_bytes} bytes")
+    for entry in entries[-args.limit :]:
+        meta = entry["meta"]
+        flag = "" if meta.get("endsWithCompleteRecord", True) else "  INCOMPLETE"
+        print(
+            f"  {meta.get('sourceModified')}  {meta['agentId']}  "
+            f"{meta.get('lines', '?')} lines  {entry['bytes']} bytes{flag}"
+        )
+    return 0
+
+
+def run_purge(args: argparse.Namespace) -> int:
+    store = store_dir(project_root({}))
+    if args.older_than_days is None:
+        entries = stored_entries(store)
+        for entry in entries:
+            drop(entry)
+        removed = len(entries)
+        prune(store, DEFAULT_MAX_DAYS, DEFAULT_MAX_BYTES)
+    else:
+        removed = prune(store, args.older_than_days, DEFAULT_MAX_BYTES)
+    print(f"store: {store}")
+    print(f"removed {removed} transcript(s)")
+    return 0
+
+
+# ----------------------------------------------------------------- self-test
+
+
+def write_transcript(path: Path, agent_id: str, session_id: str, cwd: str, turns: int) -> None:
+    path.parent.mkdir(parents=True, exist_ok=True)
+    lines = []
+    for index in range(turns):
+        lines.append(
+            json.dumps(
+                {
+                    "type": "user" if index == 0 else "assistant",
+                    "isSidechain": True,
+                    "agentId": agent_id,
+                    "sessionId": session_id,
+                    "cwd": cwd,
+                    "gitBranch": "main",
+                    "version": "2.1.261",
+                    "timestamp": f"2026-09-0{index + 1}T00:00:00.000Z",
+                    "message": {"role": "assistant", "content": []},
+                }
+            )
+        )
+    path.write_text("\n".join(lines) + "\n", encoding="utf-8")
+
+
+def self_test() -> int:
+    problems: list[str] = []
+
+    def expect(condition: bool, description: str) -> None:
+        if not condition:
+            problems.append(description)
+
+    with tempfile.TemporaryDirectory() as tmp:
+        base = Path(tmp)
+        root = base / "claude-9999"
+        project = base / "project"
+        other = base / "elsewhere"
+        project.mkdir()
+        other.mkdir()
+        store = base / "store"
+
+        mine = root / "-project" / "session-dir-a" / "tasks"
+        # The directory name deliberately disagrees with the session id inside,
+        # which is what the real temp root does.
+        write_transcript(mine / "a1.output", "a1", "session-real-1", str(project), 4)
+        write_transcript(mine / "a2.output", "a2", "session-real-2", str(project / "sub"), 3)
+        (mine / "plain.output").write_text("a plain result file, not JSONL\n", encoding="utf-8")
+        write_transcript(
+            root / "-elsewhere" / "session-dir-b" / "tasks" / "b1.output",
+            "b1",
+            "session-real-3",
+            str(other),
+            2,
+        )
+
+        first = sweep(root, store, project, DEFAULT_MAX_DAYS, DEFAULT_MAX_BYTES)
+        expect(first["harvested"] == 2, f"expected 2 harvested, got {first['harvested']}")
+        expect(first["out_of_scope"] == 1, f"expected 1 out of scope, got {first['out_of_scope']}")
+        expect(
+            first["not_transcripts"] == 1,
+            f"expected 1 non-transcript skip, got {first['not_transcripts']}",
+        )
+        expect(first["errors"] == 0, f"unexpected errors: {first['errors']}")
+        expect(
+            (store / "session-real-1" / "a1.jsonl").is_file(),
+            "transcript must be stored under the session id it carries, not the directory name",
+        )
+        expect((store / ".gitignore").is_file(), "store must ignore itself")
+
+        second = sweep(root, store, project, DEFAULT_MAX_DAYS, DEFAULT_MAX_BYTES)
+        expect(
+            second["harvested"] == 0 and second["refreshed"] == 0 and second["unchanged"] == 2,
+            f"re-running must add nothing, got {second}",
+        )
+
+        # A transcript that grew after a torn capture is copied again.
+        write_transcript(mine / "a1.output", "a1", "session-real-1", str(project), 9)
+        third = sweep(root, store, project, DEFAULT_MAX_DAYS, DEFAULT_MAX_BYTES)
+        expect(third["refreshed"] == 1, f"a grown source must be refreshed, got {third}")
+        stored_lines = (store / "session-real-1" / "a1.jsonl").read_text().strip().splitlines()
+        expect(len(stored_lines) == 9, f"refreshed copy must hold 9 lines, got {len(stored_lines)}")
+
+        meta = json.loads((store / "session-real-1" / "a1.meta.json").read_text())
+        expect(meta["endsWithCompleteRecord"] is True, "a whole transcript must read as complete")
+
+        # A torn transcript is still captured, and is flagged.
+        torn = mine / "a3.output"
+        write_transcript(torn, "a3", "session-real-1", str(project), 3)
+        with torn.open("a", encoding="utf-8") as handle:
+            handle.write('{"type":"assistant","agentId":"a3"')
+        fourth = sweep(root, store, project, DEFAULT_MAX_DAYS, DEFAULT_MAX_BYTES)
+        expect(fourth["incomplete"] == 1, f"a torn transcript must be flagged, got {fourth}")
+
+        # Byte cap prunes oldest first.
+        capped = sweep(root, store, project, DEFAULT_MAX_DAYS, 1)
+        expect(capped["pruned"] >= 1, f"byte cap must prune, got {capped}")
+
+        # Scope off: the other project's transcript is picked up too.
+        wide_store = base / "store-wide"
+        wide = sweep(root, wide_store, None, DEFAULT_MAX_DAYS, DEFAULT_MAX_BYTES)
+        expect(wide["harvested"] == 4, f"unscoped sweep must take everything, got {wide}")
+
+        # A missing temp root is not an error.
+        missing = sweep(base / "does-not-exist", base / "store-empty", project, 1, 1)
+        expect(missing["harvested"] == 0 and missing["errors"] == 0, f"missing root: {missing}")
+
+        # The lock keeps a second concurrent sweep out.
+        held = acquire_lock(wide_store)
+        expect(held is not None, "first lock attempt must succeed")
+        expect(acquire_lock(wide_store) is None, "second lock attempt must be refused")
+        release_lock(wide_store, held)
+        expect(acquire_lock(wide_store) is not None, "lock must be released")
+
+    if problems:
+        print("harvest-transcripts self-test FAILED:\n")
+        for problem in problems:
+            print(f"  - {problem}")
+        return 1
+    print("harvest-transcripts self-test passed.")
+    return 0
+
+
+# ---------------------------------------------------------------------- main
+
+
+def build_parser() -> argparse.ArgumentParser:
+    parser = argparse.ArgumentParser(description="Harvest Claude Code subagent transcripts.")
+    parser.add_argument("--event", help="hook event name; suppresses output and never fails")
+    parser.add_argument("--all-projects", action="store_true", help="do not scope to this project")
+    parser.add_argument("--list", action="store_true", help="summarise the durable store")
+    parser.add_argument("--limit", type=int, default=20, help="rows shown by --list")
+    parser.add_argument("--purge", action="store_true", help="delete stored transcripts")
+    parser.add_argument("--older-than-days", type=int, help="with --purge, keep newer transcripts")
+    parser.add_argument("--self-test", action="store_true", help="run fixtures in a temp directory")
+    return parser
+
+
+def main(argv: list[str]) -> int:
+    args = build_parser().parse_args(argv)
+
+    if args.self_test:
+        return self_test()
+    if args.list:
+        return run_list(args)
+    if args.purge:
+        return run_purge(args)
+
+    payload = read_payload(sys.stdin) if args.event else {}
+    if args.event:
+        try:
+            return run_sweep(args, payload)
+        except Exception as error:  # a harvest must never break a session
+            try:
+                log(store_dir(project_root(payload)), f"{args.event} failed: {error!r}")
+            except Exception:
+                pass
+            return 0
+    return run_sweep(args, payload)
+
+
+if __name__ == "__main__":
+    sys.exit(main(sys.argv[1:]))
