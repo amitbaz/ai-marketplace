@@ -1,0 +1,651 @@
+#!/usr/bin/env python3
+"""Turn harvested subagent transcripts into per-run metric records.
+
+Reads the store that scripts/harvest-transcripts fills and emits one record per
+subagent run: model, turns, the four token classes, where the cache writes
+landed, tool calls, wall-clock duration, and the role the run played in a
+subagent-driven-development execution.
+
+Role attribution is evidence-based and rule-based. The dispatch prompt is the
+first record of every transcript, and it names the workspace artifacts the
+controller wrote for that dispatch:
+
+    <repo root>/.superpowers/sdd/<plan slug>/task-<N>-brief.md
+                                            task-<N>-report.md
+                                            review-<base>..<head>.diff
+
+Plan slug and task number are read out of those paths. The role is then decided
+by an ordered rule list over the dispatch prompt. A run that matches no rule is
+reported as unattributed and counted; it is never guessed at.
+
+Measured against 63 harvested transcripts spanning three real executions, this
+attributed 42 runs and left 21 unattributed, all of which were non-execution
+agents (recon, search, and general dispatches outside any plan).
+
+Two findings shape the record:
+
+  * A fix round does NOT create a second transcript. The controller resumes the
+    original agent by message, so the same `agentId` grows: an implementer
+    observed here ran 185 turns across 3 fix rounds in one file. Fix rounds are
+    counted from the coordinator messages injected into the run, not from
+    dispatch counts. Only rounds the controller labelled "fix round N" are
+    counted as such; every other coordinator message is counted separately
+    rather than being read as a fix round.
+  * No run changed model mid-flight in this sample, but the record carries a
+    flag for it rather than assuming.
+
+Prompt text and source code never enter the output. Records carry counts,
+identifiers, and the plan slug only, so the result is safe to commit.
+
+Usage:
+    collect-metrics                    write the metrics JSON to stdout
+    collect-metrics --out FILE         write it to a file
+    collect-metrics --summary          human-readable summary instead of JSON
+    collect-metrics --store DIR        read a store other than the default
+    collect-metrics --self-test        fixtures in a temp directory
+"""
+
+from __future__ import annotations
+
+import argparse
+import importlib.util
+import json
+import re
+import sys
+import tempfile
+from pathlib import Path
+
+SCHEMA = "groundwork.metrics/1"
+
+# Published price ratios, relative to one uncached input token. Cost is reported
+# in base-input-token equivalents so the arithmetic can be checked by hand.
+PRICE_RATIOS = {
+    "input": 1.0,
+    "cacheCreation": 1.25,
+    "cacheRead": 0.1,
+    "output": 5.0,
+}
+WEIGHTED_UNIT = "base input token equivalents"
+
+TOKEN_FIELDS = {
+    "input": "input_tokens",
+    "cacheCreation": "cache_creation_input_tokens",
+    "cacheRead": "cache_read_input_tokens",
+    "output": "output_tokens",
+}
+
+ARTIFACT = re.compile(
+    r"\.superpowers/sdd/(?P<slug>[^/\s`\"']+)/"
+    r"(?:task-(?P<task>\d+)-(?:brief|report)\.md|(?P<review>review-[^\s`\"']+\.diff)|progress\.md)"
+)
+
+# Injected user records are either Claude Code's own system reminders or a
+# message the controller sent the running agent. Only the latter is a signal
+# about the execution, and only some of those are labelled as a fix round.
+SYSTEM_REMINDER = re.compile(r"^\s*<system-reminder>")
+COORDINATOR = re.compile(r"the coordinator sent a message", re.IGNORECASE)
+FIX_ROUND = re.compile(r"fix round\s*\d+", re.IGNORECASE)
+
+# Role patterns, anchored on what the dispatch prompt says the agent IS doing.
+# Anchoring matters: the task-reviewer template tells its reader that "a broad
+# whole-branch review happens separately", so an unanchored search for
+# "whole-branch review" attributes every task reviewer to the final review seat.
+# Every pattern here therefore matches a second-person statement of the job.
+RE_REVIEWER = re.compile(r"\bre-review", re.IGNORECASE)
+IMPLEMENTER = re.compile(
+    r"you are (?:implementing|applying)\b|\bimplementing task\b", re.IGNORECASE
+)
+TASK_REVIEWER = re.compile(
+    r"you are reviewing\b|you are the (?:task )?reviewer\b", re.IGNORECASE
+)
+FINAL_REVIEWER = re.compile(
+    r"you are (?:the |performing the )?final\b|final whole-branch (?:code )?review(?:er)?\b",
+    re.IGNORECASE,
+)
+
+
+def role_for(prompt: str, task: int | None) -> str | None:
+    """Decide the role from the dispatch prompt, or return None.
+
+    A re-review is tested first because its prompt is also a review prompt. The
+    remaining rules are split by whether the controller named a task: a run
+    dispatched against a numbered task cannot be the final whole-branch review,
+    and a run with no task number cannot be a task-scoped one.
+    """
+    if RE_REVIEWER.search(prompt):
+        return "re-reviewer"
+    if task is not None:
+        if IMPLEMENTER.search(prompt):
+            return "implementer"
+        if TASK_REVIEWER.search(prompt):
+            return "task-reviewer"
+        return None
+    if FINAL_REVIEWER.search(prompt):
+        return "final-reviewer"
+    if IMPLEMENTER.search(prompt):
+        return "implementer"
+    return None
+
+
+# ----------------------------------------------------------------- the store
+
+
+def load_harvester():
+    """Reuse the harvester's store resolution so the two cannot drift apart."""
+    path = Path(__file__).resolve().parent / "harvest-transcripts"
+    try:
+        spec = importlib.util.spec_from_loader(
+            "groundwork_harvest", importlib.machinery.SourceFileLoader("groundwork_harvest", str(path))
+        )
+        module = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(module)
+        return module
+    except Exception:
+        return None
+
+
+def default_store() -> Path:
+    harvester = load_harvester()
+    if harvester is not None:
+        return harvester.store_dir(harvester.project_root({}))
+    return Path.cwd() / ".groundwork" / "transcripts"
+
+
+# ------------------------------------------------------------------- parsing
+
+
+def message_text(message: dict) -> str:
+    content = message.get("content")
+    if isinstance(content, str):
+        return content
+    if not isinstance(content, list):
+        return ""
+    parts = []
+    for block in content:
+        if isinstance(block, dict) and block.get("type") == "text":
+            parts.append(block.get("text", ""))
+    return "\n".join(parts)
+
+
+def is_tool_result(message: dict) -> bool:
+    content = message.get("content")
+    if not isinstance(content, list):
+        return False
+    return any(isinstance(block, dict) and block.get("type") == "tool_result" for block in content)
+
+
+def read_records(path: Path) -> list[dict]:
+    records = []
+    with path.open("r", encoding="utf-8", errors="replace") as handle:
+        for line in handle:
+            if not line.strip():
+                continue
+            try:
+                records.append(json.loads(line))
+            except ValueError:
+                continue  # a torn final line; the harvester flags the copy
+    return records
+
+
+def seconds_between(first: str | None, last: str | None) -> float | None:
+    if not first or not last:
+        return None
+    from datetime import datetime
+
+    def parse(value: str):
+        return datetime.fromisoformat(value.replace("Z", "+00:00"))
+
+    try:
+        return round((parse(last) - parse(first)).total_seconds(), 1)
+    except ValueError:
+        return None
+
+
+# --------------------------------------------------------------- attribution
+
+
+def attribute(dispatch_prompt: str) -> dict:
+    """Decide plan, task, and role from the dispatch prompt. Never guesses."""
+    slug = None
+    task = None
+    for match in ARTIFACT.finditer(dispatch_prompt):
+        slug = slug or match.group("slug")
+        if task is None and match.group("task"):
+            task = int(match.group("task"))
+
+    role = role_for(dispatch_prompt, task)
+
+    # A role with no plan artifact behind it is not an execution run.
+    if slug is None:
+        role = None
+
+    return {
+        "planSlug": slug,
+        "taskNumber": task,
+        "role": role,
+        "scope": None if role is None else ("task" if task is not None else "branch"),
+        "attributed": role is not None,
+    }
+
+
+def weighted(tokens: dict) -> float:
+    return round(sum(tokens[name] * PRICE_RATIOS[name] for name in PRICE_RATIOS), 1)
+
+
+def measure(path: Path) -> dict | None:
+    records = read_records(path)
+    if not records:
+        return None
+    head = records[0]
+    agent_id = head.get("agentId")
+    if not agent_id:
+        return None
+
+    dispatch_prompt = ""
+    fix_rounds = 0
+    coordinator_messages = 0
+    tokens = {name: 0 for name in TOKEN_FIELDS}
+    cache_turn_one = 0
+    turns = 0
+    tools: dict[str, int] = {}
+    models: list[str] = []
+    agent_types: list[str] = []
+    first_ts = last_ts = None
+
+    for record in records:
+        timestamp = record.get("timestamp")
+        if timestamp:
+            first_ts = first_ts or timestamp
+            last_ts = timestamp
+        message = record.get("message") or {}
+        kind = record.get("type")
+
+        if kind == "user":
+            if is_tool_result(message):
+                continue
+            text = message_text(message)
+            if not dispatch_prompt and not record.get("isMeta"):
+                dispatch_prompt = text
+            elif record.get("isMeta") and not SYSTEM_REMINDER.search(text) and COORDINATOR.search(text):
+                coordinator_messages += 1
+                if FIX_ROUND.search(text):
+                    fix_rounds += 1
+            continue
+
+        if kind != "assistant":
+            continue
+
+        usage = message.get("usage")
+        if isinstance(usage, dict):
+            turns += 1
+            for name, field in TOKEN_FIELDS.items():
+                tokens[name] += int(usage.get(field) or 0)
+            if turns == 1:
+                cache_turn_one = int(usage.get("cache_creation_input_tokens") or 0)
+        model = message.get("model")
+        if model and model not in models:
+            models.append(model)
+        agent_type = record.get("attributionAgent")
+        if agent_type and agent_type not in agent_types:
+            agent_types.append(agent_type)
+
+        content = message.get("content")
+        if isinstance(content, list):
+            for block in content:
+                if isinstance(block, dict) and block.get("type") == "tool_use":
+                    name = block.get("name") or "unknown"
+                    tools[name] = tools.get(name, 0) + 1
+
+    record = {
+        "agentId": agent_id,
+        "sessionId": head.get("sessionId"),
+        "agentType": agent_types[0] if agent_types else None,
+        "gitBranch": head.get("gitBranch"),
+        "model": models[0] if models else None,
+        "modelChangedMidRun": len(models) > 1,
+        "turns": turns,
+        "tokens": tokens,
+        "cacheCreation": {"turn1": cache_turn_one, "later": tokens["cacheCreation"] - cache_turn_one},
+        "toolCalls": {"total": sum(tools.values()), "byName": dict(sorted(tools.items()))},
+        "durationSeconds": seconds_between(first_ts, last_ts),
+        "coordinatorMessages": coordinator_messages,
+        "fixRoundsLabelled": fix_rounds,
+        "weightedCost": weighted(tokens),
+    }
+    record.update(attribute(dispatch_prompt))
+    return record
+
+
+# ------------------------------------------------------------------ rollups
+
+
+def blank_totals() -> dict:
+    return {name: 0 for name in TOKEN_FIELDS}
+
+
+def add_totals(into: dict, tokens: dict) -> None:
+    for name in TOKEN_FIELDS:
+        into[name] += tokens[name]
+
+
+def cost_share(tokens: dict) -> dict:
+    total = weighted(tokens)
+    if total <= 0:
+        return {name: 0.0 for name in PRICE_RATIOS}
+    return {
+        name: round(tokens[name] * PRICE_RATIOS[name] / total * 100, 1) for name in PRICE_RATIOS
+    }
+
+
+def summarise_runs(runs: list[dict]) -> dict:
+    tokens = blank_totals()
+    turns = 0
+    cache_turn_one = 0
+    for run in runs:
+        add_totals(tokens, run["tokens"])
+        turns += run["turns"]
+        cache_turn_one += run["cacheCreation"]["turn1"]
+    return {
+        "runs": len(runs),
+        "turns": turns,
+        "tokens": tokens,
+        "cacheCreation": {"turn1": cache_turn_one, "later": tokens["cacheCreation"] - cache_turn_one},
+        "weightedCost": weighted(tokens),
+        "costSharePercent": cost_share(tokens),
+    }
+
+
+def by_role(runs: list[dict]) -> dict:
+    roles: dict[str, list[dict]] = {}
+    for run in runs:
+        roles.setdefault(run["role"], []).append(run)
+    return {
+        role: {
+            **summarise_runs(members),
+            "models": sorted({m["model"] for m in members if m["model"]}),
+        }
+        for role, members in sorted(roles.items())
+    }
+
+
+def build(store: Path) -> dict:
+    runs = []
+    for path in sorted(store.rglob("*.jsonl")):
+        record = measure(path)
+        if record is not None:
+            runs.append(record)
+    runs.sort(key=lambda run: (run.get("planSlug") or "~", run.get("taskNumber") or 0, run["agentId"]))
+
+    executions = []
+    for slug in sorted({run["planSlug"] for run in runs if run["attributed"]}):
+        members = [run for run in runs if run["attributed"] and run["planSlug"] == slug]
+        executions.append(
+            {
+                "planSlug": slug,
+                "tasks": sorted({r["taskNumber"] for r in members if r["taskNumber"] is not None}),
+                "dispatchesByRole": {
+                    role: len([r for r in members if r["role"] == role])
+                    for role in sorted({r["role"] for r in members})
+                },
+                "fixRoundsLabelled": sum(r["fixRoundsLabelled"] for r in members),
+                "coordinatorMessages": sum(r["coordinatorMessages"] for r in members),
+                "totals": summarise_runs(members),
+                "byRole": by_role(members),
+            }
+        )
+
+    unattributed = [run for run in runs if not run["attributed"]]
+    return {
+        "schema": SCHEMA,
+        "priceRatios": PRICE_RATIOS,
+        "weightedUnit": WEIGHTED_UNIT,
+        "totals": summarise_runs(runs),
+        "executions": executions,
+        "unattributed": summarise_runs(unattributed),
+        "runs": runs,
+    }
+
+
+# ------------------------------------------------------------------- output
+
+
+def summary_lines(report: dict) -> list[str]:
+    lines = [
+        f"runs: {report['totals']['runs']}  turns: {report['totals']['turns']}  "
+        f"weighted cost: {report['totals']['weightedCost']:.0f} {WEIGHTED_UNIT}",
+        "cost share: "
+        + "  ".join(f"{name} {value}%" for name, value in report["totals"]["costSharePercent"].items()),
+        "",
+    ]
+    for execution in report["executions"]:
+        totals = execution["totals"]
+        lines.append(f"{execution['planSlug']}")
+        lines.append(
+            f"  tasks {execution['tasks']}  labelled fix rounds {execution['fixRoundsLabelled']}  "
+            f"coordinator messages {execution['coordinatorMessages']}  "
+            f"runs {totals['runs']}  turns {totals['turns']}  cost {totals['weightedCost']:.0f}"
+        )
+        for role, stats in execution["byRole"].items():
+            share = stats["weightedCost"] / totals["weightedCost"] * 100 if totals["weightedCost"] else 0
+            lines.append(
+                f"    {role:<15} runs {stats['runs']:>2}  turns {stats['turns']:>4}  "
+                f"cost {stats['weightedCost']:>10.0f}  {share:>5.1f}%  {','.join(stats['models'])}"
+            )
+        lines.append("")
+    unattributed = report["unattributed"]
+    lines.append(
+        f"unattributed: {unattributed['runs']} runs, {unattributed['turns']} turns, "
+        f"cost {unattributed['weightedCost']:.0f} (reported, never guessed)"
+    )
+    return lines
+
+
+# ----------------------------------------------------------------- self-test
+
+
+def fixture_transcript(path: Path, agent_id: str, prompt: str, turns: int, injections: list[str]) -> None:
+    path.parent.mkdir(parents=True, exist_ok=True)
+    rows = [
+        {
+            "type": "user",
+            "isSidechain": True,
+            "agentId": agent_id,
+            "sessionId": "session-1",
+            "gitBranch": "feat/x",
+            "timestamp": "2026-09-06T10:00:00.000Z",
+            "message": {"role": "user", "content": prompt},
+        }
+    ]
+    for text in injections:
+        rows.append(
+            {
+                "type": "user",
+                "isMeta": True,
+                "agentId": agent_id,
+                "timestamp": "2026-09-06T10:05:00.000Z",
+                "message": {"role": "user", "content": text},
+            }
+        )
+    for index in range(turns):
+        rows.append(
+            {
+                "type": "assistant",
+                "agentId": agent_id,
+                "attributionAgent": "general-purpose",
+                "timestamp": f"2026-09-06T10:{10 + index:02d}:00.000Z",
+                "message": {
+                    "role": "assistant",
+                    "model": "claude-sonnet-5",
+                    "usage": {
+                        "input_tokens": 1,
+                        "cache_creation_input_tokens": 100 if index == 0 else 10,
+                        "cache_read_input_tokens": 1000,
+                        "output_tokens": 20,
+                    },
+                    "content": [{"type": "tool_use", "name": "Read", "input": {}}],
+                },
+            }
+        )
+    path.write_text("\n".join(json.dumps(row) for row in rows) + "\n", encoding="utf-8")
+
+
+def self_test() -> int:
+    problems: list[str] = []
+
+    def expect(condition: bool, description: str) -> None:
+        if not condition:
+            problems.append(description)
+
+    workspace = "/repo/.superpowers/sdd/2026-09-06-a-plan"
+    with tempfile.TemporaryDirectory() as tmp:
+        store = Path(tmp) / "transcripts"
+        fixture_transcript(
+            store / "s1" / "impl.jsonl",
+            "impl",
+            f"You are implementing Task 4: a thing.\nRead your task brief first: {workspace}/task-4-brief.md\n"
+            f"Write your report to {workspace}/task-4-report.md",
+            3,
+            [
+                "The coordinator sent a message while you were working: Fix round 1 on Task 4. "
+                "Spec review came back with findings.",
+                "The coordinator sent a message while you were working: one more change, please.",
+                "<system-reminder> Other agents active: main, fix-final. </system-reminder>",
+            ],
+        )
+        fixture_transcript(
+            store / "s1" / "review.jsonl",
+            "review",
+            f"You are reviewing one task's implementation.\nRead the task brief: {workspace}/task-4-brief.md\n"
+            f"Diff file: {workspace}/review-aaa..bbb.diff",
+            2,
+            [],
+        )
+        fixture_transcript(
+            store / "s1" / "rereview.jsonl",
+            "rereview",
+            f"You are re-reviewing one task's fix round.\nRead the task brief: {workspace}/task-4-brief.md",
+            1,
+            [],
+        )
+        fixture_transcript(
+            store / "s1" / "final.jsonl",
+            "final",
+            "You are performing the final whole-branch code review before this branch is proposed for merge.\n"
+            f"Diff file: {workspace}/review-ccc..ddd.diff",
+            4,
+            [],
+        )
+        fixture_transcript(
+            store / "s1" / "other.jsonl",
+            "other",
+            "Find every caller of parse_config and report back with file:line references.",
+            2,
+            [],
+        )
+
+        report = build(store)
+        roles = {run["agentId"]: run["role"] for run in report["runs"]}
+        expect(roles["impl"] == "implementer", f"implementer misattributed: {roles['impl']}")
+        expect(roles["review"] == "task-reviewer", f"task reviewer misattributed: {roles['review']}")
+        expect(roles["rereview"] == "re-reviewer", f"re-reviewer misattributed: {roles['rereview']}")
+        expect(roles["final"] == "final-reviewer", f"final reviewer misattributed: {roles['final']}")
+        expect(roles["other"] is None, f"a non-execution run must stay unattributed: {roles['other']}")
+
+        runs = {run["agentId"]: run for run in report["runs"]}
+        expect(runs["impl"]["taskNumber"] == 4, "task number must come from the brief path")
+        expect(runs["impl"]["planSlug"] == "2026-09-06-a-plan", "plan slug must come from the workspace path")
+        expect(runs["impl"]["scope"] == "task", "a task-numbered run is task-scoped")
+        expect(runs["final"]["scope"] == "branch", "a run with no task number is branch-scoped")
+        expect(
+            runs["impl"]["fixRoundsLabelled"] == 1,
+            f"labelled fix rounds miscounted: {runs['impl']['fixRoundsLabelled']}",
+        )
+        expect(
+            runs["impl"]["coordinatorMessages"] == 2,
+            f"a system reminder must not count as a coordinator message: "
+            f"{runs['impl']['coordinatorMessages']}",
+        )
+
+        expect(runs["impl"]["turns"] == 3, "turns are assistant records carrying usage")
+        expect(runs["impl"]["tokens"]["cacheCreation"] == 120, "cache creation must sum every turn")
+        expect(runs["impl"]["cacheCreation"]["turn1"] == 100, "turn-1 cache write must be split out")
+        expect(runs["impl"]["cacheCreation"]["later"] == 20, "post-turn-1 cache write must be split out")
+        expect(runs["impl"]["toolCalls"]["byName"] == {"Read": 3}, "tool calls must be counted by name")
+        expect(runs["impl"]["modelChangedMidRun"] is False, "a single-model run must not be flagged")
+        expect(runs["impl"]["durationSeconds"] == 720.0, f"duration: {runs['impl']['durationSeconds']}")
+
+        expected = 3 * 1 * 1.0 + 120 * 1.25 + 3000 * 0.1 + 60 * 5.0
+        expect(
+            runs["impl"]["weightedCost"] == round(expected, 1),
+            f"weighted cost {runs['impl']['weightedCost']} != {expected}",
+        )
+
+        expect(len(report["executions"]) == 1, "runs sharing a plan slug form one execution")
+        execution = report["executions"][0]
+        expect(
+            execution["dispatchesByRole"]
+            == {"final-reviewer": 1, "implementer": 1, "re-reviewer": 1, "task-reviewer": 1},
+            f"dispatch counts wrong: {execution['dispatchesByRole']}",
+        )
+        expect(execution["fixRoundsLabelled"] == 1, "execution fix rounds must sum the runs")
+        expect(report["unattributed"]["runs"] == 1, "unattributed runs must be counted, not dropped")
+
+        share = report["totals"]["costSharePercent"]
+        expect(abs(sum(share.values()) - 100.0) < 0.5, f"cost share must total 100%: {share}")
+
+        expect(build(store) == report, "two runs over the same input must produce identical output")
+        expect(
+            json.dumps(report) == json.dumps(build(store)),
+            "serialised output must be byte-identical between runs",
+        )
+
+        prompts = json.dumps(report)
+        expect("Find every caller" not in prompts, "prompt text must never reach the output")
+        expect("You are implementing" not in prompts, "prompt text must never reach the output")
+
+    if problems:
+        print("collect-metrics self-test FAILED:\n")
+        for problem in problems:
+            print(f"  - {problem}")
+        return 1
+    print("collect-metrics self-test passed.")
+    return 0
+
+
+# ---------------------------------------------------------------------- main
+
+
+def main(argv: list[str]) -> int:
+    parser = argparse.ArgumentParser(description="Collect metrics from harvested subagent transcripts.")
+    parser.add_argument("--store", help="transcript store to read (default: the harvester's)")
+    parser.add_argument("--out", help="write the metrics JSON here instead of stdout")
+    parser.add_argument("--summary", action="store_true", help="print a human summary instead of JSON")
+    parser.add_argument("--self-test", action="store_true", help="run fixtures in a temp directory")
+    args = parser.parse_args(argv)
+
+    if args.self_test:
+        return self_test()
+
+    store = Path(args.store).expanduser().resolve() if args.store else default_store()
+    if not store.is_dir():
+        print(f"no transcript store at {store}; run harvest-transcripts first", file=sys.stderr)
+        return 1
+
+    report = build(store)
+    if args.summary:
+        print("\n".join(summary_lines(report)))
+        return 0
+
+    text = json.dumps(report, indent=2, sort_keys=True) + "\n"
+    if args.out:
+        target = Path(args.out).expanduser()
+        target.parent.mkdir(parents=True, exist_ok=True)
+        target.write_text(text, encoding="utf-8")
+        print(f"wrote {target} ({report['totals']['runs']} runs)")
+    else:
+        sys.stdout.write(text)
+    return 0
+
+
+if __name__ == "__main__":
+    sys.exit(main(sys.argv[1:]))

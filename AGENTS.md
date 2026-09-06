@@ -50,6 +50,7 @@ plugins/groundwork/
   agents/recon-*.md                    # Claude Code: groundwork:recon-* subagents
   skills/groundwork/SKILL.md           # canonical workflow; Codex: $groundwork
   scripts/harvest-transcripts          # stdlib-only subagent transcript capture
+  scripts/collect-metrics              # per-run metrics with SDD role attribution
   hooks/hooks.json                     # Claude Code hook entries (SubagentStop, SessionStart)
   README.md
 scripts/check-adapter-boundary.py      # enforces the shared-skill/adapter split, for adapters and scripts alike
@@ -94,6 +95,7 @@ Run the structural checks, then verify by installing locally and exercising the 
 python3 scripts/check-adapter-boundary.py             # adapters, scripts, manifest sync
 python3 scripts/check-adapter-boundary.py --self-test  # proves the script rule still fires
 python3 plugins/groundwork/scripts/harvest-transcripts --self-test  # transcript capture
+python3 plugins/groundwork/scripts/collect-metrics --self-test       # metrics and role attribution
 ```
 
 ```bash

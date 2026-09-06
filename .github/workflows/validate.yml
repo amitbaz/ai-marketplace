@@ -29,6 +29,9 @@ jobs:
       - name: Check the transcript harvester
         run: python3 plugins/groundwork/scripts/harvest-transcripts --self-test
 
+      - name: Check the metrics collector
+        run: python3 plugins/groundwork/scripts/collect-metrics --self-test
+
       - name: Reject workflow prose in a plugin script
         run: |
           set -e

@@ -260,6 +260,64 @@ Purging deletes only the local copies. It has no effect on Claude Code's own tra
 
 Capture is specific to Claude Code, because the file format and the temp layout are. Codex ships no equivalent, and the harvest hooks are registered only in the Claude Code manifest.
 
+## Metrics from harvested transcripts (Claude Code only)
+
+`scripts/collect-metrics` turns the harvested store into one metric record per subagent run, and attributes each run to the role it played in a `subagent-driven-development` execution. Anonymous per-run numbers cannot answer which role consumes the budget, which is the question that decides whether the answer is fewer dispatches, shorter runs, or cheaper models.
+
+```bash
+collect-metrics                     # metrics JSON on stdout
+collect-metrics --summary           # human-readable roll-up
+collect-metrics --out metrics.json  # write it to a file
+collect-metrics --self-test
+```
+
+### The record
+
+Per run: `agentId`, parent `sessionId`, agent type, git branch, model and a flag if it changed mid-run, turn count, the four token classes, the cache-creation split between turn 1 and later turns, tool calls with a breakdown by name, wall-clock duration, coordinator messages, labelled fix rounds, weighted cost, and `role` / `taskNumber` / `planSlug` / `scope` — or an explicit unattributed marker.
+
+Rolled up per execution: dispatch count by role, fix rounds, and totals by token class with cost share.
+
+Prompt text and source code never enter the output. Records carry counts, identifiers, and the plan slug only, so the result is safe to commit.
+
+### Cost weighting
+
+Token classes are weighted by published price ratios and reported in base-input-token equivalents, with the ratios stated in the output so the number can be checked by hand:
+
+| Class | Ratio |
+| --- | --- |
+| uncached input | 1.0 |
+| cache creation | 1.25 |
+| cache read | 0.1 |
+| output | 5.0 |
+
+Cost share is always reported by class. A single undifferentiated token count hides the thing that matters: across 63 measured runs, uncached input was 0.0% of cost while cache creation was 52.9% and cache read 42.2%.
+
+### How roles are attributed
+
+The dispatch prompt is the first record of every transcript, and it names the workspace artifacts the controller wrote for that dispatch:
+
+```text
+<repo root>/.superpowers/sdd/<plan slug>/task-<N>-brief.md
+                                         task-<N>-report.md
+                                         review-<base>..<head>.diff
+```
+
+Plan slug and task number are read out of those paths — the ledger does not have to be parsed, because the dispatch prompt already carries the correlation. The role then follows from an ordered rule list over the prompt:
+
+1. A prompt that says it is re-reviewing is a re-reviewer. This is tested first, because every re-review prompt is also a review prompt.
+2. With a task number: implementing or applying makes it an implementer, reviewing makes it a task reviewer.
+3. With no task number: a final whole-branch review makes it the final reviewer, and applying findings makes it a branch-scoped implementer.
+
+Every pattern matches a second-person statement of the job, never a passing mention. That anchoring is load-bearing: the upstream task-reviewer template tells its reader that "a broad whole-branch review happens separately", so an unanchored search for that phrase attributes every task reviewer to the final review seat. It did, until the rule was anchored.
+
+A run matching no rule, or naming no workspace artifact, is reported as unattributed and counted. It is never guessed at. Measured across 63 harvested transcripts spanning three real executions, 42 runs attributed cleanly and the 21 unattributed were all non-execution agents — recon threads and one-off dispatches outside any plan.
+
+### What the transcripts showed about fix rounds
+
+A fix round does **not** produce a second transcript. The controller resumes the running implementer by message, so the same `agentId` grows: one implementer here ran 185 turns across 3 fix rounds in a single file, and its turn-1 cache write was 29,080 tokens against 828,741 written on later turns.
+
+Fix work also appears as a fresh dispatch in some executions — an agent told to apply findings to a finished branch — so dispatch counts and fix rounds measure different things and are reported separately. Only rounds the controller labelled "fix round N" are counted as fix rounds; other coordinator messages are counted on their own line rather than being read as fix rounds. Claude Code's own system reminders are not counted at all.
+
 ## When to use Groundwork
 
 Use it when:
@@ -289,6 +347,7 @@ plugins/groundwork/
 ├── hooks/
 │   └── hooks.json             # Claude Code hook entries (transcript harvest)
 ├── scripts/
+│   ├── collect-metrics        # per-run metrics with role attribution
 │   └── harvest-transcripts    # stdlib-only Python 3 executable
 ├── skills/
 │   └── groundwork/
