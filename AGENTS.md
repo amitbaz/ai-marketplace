@@ -47,7 +47,9 @@ plugins/groundwork/
   .claude-plugin/plugin.json           # Claude Code plugin manifest
   .codex-plugin/plugin.json            # Codex plugin manifest
   commands/groundwork.md               # Claude Code: /groundwork (thin adapter)
-  commands/groundwork-metrics.md       # Claude Code: /groundwork-metrics (thin adapter)
+  commands/groundwork-metrics.md       # Claude Code: /groundwork-metrics (capture on/off)
+  commands/groundwork-stats.md         # Claude Code: /groundwork-stats
+  commands/groundwork-report.md        # Claude Code: /groundwork-report
   agents/recon-*.md                    # Claude Code: groundwork:recon-* subagents
   skills/groundwork/SKILL.md           # canonical workflow; Codex: $groundwork
   scripts/harvest-transcripts          # stdlib-only subagent transcript capture

@@ -206,10 +206,10 @@ Groundwork ships a capture step for them, and nothing more. Parsing the records 
 Hooks load for everyone who installs a plugin, so an installed plugin must not start copying a user's transcripts on its own. Both hooks exit immediately — creating no directory, writing no file, walking nothing — until capture is enabled for that project:
 
 ```text
-/groundwork-metrics on       # enable capture here
-/groundwork-metrics status   # is it on, and what is stored
-/groundwork-metrics report   # sweep now and summarise
-/groundwork-metrics off      # stop capturing here
+/groundwork-metrics on    # enable capture here
+/groundwork-metrics off   # stop capturing here
+/groundwork-stats         # is it on, and what is stored
+/groundwork-report        # sweep now and break the cost down by role
 ```
 
 The switch is a marker file at `.groundwork/capture-enabled`, and it is per project: enabling measurement in one repository does not enable it anywhere else. `GROUNDWORK_HARVEST=1` or `0` overrides the marker in either direction for a single session.
@@ -279,7 +279,7 @@ Capture is specific to Claude Code, because the file format and the temp layout 
 
 `scripts/collect-metrics` turns the harvested store into one metric record per subagent run, and attributes each run to the role it played in a `subagent-driven-development` execution. Anonymous per-run numbers cannot answer which role consumes the budget, which is the question that decides whether the answer is fewer dispatches, shorter runs, or cheaper models.
 
-The `/groundwork-metrics` command drives both scripts; these are the underlying calls:
+`/groundwork-report` drives the collector; these are the underlying calls:
 
 ```bash
 collect-metrics                     # metrics JSON on stdout
