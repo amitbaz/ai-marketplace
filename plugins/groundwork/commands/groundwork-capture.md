@@ -18,7 +18,7 @@ To see what is currently captured, use `/groundwork-stats`. To produce a cost br
 
 Explain what the user is agreeing to, unless they have clearly already decided:
 
-- Whole transcripts of this project's subagent runs are copied into `.groundwork/transcripts/`, which ignores itself so it cannot be committed by accident.
+- Whole transcripts of this project's subagent runs are copied into `.groundwork/transcripts/`. That directory and its parent both ignore themselves, so nothing written there can be committed by accident.
 - Copies are kept for 90 days, capped at 1 GiB, oldest dropped first.
 - Nothing leaves the machine.
 - The switch is per project. Enabling it here enables nothing anywhere else.
