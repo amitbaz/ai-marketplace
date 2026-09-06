@@ -49,6 +49,12 @@ from pathlib import Path
 
 STORE_RELATIVE = Path(".groundwork") / "transcripts"
 
+# Capture is off until the user turns it on. The hooks fire for everyone who
+# installs the plugin, so an installed plugin must not start copying a user's
+# transcripts into their repository on its own. The marker is per project: a
+# user who measures one repository is not opting in for every other one.
+MARKER_RELATIVE = Path(".groundwork") / "capture-enabled"
+
 # Retention defaults. Measured store growth on a development machine: 61
 # transcripts, 15.8 MB, median 231 KB, largest 0.7 MB. 1 GiB therefore holds
 # thousands of runs, and the age cap is what normally bites first.
@@ -125,6 +131,26 @@ def retention(env: dict[str, str] | None = None) -> tuple[int, int]:
         number("GROUNDWORK_HARVEST_MAX_DAYS", DEFAULT_MAX_DAYS),
         number("GROUNDWORK_HARVEST_MAX_BYTES", DEFAULT_MAX_BYTES),
     )
+
+
+def marker_path(root: Path, env: dict[str, str] | None = None) -> Path:
+    env = os.environ if env is None else env
+    override = env.get("GROUNDWORK_HARVEST_MARKER")
+    return Path(override).expanduser() if override else root / MARKER_RELATIVE
+
+
+def capture_enabled(root: Path, env: dict[str, str] | None = None) -> bool:
+    """Whether hook-driven capture may run for this project.
+
+    GROUNDWORK_HARVEST overrides the marker in both directions, so a session can
+    turn capture on for a one-off run without leaving a file behind, and can
+    force it off where a marker exists.
+    """
+    env = os.environ if env is None else env
+    override = env.get("GROUNDWORK_HARVEST")
+    if override is not None:
+        return override.strip().lower() in {"1", "true", "yes", "on"}
+    return marker_path(root, env).is_file()
 
 
 def ensure_store(store: Path) -> None:
@@ -486,6 +512,11 @@ def run_sweep(args: argparse.Namespace, payload: dict) -> int:
     store = store_dir(project)
     max_days, max_bytes = retention()
 
+    # Gate before creating anything: a disabled project must end this call with
+    # no directory made, no file written, and no directory walked.
+    if args.event and not capture_enabled(project):
+        return 0
+
     if root is None:
         if not args.event:
             print("no Claude Code temp root found; nothing to harvest", file=sys.stderr)
@@ -506,6 +537,45 @@ def run_sweep(args: argparse.Namespace, payload: dict) -> int:
     if not args.event:
         print(f"store: {store}")
         print(describe(result))
+    return 0
+
+
+def run_switch(enable: bool) -> int:
+    project = project_root({})
+    marker = marker_path(project)
+    if enable:
+        marker.parent.mkdir(parents=True, exist_ok=True)
+        marker.write_text(
+            "Groundwork transcript capture is enabled for this project.\n"
+            f"Enabled at {now_iso()}. Delete this file, or run --disable, to stop it.\n",
+            encoding="utf-8",
+        )
+        print(f"capture enabled for {project}")
+        print(f"marker: {marker}")
+    else:
+        try:
+            marker.unlink()
+            print(f"capture disabled for {project}")
+        except FileNotFoundError:
+            print(f"capture was already disabled for {project}")
+    return 0
+
+
+def run_status() -> int:
+    project = project_root({})
+    store = store_dir(project)
+    enabled = capture_enabled(project)
+    print(f"project: {project}")
+    print(f"capture: {'enabled' if enabled else 'disabled'}")
+    print(f"marker:  {marker_path(project)}")
+    print(f"store:   {store}")
+    if store.is_dir():
+        entries = stored_entries(store)
+        print(f"stored:  {len(entries)} transcript(s), {sum(e['bytes'] for e in entries)} bytes")
+    else:
+        print("stored:  nothing yet")
+    if not enabled:
+        print("\nHooks will not capture anything until you run --enable.")
     return 0
 
 
@@ -644,6 +714,24 @@ def self_test() -> int:
         wide = sweep(root, wide_store, None, DEFAULT_MAX_DAYS, DEFAULT_MAX_BYTES)
         expect(wide["harvested"] == 4, f"unscoped sweep must take everything, got {wide}")
 
+        # Capture is off until a marker exists, and a disabled hook run must
+        # not create the store directory it would otherwise write into.
+        empty_env: dict[str, str] = {}
+        expect(not capture_enabled(project, empty_env), "capture must be off with no marker")
+        expect(
+            capture_enabled(project, {"GROUNDWORK_HARVEST": "1"}),
+            "the environment override must be able to turn capture on",
+        )
+        marker = marker_path(project, empty_env)
+        marker.parent.mkdir(parents=True, exist_ok=True)
+        marker.write_text("on\n", encoding="utf-8")
+        expect(capture_enabled(project, empty_env), "a marker file must turn capture on")
+        expect(
+            not capture_enabled(project, {"GROUNDWORK_HARVEST": "0"}),
+            "the environment override must be able to force capture off",
+        )
+        marker.unlink()
+
         # A missing temp root is not an error.
         missing = sweep(base / "does-not-exist", base / "store-empty", project, 1, 1)
         expect(missing["harvested"] == 0 and missing["errors"] == 0, f"missing root: {missing}")
@@ -675,6 +763,9 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--limit", type=int, default=20, help="rows shown by --list")
     parser.add_argument("--purge", action="store_true", help="delete stored transcripts")
     parser.add_argument("--older-than-days", type=int, help="with --purge, keep newer transcripts")
+    parser.add_argument("--enable", action="store_true", help="allow the hooks to capture here")
+    parser.add_argument("--disable", action="store_true", help="stop the hooks capturing here")
+    parser.add_argument("--status", action="store_true", help="show whether capture is on")
     parser.add_argument("--self-test", action="store_true", help="run fixtures in a temp directory")
     return parser
 
@@ -684,6 +775,10 @@ def main(argv: list[str]) -> int:
 
     if args.self_test:
         return self_test()
+    if args.enable or args.disable:
+        return run_switch(args.enable)
+    if args.status:
+        return run_status()
     if args.list:
         return run_list(args)
     if args.purge:
