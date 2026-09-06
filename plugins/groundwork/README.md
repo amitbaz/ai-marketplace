@@ -214,7 +214,7 @@ Hooks load for everyone who installs a plugin, so an installed plugin must not s
 
 `stats` answers "what is the state of this" — is capture on, how much is stored, and the totals at a glance. `report` answers "what did it cost" — it sweeps first so nothing recent is missing, then breaks the spend down by role with the caveats that belong to it.
 
-The switch is a marker file at `.groundwork/capture-enabled`, and it is per project: enabling measurement in one repository does not enable it anywhere else. `GROUNDWORK_HARVEST=1` or `0` overrides the marker in either direction for a single session.
+The switch is a marker file at `.groundwork/capture-enabled`, and it is per project: enabling measurement in one repository does not enable it anywhere else. Enabling it also writes `.groundwork/.gitignore` containing `*`, so the whole directory — marker and transcripts alike — stays out of `git status` without touching the repository's own `.gitignore`. `GROUNDWORK_HARVEST=1` or `0` overrides the marker in either direction for a single session.
 
 Nothing captured ever leaves the machine.
 
@@ -233,7 +233,7 @@ Concurrent dispatches finish at the same moment, so a lock file serialises sweep
 
 ### What is stored, and where
 
-Default location: `.groundwork/transcripts/` inside the project directory. It is created with a `.gitignore` of its own containing `*`, so the store is ignored in any repository without editing that repository's `.gitignore`.
+Default location: `.groundwork/transcripts/` inside the project directory. Both it and its parent `.groundwork/` are created with a `.gitignore` of their own containing `*`, so nothing Groundwork writes into a project can be committed by accident, in any repository, without editing that repository's `.gitignore`.
 
 ```text
 .groundwork/transcripts/

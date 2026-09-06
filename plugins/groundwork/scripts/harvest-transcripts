@@ -70,6 +70,14 @@ STORE_GITIGNORE = """# Groundwork transcript store: local capture, never committ
 *
 """
 
+# The same self-ignoring file one level up, so everything Groundwork writes into
+# a project — the store and the capture marker alike — stays out of git status
+# without touching the repository's own .gitignore. The marker is created before
+# any store exists, so this cannot be left to the store's own file.
+WORKSPACE_GITIGNORE = """# Groundwork local workspace: capture marker and transcript store.
+*
+"""
+
 
 # ---------------------------------------------------------------- resolution
 
@@ -151,6 +159,15 @@ def capture_enabled(root: Path, env: dict[str, str] | None = None) -> bool:
     if override is not None:
         return override.strip().lower() in {"1", "true", "yes", "on"}
     return marker_path(root, env).is_file()
+
+
+def ensure_workspace(root: Path) -> None:
+    """Create <project>/.groundwork/ already ignoring itself."""
+    workspace = root / STORE_RELATIVE.parts[0]
+    workspace.mkdir(parents=True, exist_ok=True)
+    marker = workspace / ".gitignore"
+    if not marker.exists():
+        marker.write_text(WORKSPACE_GITIGNORE, encoding="utf-8")
 
 
 def ensure_store(store: Path) -> None:
@@ -522,6 +539,7 @@ def run_sweep(args: argparse.Namespace, payload: dict) -> int:
             print("no Claude Code temp root found; nothing to harvest", file=sys.stderr)
         return 0
 
+    ensure_workspace(project)
     ensure_store(store)
     handle = acquire_lock(store)
     if handle is None:
@@ -544,6 +562,7 @@ def run_switch(enable: bool) -> int:
     project = project_root({})
     marker = marker_path(project)
     if enable:
+        ensure_workspace(project)
         marker.parent.mkdir(parents=True, exist_ok=True)
         marker.write_text(
             "Groundwork transcript capture is enabled for this project.\n"
@@ -680,6 +699,16 @@ def self_test() -> int:
             "transcript must be stored under the session id it carries, not the directory name",
         )
         expect((store / ".gitignore").is_file(), "store must ignore itself")
+
+        # Everything written into a project must be ignored, including the
+        # capture marker, which is created before any store exists.
+        ensure_workspace(project)
+        workspace_ignore = project / ".groundwork" / ".gitignore"
+        expect(workspace_ignore.is_file(), "the project workspace must ignore itself")
+        expect(
+            workspace_ignore.read_text().strip().endswith("*"),
+            "the workspace .gitignore must ignore everything under it",
+        )
 
         second = sweep(root, store, project, DEFAULT_MAX_DAYS, DEFAULT_MAX_BYTES)
         expect(
