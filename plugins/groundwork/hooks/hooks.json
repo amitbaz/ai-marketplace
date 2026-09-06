@@ -1,5 +1,5 @@
 {
-  "description": "Groundwork transcript harvest. Off by default: both hooks exit immediately unless capture has been enabled for the project with /groundwork-metrics on. When enabled, they copy Claude Code subagent transcripts out of the per-user temp root, where they are deleted within roughly three days, into a local store.",
+  "description": "Groundwork transcript harvest. Off by default: both hooks exit immediately unless capture has been enabled for the project with /groundwork-capture on. When enabled, they copy Claude Code subagent transcripts out of the per-user temp root, where they are deleted within roughly three days, into a local store.",
   "hooks": {
     "SubagentStop": [
       {

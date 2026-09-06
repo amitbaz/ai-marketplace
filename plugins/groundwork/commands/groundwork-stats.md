@@ -10,7 +10,7 @@ Report the state of measurement in this project. Run both, in order:
 
 Report what they print. Do not recompute any figure, and do not estimate anything the scripts did not measure.
 
-If capture is off, say so first and plainly: nothing new is being captured, and any stored transcripts are from before it was switched off. Point at `/groundwork-metrics on`.
+If capture is off, say so first and plainly: nothing new is being captured, and any stored transcripts are from before it was switched off. Point at `/groundwork-capture on`.
 
 If nothing is stored at all, say that and stop. Do not run the collector against an empty store.
 

@@ -206,11 +206,13 @@ Groundwork ships a capture step for them, and nothing more. Parsing the records 
 Hooks load for everyone who installs a plugin, so an installed plugin must not start copying a user's transcripts on its own. Both hooks exit immediately — creating no directory, writing no file, walking nothing — until capture is enabled for that project:
 
 ```text
-/groundwork-metrics on    # enable capture here
-/groundwork-metrics off   # stop capturing here
+/groundwork-capture on    # enable capture here
+/groundwork-capture off   # stop capturing here
 /groundwork-stats         # is it on, and what is stored
 /groundwork-report        # sweep now and break the cost down by role
 ```
+
+`stats` answers "what is the state of this" — is capture on, how much is stored, and the totals at a glance. `report` answers "what did it cost" — it sweeps first so nothing recent is missing, then breaks the spend down by role with the caveats that belong to it.
 
 The switch is a marker file at `.groundwork/capture-enabled`, and it is per project: enabling measurement in one repository does not enable it anywhere else. `GROUNDWORK_HARVEST=1` or `0` overrides the marker in either direction for a single session.
 
