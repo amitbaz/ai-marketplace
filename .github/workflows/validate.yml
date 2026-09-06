@@ -26,6 +26,9 @@ jobs:
       - name: Check the script boundary rule itself fires
         run: python3 scripts/check-adapter-boundary.py --self-test
 
+      - name: Check the transcript harvester
+        run: python3 plugins/groundwork/scripts/harvest-transcripts --self-test
+
       - name: Reject workflow prose in a plugin script
         run: |
           set -e

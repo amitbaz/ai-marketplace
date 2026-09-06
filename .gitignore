@@ -2,3 +2,6 @@
 .agents/skills/
 .claude/
 skills-lock.json
+
+# Harvested Claude Code subagent transcripts (see plugins/groundwork/README.md)
+.groundwork/
