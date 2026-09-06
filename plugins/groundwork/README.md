@@ -290,7 +290,7 @@ Token classes are weighted by published price ratios and reported in base-input-
 | cache read | 0.1 |
 | output | 5.0 |
 
-Cost share is always reported by class. A single undifferentiated token count hides the thing that matters: across 63 measured runs, uncached input was 0.0% of cost while cache creation was 52.9% and cache read 42.2%.
+Cost share is always reported by class. A single undifferentiated token count hides the thing that matters: across 63 measured runs, uncached input was 0.0% of cost while cache read was 46.8%, cache creation 42.3%, and output 10.9%.
 
 ### How roles are attributed
 
@@ -312,9 +312,13 @@ Every pattern matches a second-person statement of the job, never a passing ment
 
 A run matching no rule, or naming no workspace artifact, is reported as unattributed and counted. It is never guessed at. Measured across 63 harvested transcripts spanning three real executions, 42 runs attributed cleanly and the 21 unattributed were all non-execution agents — recon threads and one-off dispatches outside any plan.
 
+### One turn is not one record
+
+Claude Code writes one transcript record per content block of an assistant message, and every one of those records carries the same `usage`. A message with a thinking block, a text block, and a tool call is three records. Counting records as turns inflated turns and tokens by 3.4x on the longest run measured, so usage is accumulated per message id, and `output_tokens` — the only field that varies between a message's records — takes the largest value reported.
+
 ### What the transcripts showed about fix rounds
 
-A fix round does **not** produce a second transcript. The controller resumes the running implementer by message, so the same `agentId` grows: one implementer here ran 185 turns across 3 fix rounds in a single file, and its turn-1 cache write was 29,080 tokens against 828,741 written on later turns.
+A fix round does **not** produce a second transcript. The controller resumes the running implementer by message, so the same `agentId` grows: one implementer here ran 74 turns across 3 fix rounds in a single file, and its turn-1 cache write was 29,080 tokens against 225,198 written on later turns.
 
 Fix work also appears as a fresh dispatch in some executions — an agent told to apply findings to a finished branch — so dispatch counts and fix rounds measure different things and are reported separately. Only rounds the controller labelled "fix round N" are counted as fix rounds; other coordinator messages are counted on their own line rather than being read as fix rounds. Claude Code's own system reminders are not counted at all.
 
