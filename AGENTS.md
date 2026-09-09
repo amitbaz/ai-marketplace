@@ -4,7 +4,7 @@ This file provides guidance to coding agents (Claude Code, Codex, and any agent 
 
 ## What this repo is
 
-A personal plugin marketplace that ships **two plugins to two platforms** — Claude Code and OpenAI Codex. Groundwork ships fully to both; Muster ships its skill to Codex and everything else to Claude Code only. Nearly every artifact is Markdown with YAML frontmatter, or a JSON manifest, consumed directly by each platform's plugin loader, so "changing behavior" here usually means editing prose instructions rather than code. The repo also ships executable scripts and hook definitions, under the constraint below.
+A personal plugin marketplace that ships **two plugins to two platforms** — Claude Code and OpenAI Codex. Groundwork ships fully to both; Cabinet ships its skill to Codex and everything else to Claude Code only. Nearly every artifact is Markdown with YAML frontmatter, or a JSON manifest, consumed directly by each platform's plugin loader, so "changing behavior" here usually means editing prose instructions rather than code. The repo also ships executable scripts and hook definitions, under the constraint below.
 
 ### The invariant: no build step, no third-party dependencies
 
@@ -113,11 +113,11 @@ codex plugin add groundwork@amitbaz
 
 Frontmatter and manifest JSON are the fragile parts — a malformed YAML block or JSON manifest makes a command, agent, or skill silently not appear, with no error. If something doesn't show up after install, suspect frontmatter first.
 
-## Muster — design intent
+## Cabinet — design intent
 
-Muster gives one person the executive team they cannot afford to hire: six
+Cabinet gives one person the executive team they cannot afford to hire: six
 roles with their own remits, notebooks, and a standing question each. Its
-rules live in `plugins/muster/skills/coordination-rules/SKILL.md`.
+rules live in `plugins/cabinet/skills/coordination-rules/SKILL.md`.
 
 Four constraints are load-bearing. Do not "simplify" them without
 understanding why:
@@ -133,12 +133,12 @@ understanding why:
   `## MONEY` sections, and the dispatching command records them. One writer
   means parallel roles cannot race on appends, and it means no role needs a
   write grant carved out of an otherwise read-only allowlist.
-- **State lives in `.muster/`, not `.claude/`.** Many repositories ignore
+- **State lives in `.cabinet/`, not `.claude/`.** Many repositories ignore
   `.claude/` wholesale, which would have made the memory uncommittable. The
-  per-person layer is `~/.muster/founder.md`, so a second repository costs
+  per-person layer is `~/.cabinet/founder.md`, so a second repository costs
   almost no setup.
 - **Initiative is capped by design.** Roles propose improvements and notice
-  outside their remit, but proposals go to `.muster/proposals.md` and
+  outside their remit, but proposals go to `.cabinet/proposals.md` and
   cross-role observations go to the other role's notebook — never to the
   owner. Only an item whose author named the cost of delay reaches the daily
   brief. Removing that gate recreates the volume problem the plugin exists to
@@ -151,7 +151,57 @@ understanding why:
   results and blocking edges are re-derived every run. A stale copy of a
   derivable fact is worse than no copy.
 
-Muster ships no executables and no hooks. Plugin-shipped agents cannot declare
+- **Only one-way doors reach the owner.** A decision the owner cannot walk
+  back goes to them; anything a role can reverse itself is that role's own
+  call, made and reported. Escalating a reversible decision is a defect, not
+  caution — it spends the attention the one-channel rule exists to protect.
+
+### Alternatives considered and rejected
+
+**Claude Code's native subagent `memory:` field.** Since v2.1.33 a named
+subagent can be given a persistent knowledge store scoped to the user or the
+project. Cabinet deliberately does not use it, and a future change that
+"simplifies" the notebooks onto it would break three things at once:
+
+- It is part of auto memory, so it silently has no effect when
+  `autoMemoryEnabled` is off or `CLAUDE_CODE_DISABLE_AUTO_MEMORY` is set. A
+  memory design that may or may not be on is an unenforced claim.
+- It grants the role a memory *tool* — a write capability. Every role here is
+  read-only by enumerated grant, and that grant is what makes the money
+  invariant enforceable rather than promised.
+- It stores under `.claude/agent-memory/`, which is not committed. Cabinet's
+  notebooks are committed on purpose: judgement should survive a fresh clone,
+  be diffable, and be readable without the plugin installed.
+
+**A denylist instead of an allowlist on `tools:`.** Covered above; an
+allowlist excludes tools that do not exist yet.
+
+**Per-role write grants.** Roles returning sections that one command records
+means parallel roles cannot race on appends, and no role needs a write
+capability carved out of an otherwise read-only grant.
+
+### Where the borrowed ideas come from
+
+Cabinet borrows deliberately, and the sources matter when someone later asks
+why a rule is shaped the way it is:
+
+- **One-way and two-way doors** — Bezos's 2015 shareholder letter. The
+  load-bearing half is the warning, not the taxonomy: heavyweight process on
+  reversible decisions produces slowness and risk aversion.
+- **Stated confidence on predictions** — proper scoring rules such as the
+  Brier score. The arithmetic is not implemented; the practice of committing
+  to a confidence that can be wrong is.
+- **Pre-mortems** — Klein's prospective hindsight. The plugin states the
+  evidence honestly (a laboratory finding plus conference-grade evidence on
+  overconfidence, not a peer-reviewed effect), because rule six applies to its
+  own methods.
+- **Base rates and reference classes** — used to stop the CFO and architect
+  producing confident numbers from nothing.
+- **Exclusive write surface** as the agent-splitting principle — convergent
+  with `cbrock84/headcount`, which states it well: a split by topic has no
+  checkable boundary, so two agents split by topic end up in the same file.
+
+Cabinet ships no executables and no hooks. Plugin-shipped agents cannot declare
 `hooks`, `mcpServers` or `permissionMode` — Claude Code blocks all three for
 security — so the `tools:` allowlist is the only enforcement surface available,
 which is why it carries the whole invariant.

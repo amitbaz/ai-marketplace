@@ -17,10 +17,10 @@
       "category": "Developer Tools"
     },
     {
-      "name": "muster",
+      "name": "cabinet",
       "source": {
         "source": "local",
-        "path": "./plugins/muster"
+        "path": "./plugins/cabinet"
       },
       "policy": {
         "installation": "AVAILABLE",

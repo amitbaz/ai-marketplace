@@ -3,12 +3,12 @@ description: Show or amend the company charter. Reports which lines have outgone
 argument-hint: "[what to change, in your own words]"
 ---
 
-# /muster:charter
+# /cabinet:charter
 
-Load `Skill(skill: "muster:coordination-rules")` first.
+Load `Skill(skill: "cabinet:coordination-rules")` first.
 
 A company does not stay the way it was described on its first day, so neither
-does `.muster/company.md`. This command is how it changes — with a history, so
+does `.cabinet/company.md`. This command is how it changes — with a history, so
 that anyone reading it later can see what moved and when.
 
 Roles propose amendments. Only the owner makes them. That is not ceremony:
@@ -17,7 +17,7 @@ could quietly rewrite its own instructions.
 
 ## With no arguments — show the charter and its health
 
-1. Read `.muster/company.md`. Missing: say so, suggest `/muster:hire`, stop.
+1. Read `.cabinet/company.md`. Missing: say so, suggest `/cabinet:hire`, stop.
 2. **Check every line's ending condition against reality.** Each line carries
    a source and, where it can go stale, an "Ends when" condition. Use the
    board and the repository to check each one. Report three states per line:
@@ -26,7 +26,7 @@ could quietly rewrite its own instructions.
 3. **Report age.** Name the commit and date each line was written against, and
    how far the repository has moved since. Drift being visible is the point;
    a charter that looks permanent is one nobody re-checks.
-4. **Show what the roles have proposed.** Read `.muster/proposals.md` for
+4. **Show what the roles have proposed.** Read `.cabinet/proposals.md` for
    entries marked as charter amendments — a role saying the owner's decisions
    have repeatedly contradicted a stated line. Present the evidence each role
    gave.
@@ -52,10 +52,10 @@ could quietly rewrite its own instructions.
 4. **Say what this reopens.** A charter line rarely changes alone. Name the
    notebook entries and open decisions that were conditioned on the old line,
    and put them in front of the owner rather than silently letting them stand.
-   For a **stage** change, say so prominently and recommend `/muster:review`,
+   For a **stage** change, say so prominently and recommend `/cabinet:review`,
    so every role re-runs its standing question against the new stage.
 5. If the amendment came from a role's proposal, mark that proposal accepted
-   in `.muster/proposals.md` and credit the role in the log. A role whose
+   in `.cabinet/proposals.md` and credit the role in the log. A role whose
    proposals are never acknowledged learns nothing about whether it is useful.
 
 ## Adding a section
@@ -69,7 +69,7 @@ company growing rather than just a file changing.
 ## Report
 
 Short. What changed, what it reopened, and what the owner should do next
-(usually `/muster:review` if the stage moved, nothing otherwise).
+(usually `/cabinet:review` if the stage moved, nothing otherwise).
 
 Never print the whole charter after an amendment. Print the line that changed
 and the line it replaced.

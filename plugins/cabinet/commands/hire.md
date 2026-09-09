@@ -1,11 +1,11 @@
 ---
-description: Set up Muster for this repository — read everything that already exists, draft the company charter from it, ask only what could not be found, and hire the roles this stage needs. Run once per repository, and again whenever the stage changes.
+description: Set up Cabinet for this repository — read everything that already exists, draft the company charter from it, ask only what could not be found, and hire the roles this stage needs. Run once per repository, and again whenever the stage changes.
 argument-hint: "[role name to hire one more, or empty for full setup]"
 ---
 
-# /muster:hire
+# /cabinet:hire
 
-Load `Skill(skill: "muster:coordination-rules")` first; it owns the rules this
+Load `Skill(skill: "cabinet:coordination-rules")` first; it owns the rules this
 command enforces.
 
 **Read before you ask.** A repository with documentation, issues, and history
@@ -22,11 +22,11 @@ Run `git remote get-url origin` and derive `owner/repo`. Roles have no shell,
 so this is the one fact they cannot derive for themselves — it goes in the
 charter and every role reads it from there.
 
-If there is no GitHub remote, say plainly that Muster's roles read the board
+If there is no GitHub remote, say plainly that Cabinet's roles read the board
 through GitHub tools today and that a different forge is not yet supported.
 Do not improvise a substitute.
 
-Check whether `.muster/` already exists. If it does, this is a re-run: go to
+Check whether `.cabinet/` already exists. If it does, this is a re-run: go to
 *Re-running* below instead of interviewing from scratch.
 
 ## 2. Read everything that already exists
@@ -71,13 +71,13 @@ confirm rather than interviewing.
 Use Write to create both. The split is what makes the second repository nearly
 free to set up.
 
-**`~/.muster/founder.md`** — about the person, not the project. Who they are,
+**`~/.cabinet/founder.md`** — about the person, not the project. Who they are,
 that they are running this alone by choice, their risk posture, what they will
 never compromise, how they want to be escalated to, and the money invariant as
 it applies to them. If this file already exists, read it and change nothing
 without asking: it was written for all their projects, not this one.
 
-**`.muster/company.md`** — about this project:
+**`.cabinet/company.md`** — about this project:
 
 - What it is, in one line, to someone who would pay for it
 - **Stage**, and what would end it — this is the most load-bearing line in the
@@ -101,18 +101,18 @@ would end it:
 The charter is a living document, not a snapshot taken once. End the file with
 an **amendment log** — empty at first — and say in the file that superseded
 lines stay, marked superseded, rather than being overwritten. Amendments are
-made with `/muster:charter`; roles propose them and only the owner makes them.
+made with `/cabinet:charter`; roles propose them and only the owner makes them.
 
-Then create the empty scaffolding: `.muster/decisions.md` with an empty open
-queue, `.muster/money.md` with empty recurring and open tables, and
-`.muster/proposals.md` with an empty list and a one-line header saying it holds
+Then create the empty scaffolding: `.cabinet/decisions.md` with an empty open
+queue, `.cabinet/money.md` with empty recurring and open tables, and
+`.cabinet/proposals.md` with an empty list and a one-line header saying it holds
 what the roles suggested that nobody asked for.
 
-**Check that `.muster/` will actually be committed.** Run
-`git check-ignore -q .muster/company.md`; if it exits 0, the path is ignored
+**Check that `.cabinet/` will actually be committed.** Run
+`git check-ignore -q .cabinet/company.md`; if it exits 0, the path is ignored
 and every judgement written here would be lost on a fresh clone. Say so
 plainly, name the `.gitignore` rule responsible, and ask whether to add a
-negation for `.muster/` or leave the memory local. Do not edit `.gitignore`
+negation for `.cabinet/` or leave the memory local. Do not edit `.gitignore`
 without an answer.
 
 ## 5. Hire the roles this stage needs
@@ -124,17 +124,17 @@ all of them on, explain each in one line, and let the owner change it.
 A role is hired by having a notebook; firing one is deleting its file. Say
 that plainly — it is what makes this a company rather than a fixed menu.
 
-Create an empty notebook for each hired role, `.muster/<role>.md`, with a
+Create an empty notebook for each hired role, `.cabinet/<role>.md`, with a
 one-line header naming the role and the date it was hired.
 
 ## 6. Offer the purchase deny block
 
 Ask before touching anything:
 
-> Muster's own roles hold no tool that can spend — that is enforced by their
+> Cabinet's own roles hold no tool that can spend — that is enforced by their
 > tool grants. It cannot enforce anything about your other agents. A deny
 > block in your user settings covers every session on this machine, including
-> the implementation sessions Muster never sees. May I add one?
+> the implementation sessions Cabinet never sees. May I add one?
 
 If yes, read `~/.claude/settings.json`, **merge** into `permissions.deny`
 without disturbing anything else, show the exact diff before writing, and use
@@ -155,15 +155,15 @@ Decisions first, one screen:
 3. Roles hired, and which were deliberately not hired at this stage
 4. Deny block: installed, declined, or not applicable
 5. What you could not determine — say it plainly rather than leaving it implicit
-6. Next: run `/muster:standup`
+6. Next: run `/cabinet:standup`
 
 Then say, in one line, that the charter is expected to change as the company
-does, and that `/muster:charter` is how — so the owner does not treat what was
+does, and that `/cabinet:charter` is how — so the owner does not treat what was
 just written as permanent.
 
 ## Re-running
 
-`/muster:hire` on an existing install is a **diff**, never a rewrite. Re-read
+`/cabinet:hire` on an existing install is a **diff**, never a rewrite. Re-read
 the sources, compare against the current charter, and report only what moved.
 
 Never touch a role's notebook — those hold judgement and this command has no

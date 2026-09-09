@@ -3,9 +3,9 @@ description: Pull one role into the room for a specific question — counsel on 
 argument-hint: "<role> <question>"
 ---
 
-# /muster:ask
+# /cabinet:ask
 
-Load `Skill(skill: "muster:coordination-rules")` first.
+Load `Skill(skill: "cabinet:coordination-rules")` first.
 
 `$ARGUMENTS` begins with a role name — `delivery-lead`, `architect`, `qa`,
 `counsel`, `cfo`, or `brand` — followed by the question.
@@ -21,8 +21,8 @@ Dispatch the role with the owner's question verbatim. Do not rewrite it, and
 do not add your own framing — a role's answer is worth less when it is
 answering a question the owner did not ask.
 
-If the role has not been hired — no `.muster/<role>.md` exists — say so, and
-offer `/muster:hire <role>`. Do not answer on the role's behalf: an
+If the role has not been hired — no `.cabinet/<role>.md` exists — say so, and
+offer `/cabinet:hire <role>`. Do not answer on the role's behalf: an
 unaccountable answer with a role's name on it is worse than no answer.
 
 ## 2. Record
@@ -32,13 +32,13 @@ This matters most for brand: a proposal considered and rejected is only useful
 later if the reasoning and the reopening condition were written down when they
 were fresh.
 
-Add `## DECISIONS` items to `.muster/decisions.md` and `## MONEY` items to
-`.muster/money.md`, both attributed to the role.
+Add `## DECISIONS` items to `.cabinet/decisions.md` and `## MONEY` items to
+`.cabinet/money.md`, both attributed to the role.
 
 Route the rest of the role's sections too: `## PROPOSALS` into
-`.muster/proposals.md`, and each `## FOR <role>` into that role's notebook as
+`.cabinet/proposals.md`, and each `## FOR <role>` into that role's notebook as
 inbound. Keep the role's prediction of the owner's answer alongside any
-decision item — that is what `/muster:decide` scores later.
+decision item — that is what `/cabinet:decide` scores later.
 
 ## 3. Report
 

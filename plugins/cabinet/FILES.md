@@ -1,15 +1,15 @@
-# The files Muster keeps
+# The files Cabinet keeps
 
 Every role in this plugin is a fresh dispatch: a new context each run, no
 memory of the last one. The files below are the memory. They are also the
-whole of Muster's state — there is no database, no cache, and nothing you
+whole of Cabinet's state — there is no database, no cache, and nothing you
 cannot read in a text editor with the plugin uninstalled.
 
 ## Two layers, and why
 
 ```
-~/.muster/founder.md          about the person — not committed
-.muster/                      about this project — committed
+~/.cabinet/founder.md          about the person — not committed
+.cabinet/                      about this project — committed
   company.md                  the charter, and its amendment log
   decisions.md                the open queue and its history
   money.md                    the ledger
@@ -23,13 +23,13 @@ work, their risk posture, what they will never compromise, and that they are
 the only one who spends money. Written once. The second repository they set up
 asks almost nothing, because only the project half is new.
 
-`.muster/` holds this project. It is committed on purpose — judgement should
+`.cabinet/` holds this project. It is committed on purpose — judgement should
 survive a fresh clone, be diffable, and be readable by a person who does not
 have this plugin installed.
 
 Note the location. An earlier design put these under `.claude/`, which many
 repositories ignore wholesale, so the memory would never have been committed
-at all. If your `.gitignore` covers `.muster/`, the plugin will tell you.
+at all. If your `.gitignore` covers `.cabinet/`, the plugin will tell you.
 
 ## What belongs in a notebook
 
@@ -77,11 +77,17 @@ Beyond the role's own judgements, each `<role>.md` carries:
   command routes it here. The receiving role reads it on its next run and
   decides whether it matters. This never reaches the owner unless it does.
 - **A calibration record.** When a role puts something in front of the owner,
-  it records what it expects the owner to decide. `/muster:decide` appends the
-  owner's actual answer with a one-word verdict: matched, or missed. Over
-  time the role reads its own record and adjusts — a role that knows the owner
-  will decline something notes it rather than asking, which makes the brief
-  shorter rather than longer.
+  it records what it expects the owner to decide **and how confident it is** —
+  near-certain, likely, even odds, unlikely. `/cabinet:decide` appends the
+  owner's actual answer with a one-word verdict: matched, or missed. Over time
+  the role reads its own record and adjusts — a role that knows the owner will
+  decline something notes it rather than asking, which makes the brief shorter
+  rather than longer.
+
+  The confidence is what makes the record diagnostic rather than a tally. A
+  role that says "near-certain" every time and is usually right is not
+  calibrated, it is over-confident and lucky; what the record must be able to
+  show is whether its "likely" calls land about as often as "likely" implies.
 
 The calibration record is evidence, not impression: the owner's own answers,
 with dates. A role that has been wrong four times running should say so.
@@ -93,7 +99,7 @@ Initiative has to go somewhere that is not the owner's attention.
 A **decision** is something the owner must answer. A **proposal** is something
 nobody asked for — an improvement, a convention worth adopting, work worth
 dropping. Proposals accumulate here and are aired once a week by
-`/muster:review`. One reaches the daily brief only when the role that made it
+`/cabinet:review`. One reaches the daily brief only when the role that made it
 named the cost of *not* doing it.
 
 Each entry carries the role that made it, the date, the cost of delay or an
@@ -124,7 +130,7 @@ fact they cannot derive for themselves.
 
 **It is a living document.** A company does not stay the way it was described
 on its first day. Lines whose ending condition has been met are reported every
-run until the owner resolves them. Amendments are made with `/muster:charter`,
+run until the owner resolves them. Amendments are made with `/cabinet:charter`,
 never by overwriting: the superseded line stays, marked superseded and dated,
 and the amendment log at the end of the file records what changed and why. The
 shape is not fixed either — a pre-launch charter has no pricing section or
@@ -141,7 +147,7 @@ owner. Every row carries the amount, whether it recurs, the deadline or gate,
 who raised it, and the owner's decision with its date.
 
 Nothing reaches the recurring table except through the owner reporting a
-completed purchase with `/muster:decide <n> --done`. No agent buys anything,
+completed purchase with `/cabinet:decide <n> --done`. No agent buys anything,
 and no agent may infer that a purchase happened — not from a checked box on a
 ticket, not from a role's report, not from the owner saying they intended to.
 
@@ -169,9 +175,9 @@ condition as a reopening trigger.
   silently resolved. A role that quietly picks a side manufactures a confident
   wrong answer, which is the failure this whole design exists to avoid.
 - **The charter is missing.** Roles stop rather than guess which repository
-  they are looking at. Run `/muster:hire`.
+  they are looking at. Run `/cabinet:hire`.
 - **A charter line has outlived its condition.** Reported at every standup,
-  and by `/muster:charter`, until the owner amends it. It is never silently
+  and by `/cabinet:charter`, until the owner amends it. It is never silently
   updated and never quietly ignored — a line the company has outgrown is worse
   than a missing one, because roles act on it.
 - **No GitHub tools are available.** Roles say so and stop, or clearly label a

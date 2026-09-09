@@ -7,7 +7,7 @@ A plugin marketplace for reusable AI coding-agent workflows. Supports **Claude C
 | Plugin | Version | Description |
 | --- | --- | --- |
 | [groundwork](./plugins/groundwork) | 1.8.1 | Extension for `obra/superpowers` that adds parallel reconnaissance, discussion, and planning before committing to code. **Requires Superpowers.** |
-| [muster](./plugins/muster) | 0.3.0 | The executive team a solo founder cannot afford to hire: six roles that show initiative, learn how you decide, and keep their own memory, with a living charter and a money invariant enforced by tool grants. |
+| [cabinet](./plugins/cabinet) | 0.4.0 | The staff who read your board every morning: six roles with their own remits, memory and standing questions, a chief-of-staff brief capped at five one-way-door decisions, and a money invariant enforced by tool grants. |
 
 ## Groundwork prerequisite: Superpowers
 
@@ -47,10 +47,10 @@ Install Groundwork:
 /plugin install groundwork@amitbaz
 ```
 
-Install Muster:
+Install Cabinet:
 
 ```text
-/plugin install muster@amitbaz
+/plugin install cabinet@amitbaz
 ```
 
 Adding the marketplace only registers the catalog. Plugins still need to be installed separately.
@@ -75,11 +75,11 @@ Install Groundwork:
 codex plugin add groundwork@amitbaz
 ```
 
-Install Muster (Codex gets the `coordination-rules` skill only — see the
-[Muster README](./plugins/muster/README.md)):
+Install Cabinet (Codex gets the `coordination-rules` skill only — see the
+[Cabinet README](./plugins/cabinet/README.md)):
 
 ```text
-codex plugin add muster@amitbaz
+codex plugin add cabinet@amitbaz
 ```
 
 To refresh the Git-backed marketplace later:
@@ -110,10 +110,10 @@ Groundwork runs the same contract on both platforms: parallel read-only reconnai
 
 See the [Groundwork README](./plugins/groundwork/README.md) for the complete workflow, dependency rules, and platform differences.
 
-## Use Muster
+## Use Cabinet
 
 ```text
-/muster:hire
+/cabinet:hire
 ```
 
 Reads your repository's documentation, board and history, drafts a company
@@ -121,13 +121,14 @@ charter from what it finds, asks only about what it could not find, and hires
 the roles your stage needs. Then, at the start of a working session:
 
 ```text
-/muster:standup
+/cabinet:standup
 ```
 
-Six roles — delivery, architecture, QA, counsel, finance and brand — report to
-a chief of staff who hands you one brief of at most five items. No agent in
-Muster can spend money; that is enforced by tool grants rather than promised
-in a prompt. See the [Muster README](./plugins/muster/README.md).
+Six roles — delivery, architecture, QA, counsel, finance and brand — read your
+issues and pull requests before you get to your desk, and a chief of staff
+hands you one brief. Only decisions you cannot walk back reach you, and no
+agent can spend your money: both are enforced by tool grants rather than
+promised in a prompt. See the [Cabinet README](./plugins/cabinet/README.md).
 
 ## Repository Structure
 
@@ -155,7 +156,7 @@ ai-marketplace/
 │   │   ├── agents/                   # Claude Code recon agents
 │   │   ├── commands/                 # Claude Code /groundwork adapter
 │   │   └── README.md
-│   └── muster/
+│   └── cabinet/
 │       ├── .codex-plugin/
 │       │   └── plugin.json           # Codex plugin manifest
 │       ├── .claude-plugin/
@@ -165,7 +166,7 @@ ai-marketplace/
 │       │       └── SKILL.md          # the rules every role runs under
 │       ├── agents/                   # the six roles, read-only by tool grant
 │       ├── commands/                 # :hire, :standup, :decide, :charter, ...
-│       ├── FILES.md                  # what Muster writes and who writes it
+│       ├── FILES.md                  # what Cabinet writes and who writes it
 │       └── README.md
 └── README.md
 ```

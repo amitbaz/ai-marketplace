@@ -3,11 +3,11 @@ description: The weekly board meeting. Every hired role runs its standing questi
 argument-hint: "[no arguments]"
 ---
 
-# /muster:review
+# /cabinet:review
 
-Load `Skill(skill: "muster:coordination-rules")` first.
+Load `Skill(skill: "cabinet:coordination-rules")` first.
 
-`/muster:standup` is a daily brief built mostly from memory. This is the
+`/cabinet:standup` is a daily brief built mostly from memory. This is the
 opposite: every role looks at the whole board at once and asks the question it
 owns, whether or not anyone raised it.
 
@@ -18,14 +18,18 @@ and the late ones are the expensive ones.
 
 ## 1. Read the memory first
 
-`.muster/company.md`, `~/.muster/founder.md`, `.muster/decisions.md`,
-`.muster/money.md`, `.muster/proposals.md`, and every notebook. Missing
-charter: say so, suggest `/muster:hire`, and stop.
+`.cabinet/company.md`, `~/.cabinet/founder.md`, `.cabinet/decisions.md`,
+`.cabinet/money.md`, `.cabinet/proposals.md`, and every notebook. Missing
+charter: say so, suggest `/cabinet:hire`, and stop.
 
 ## 2. Run every hired role in parallel
 
 Dispatch every role that has a notebook, at once, each on its own standing
 question:
+
+Remind each role that a **two-way door is its own call**: a review is for
+telling the owner what it decided and what it found, not for asking permission
+to do things inside its remit.
 
 - **delivery-lead** — what is ordered wrong?
 - **architect** — what did we build that contradicts what we decided?
@@ -48,10 +52,13 @@ Before reporting, every role reads its own calibration record — what it
 predicted the owner would decide, against what the owner actually decided —
 and its own last few entries against what has since happened.
 
-Two questions, answered honestly:
+Three questions, answered honestly:
 
 - What did I raise that turned out not to matter?
 - What did I miss that I should have caught?
+- Are my confident calls actually more often right than my uncertain ones? A
+  role whose "near-certain" and "even odds" predictions land at the same rate
+  is not reading the owner at all, it is guessing with decoration.
 
 A role that has been consistently wrong about this owner says so and changes
 how it decides what to raise. This is the mechanism that makes the brief
@@ -63,7 +70,7 @@ correction to how it works, not an apology.
 
 ## 4. Proposals — the once-a-week airing
 
-Read `.muster/proposals.md` in full. This is the only command that does.
+Read `.cabinet/proposals.md` in full. This is the only command that does.
 
 Surface the two or three worth the owner's attention, ranked by the cost of
 not doing them. For the rest, name the count.
@@ -75,7 +82,7 @@ nobody opens.
 
 `## FOR charter` proposals are read here too: a role saying a charter line no
 longer matches how the owner actually decides. Present the evidence, and point
-at `/muster:charter` — roles propose, only the owner amends.
+at `/cabinet:charter` — roles propose, only the owner amends.
 
 ## 5. Re-check what the stage conditioned
 
@@ -87,12 +94,12 @@ re-decide them; name them and put them in front of the owner.
 ## 6. Write back
 
 Append each role's `## NOTEBOOK` content to its own file, newest first, dated.
-Add `## DECISIONS` items to `.muster/decisions.md`, numbered, dated,
+Add `## DECISIONS` items to `.cabinet/decisions.md`, numbered, dated,
 attributed, with each role's prediction of the owner's answer kept alongside
 it. Numbers only ever go up: never renumber an open item, never reuse a closed
-one's number. Add `## MONEY` items to `.muster/money.md` under open, updating
+one's number. Add `## MONEY` items to `.cabinet/money.md` under open, updating
 days-open rather than duplicating anything already there. Add `## PROPOSALS`
-items to `.muster/proposals.md`, and route `## FOR <role>` sections into the
+items to `.cabinet/proposals.md`, and route `## FOR <role>` sections into the
 receiving roles' notebooks as inbound.
 
 ## 7. Report

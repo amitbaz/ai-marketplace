@@ -3,9 +3,9 @@ description: Produce the starting brief for a ticket — what the ticket cannot 
 argument-hint: "<ticket number>"
 ---
 
-# /muster:brief
+# /cabinet:brief
 
-Load `Skill(skill: "muster:coordination-rules")` first; the briefing rule is
+Load `Skill(skill: "cabinet:coordination-rules")` first; the briefing rule is
 what this command implements.
 
 A ticket should be able to describe itself. This brief carries only what the
@@ -18,15 +18,15 @@ If a section here would restate the ticket, drop the section.
 
 ## 1. Read
 
-- `.muster/company.md` for what must never be compromised, the stage, and the
-  conventions. `~/.muster/founder.md` if present.
+- `.cabinet/company.md` for what must never be compromised, the stage, and the
+  conventions. `~/.cabinet/founder.md` if present.
 - The ticket itself.
 - Every notebook, for anything already recorded about this ticket or the area
   it touches — a known-hollow suite, an active hold, a past ordering call.
 
 ## 2. Ask the architect
 
-Dispatch `muster:architect` for this ticket specifically: does its description
+Dispatch `cabinet:architect` for this ticket specifically: does its description
 of the system still hold, and has anything it depends on moved since it was
 written. This is the highest-value part of the brief, because a stale spec
 reads as authoritative and produces confidently wrong work.
@@ -37,13 +37,27 @@ Open branches, open PRs, and other open tickets in the same area. Someone
 already part-way through the same territory is worth three paragraphs of
 context; discovering it at merge time is expensive.
 
-## 4. Assemble
+## 4. Pre-mortem it, in one line
+
+Assume this ticket shipped and it went wrong. What is the most likely story?
+Working backwards from an assumed failure surfaces what a forward-looking risk
+list misses, because it forces a concrete account rather than a checklist.
+
+Keep it to one line in the brief and only when it is specific to this ticket.
+"it might have bugs" is not a pre-mortem. "the guard passes because the
+reference set comes back empty, and nobody notices until two users share a
+posting" is.
+
+## 5. Assemble
 
 ```
 TICKET #<n> — <title>
 
 WHAT THE TICKET CANNOT TELL YOU ABOUT ITSELF
  · <staleness, overlap, ordering, or a decision recorded elsewhere>
+
+HOW THIS MOST LIKELY GOES WRONG
+ · <one specific line, or omit the section>
 
 FROM THE CHARTER
  · <the constraint that actually applies here, not the whole charter>
@@ -55,7 +69,7 @@ CONVENTIONS
 Nothing else. No ticket body, no restated acceptance criteria, no
 encouragement.
 
-## 5. Check it for spend before printing
+## 6. Check it for spend before printing
 
 A brief is text that will be pasted into a session holding real tools, so it
 must never carry an instruction that spends, deploys, publishes, or
@@ -67,7 +81,7 @@ owner performs anything with a cost themselves.
 This check is a named mechanism, not a guarantee of completeness. Say so if
 the brief is unusually long.
 
-## 6. Print it
+## 7. Print it
 
 Print the brief and nothing else — no preamble, so it can be copied straight
 into the implementing session. Then, on a separate line below it, note where

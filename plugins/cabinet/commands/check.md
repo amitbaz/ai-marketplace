@@ -3,9 +3,9 @@ description: Ask QA whether "done" actually holds for a ticket or pull request �
 argument-hint: "<ticket or PR number>"
 ---
 
-# /muster:check
+# /cabinet:check
 
-Load `Skill(skill: "muster:coordination-rules")` first.
+Load `Skill(skill: "cabinet:coordination-rules")` first.
 
 Run this before a merge, before closing a ticket, or whenever "it's green"
 needs to mean something.
@@ -15,24 +15,24 @@ every open pull request.
 
 ## 1. Dispatch QA
 
-Dispatch `muster:qa` for the named ticket or PR. It reads the suite, the CI
+Dispatch `cabinet:qa` for the named ticket or PR. It reads the suite, the CI
 configuration, and the reported results — it has no shell and cannot run
 anything, and it will say which of the three each conclusion came from.
 
 ## 2. Record
 
-Append QA's `## NOTEBOOK` content to `.muster/qa.md`, newest first, dated. A
+Append QA's `## NOTEBOOK` content to `.cabinet/qa.md`, newest first, dated. A
 known-hollow suite recorded once is caught by every later run; the same
 discovery made weekly is wasted work.
 
-Add anything from its `## DECISIONS` to `.muster/decisions.md`, numbered and
-dated, attributed to QA. Anything in `## MONEY` goes to `.muster/money.md`
+Add anything from its `## DECISIONS` to `.cabinet/decisions.md`, numbered and
+dated, attributed to QA. Anything in `## MONEY` goes to `.cabinet/money.md`
 under open.
 
 Route the rest of the role's sections too: `## PROPOSALS` into
-`.muster/proposals.md`, and each `## FOR <role>` into that role's notebook as
+`.cabinet/proposals.md`, and each `## FOR <role>` into that role's notebook as
 inbound. Keep the role's prediction of the owner's answer alongside any
-decision item — that is what `/muster:decide` scores later.
+decision item — that is what `/cabinet:decide` scores later.
 
 ## 3. Report
 
