@@ -1,0 +1,17 @@
+{
+  "name": "cabinet",
+  "description": "The staff who read your board every morning: six roles with their own remits, memory and standing questions, a chief-of-staff brief capped at five one-way-door decisions, and a money invariant enforced by tool grants so no agent can spend.",
+  "version": "0.5.0",
+  "keywords": [
+    "solo-founder",
+    "roles",
+    "decisions",
+    "coordination",
+    "agents"
+  ],
+  "author": {
+    "name": "Amit Baz",
+    "email": "amitbaz2@gmail.com",
+    "url": "https://github.com/amitbaz"
+  }
+}
