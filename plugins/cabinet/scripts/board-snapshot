@@ -11,7 +11,7 @@
 # uses it: four read-only calls, one snapshot file, handed to every role in the
 # run. Roles read the file instead of enumerating the board themselves.
 #
-# Usage:   board-snapshot <owner/repo>
+# Usage:   board-snapshot <owner/repo> [--since <YYYY-MM-DD | UTC instant>]
 # Prints:  two `key=path` lines on stdout, and a one-line count summary on
 #          stderr so the dispatching command can show the owner what it got.
 #
@@ -28,9 +28,56 @@
 
 set -euo pipefail
 
+normalize_since() {
+    # A UTC ISO-8601 instant, or empty when there is no usable window. Callers
+    # treat empty as "the window is unknown" rather than substituting a guess.
+    #
+    # The Z is required, not decoration. This value is compared against gh's
+    # own mergedAt strings, and that comparison is lexical: 2026-09-01T00:00:00
+    # written as +02:00 sorts as though it were two hours later than the same
+    # moment written in UTC, and pull requests either side of the boundary
+    # would land on the wrong side of the window. Anything that is not a plain
+    # UTC instant is rejected the same way nonsense is.
+    case "${1:-}" in
+        [0-9][0-9][0-9][0-9]-[0-9][0-9]-[0-9][0-9]) printf '%sT00:00:00Z' "$1" ;;
+        [0-9][0-9][0-9][0-9]-[0-9][0-9]-[0-9][0-9]T[0-9][0-9]:[0-9][0-9]:[0-9][0-9]Z)
+            printf '%s' "$1" ;;
+        *) printf '' ;;
+    esac
+}
+
+out_path() {
+    printf '%s/cabinet-%s-%s.json' "${TMPDIR:-/tmp}" "$1" "${2//\//-}"
+}
+
+if [ "${1:-}" = "--self-test" ]; then
+    fail=0
+    check() {
+        if [ "$2" != "$3" ]; then
+            echo "  - $1: expected '$3', got '$2'"
+            fail=1
+        fi
+    }
+    check "a date becomes an instant" "$(normalize_since 2026-09-01)" "2026-09-01T00:00:00Z"
+    check "an instant is kept" "$(normalize_since 2026-09-01T10:11:12Z)" "2026-09-01T10:11:12Z"
+    check "nonsense is rejected" "$(normalize_since yesterday)" ""
+    check "an absent window is empty" "$(normalize_since)" ""
+    check "an offset is rejected" "$(normalize_since 2026-09-01T10:11:12+02:00)" ""
+    check "an instant with no zone is rejected" "$(normalize_since 2026-09-01T10:11:12)" ""
+    check "a fractional instant is rejected" "$(normalize_since 2026-09-01T10:11:12.5Z)" ""
+    check "the slug replaces every slash" "$(out_path board acme/widget)" \
+        "${TMPDIR:-/tmp}/cabinet-board-acme-widget.json"
+    if [ "$fail" -ne 0 ]; then
+        echo "board-snapshot self-test FAILED:"
+        exit 1
+    fi
+    echo "board-snapshot self-test passed."
+    exit 0
+fi
+
 REPO="${1:-}"
 if [ -z "$REPO" ]; then
-    echo "usage: board-snapshot <owner/repo>" >&2
+    echo "usage: board-snapshot <owner/repo> [--since <YYYY-MM-DD>]" >&2
     exit 64
 fi
 
@@ -53,9 +100,16 @@ if ! gh repo view "$REPO" --json name >/dev/null 2>&1; then
     exit 78
 fi
 
-SLUG="${REPO//\//-}"
-OUT="${TMPDIR:-/tmp}/cabinet-board-${SLUG}.json"
-EPICS_OUT="${TMPDIR:-/tmp}/cabinet-epics-${SLUG}.json"
+SINCE=""
+if [ "${2:-}" = "--since" ]; then
+    SINCE="$(normalize_since "${3:-}")"
+    if [ -z "$SINCE" ] && [ -n "${3:-}" ]; then
+        echo "board-snapshot: --since '${3}' is not a date I can use; reporting no window" >&2
+    fi
+fi
+
+OUT="$(out_path board "$REPO")"
+EPICS_OUT="$(out_path epics "$REPO")"
 STARTED="$(date -u +%Y-%m-%dT%H:%M:%SZ)"
 
 # Open issues with their labels. This is the board.
@@ -76,6 +130,19 @@ prs="$(gh pr list --repo "$REPO" --state open --limit 200 \
 # Branches, for working out what has been started without a pull request yet.
 branches="$(gh api "repos/$REPO/branches" --paginate --jq '[.[].name]')"
 
+# What has landed since the last run. Without this the brief can only infer
+# change by diffing a notebook, and an inference is not something it may
+# report as observed fact.
+if [ -n "$SINCE" ]; then
+    merged="$(gh pr list --repo "$REPO" --state merged --limit 100 \
+        --json number,title,mergedAt,headRefName,closingIssuesReferences \
+        --jq "[.[] | select(.mergedAt >= \"$SINCE\") |
+              {number, title, mergedAt, headRefName,
+               closes: [.closingIssuesReferences[].number]}]" 2>/dev/null || echo '[]')"
+else
+    merged='[]'
+fi
+
 # Epic bodies. Ordering constraints live in the prose of these, and fetching
 # them one at a time is most of what made a role slow.
 epics="$(gh issue list --repo "$REPO" --label epic --state open --limit 50 \
@@ -90,6 +157,8 @@ jq -n \
     --argjson prs "$prs" \
     --argjson branches "$branches" \
     --argjson epics "$epics" \
+    --argjson merged "$merged" \
+    --arg since "$SINCE" \
     '{
         repo: $repo,
         taken_at: $taken_at,
@@ -98,12 +167,15 @@ jq -n \
             open_issues: ($issues | length),
             open_prs: ($prs | length),
             branches: ($branches | length),
-            epics: ($epics | length)
+            epics: ($epics | length),
+            merged_since: ($merged | length)
         },
         epics_index: [$epics[] | {number, title, url}],
         open_issues: $issues,
         open_prs: $prs,
-        branches: $branches
+        branches: $branches,
+        merged_window: (if $since == "" then null else $since end),
+        recently_merged: $merged
     }' > "$OUT"
 
 # Epic bodies live in their own file so a role that is not hunting ordering
@@ -115,7 +187,7 @@ jq -n \
     --argjson epics "$epics" \
     '{repo: $repo, taken_at: $taken_at, epics: $epics}' > "$EPICS_OUT"
 
-jq -r '"Board: \(.counts.open_issues) open · \(.counts.epics) epics · \(.counts.open_prs) PRs · \(.counts.branches) branches"' "$OUT" >&2
+jq -r '"Board: \(.counts.open_issues) open · \(.counts.epics) epics · \(.counts.open_prs) PRs · \(.counts.branches) branches · \(.counts.merged_since) merged"' "$OUT" >&2
 
 echo "board=$OUT"
 if [ "$(jq -r '.counts.epics' "$OUT")" != "0" ]; then
