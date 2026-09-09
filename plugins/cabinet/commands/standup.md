@@ -93,6 +93,38 @@ If the script reports that `gh` is missing or unauthenticated, say so in one
 line and carry on without a snapshot — the roles fall back to their own tools,
 correctly but slowly, and the owner should know which kind of run this was.
 
+Pass `--since <date>` using the date of the delivery lead's newest notebook
+entry, so the snapshot carries what merged since the last run. With no prior
+entry, use seven days ago. With no usable date at all, omit the flag — the
+brief then reports the change window as unknown rather than describing
+change nobody observed.
+
+Then take the local picture:
+
+```
+"${CLAUDE_PLUGIN_ROOT}"/scripts/local-sessions <owner/repo> --board <board path>
+```
+
+It prints `sessions=<path>`. **Give that path to the delivery lead in its
+prompt** alongside `board=` and `epics=`. It lists every worktree of this
+repository on this machine and what each one has done, which is the only way
+this run can know that a ticket is already being worked on: a workspace
+opened from a ticket is a local branch with nothing pushed, and GitHub cannot
+see it. Passing `--board` is what keeps a number read out of a branch name
+from being reported as a ticket the board does not have.
+
+Show the owner its stderr line next to the board's:
+
+```
+Board: 67 open · 3 epics · 0 PRs · 2 branches → delivery lead
+Local: 2 worktrees · 1 in flight (#179, 3h) · 0 stalled
+```
+
+If the script reports no signal, say so in one line and carry on. The brief
+then says that work started outside a pull request was invisible to this run,
+because a frontier derived without the local picture can recommend work that
+is already underway.
+
 **Then dispatch `cabinet:delivery-lead`, giving it both paths in the prompt**,
 and use its output for the frontier, what is taken, what is blocked, and any
 ordering constraint it found. A role that is not told the paths cannot use
@@ -186,56 +218,90 @@ Use Write or Edit:
 
 ## 9. The brief
 
-**Position first, then decisions.** A brief that opens with a decision queue
-makes the owner rebuild the company's position out of five unrelated items
-before they can judge any of them. Open with where the company stands, in four
-lines at most, all of it derived from the charter's stage and ending conditions
-against the snapshot you just took:
+The brief has exactly two blocks. Everything the roles produced is either a
+move or a count — there is no third thing, and no section that repeats a fact
+already stated.
+
+**Position first.** Four lines at most, derived from the charter's stage and
+ending conditions against the snapshots you just took:
 
 ```
-WHERE THE COMPANY STANDS · <date>
-Stage: <stage>. <Named gate> not crossed.
-To <gate>: <n> open items, <n> not started, <n> held.
-In flight: <n>. Longest untouched: <ticket> (<n>d) — <what it blocks>.
+WHERE YOU STAND · <date>
+<stage>. <named gate> not crossed.
+Gate <X>: <n> items · <n> startable · <n> purchases · <n> unticketed.
+In flight: #179 — local, 1 commit, 5 files dirty, 3h.
 ```
 
-Name the gate the charter names. If the charter records more than one ending
-condition, report against the nearest one — that is the one the next decision
-is about. If the charter records no gate, say what the stage is and that
-nothing defines its end, because that absence is itself worth an amendment.
+`In flight` comes from the delivery lead's reading of the session snapshot.
+Name each ticket with where it lives, what it has done and how long since it
+moved. `In flight: none` when there is none. When the run had no local
+signal, write `In flight: unknown — no local signal this run` instead of a
+zero. A zero that means "I could not see" is the failure this line exists to
+prevent.
 
-Where the "to gate" count comes from: the charter's *what is absent* section
-and whatever launch or preconditions epic it cites. If neither exists, say the
-count cannot be derived rather than inventing one. A made-up number here is the
-worst possible failure of this block, because it is the line the owner will
-steer by.
+Where the "to gate" counts come from: the charter's *what is absent* section
+and whatever launch or preconditions epic it cites. If neither exists, say
+the count cannot be derived rather than inventing one. A made-up number here
+is the worst possible failure of this block, because it is the line the owner
+steers by.
 
-Then the decisions:
+**Then the moves.** One ranked list, at most five, decisions and dispatch
+interleaved, ranked by cost of delay using the ordering in §7:
 
 ```
-CHIEF OF STAFF · <date> · <n> items
+YOUR MOVES · <n>        (all delivery lead — shallow run)
 
- 1. <ROLE> — <what needs the owner, and what it costs to answer late>
- ...
+ 1. <Imperative>. <One sentence: what it costs to act on this late.>
+    → <the command to type>
 
- Handled without you: <n> items. Ask for detail on any of these.
+ 2. ...
+
+Quiet: <n> handled · <n> proposals · <n> more startable · <n> blocked.
+Ask for any of these.
 ```
 
-**Every line in both blocks is written for the owner, not for an engineer** —
-a capability and what it costs, never the mechanism. No file path, function or
+Four rules make this list worth reading:
+
+1. **A fact appears once.** Anything that became a move does not appear again
+   as a contradiction, a proposal or a frontier entry. The owner is reading
+   one set of facts, and re-grouping them four ways is not more information —
+   it is the pile this brief exists to replace.
+2. **Every move ends in a command the owner can type.** `/cabinet:decide <n>`
+   for an open decision, `/cabinet:brief <n>` for a ticket about to be picked
+   up wrong, `/cabinet:charter` for a line that no longer holds, or the
+   dispatch command the charter records for this project. If the charter
+   records none, name the ticket and say plainly that there is no recorded
+   way to start it — that absence is worth an amendment, not a blank. A move
+   with no command is not finished thinking: hand it back to the role.
+3. **Imperative verb first, two lines at most**, then the command. The cost
+   of delay is one sentence. A role that needs a paragraph has not finished
+   translating its own finding.
+4. **The role stamp goes in the header when every move came from one role**,
+   and on the line only when several roles ran. Six identical labels down the
+   left margin carry nothing; the owner can still ask which role raised any
+   item and get an accountable answer.
+
+The startable frontier collapses into this list: its top candidate is a move,
+the rest is the `more startable` count. Tickets the delivery lead reported as
+taken are not on the frontier at all — they are in the position block. A
+worktree it reported as stalled becomes its own move: check on it or drop it.
+A ticket whose pull request has merged while its worktree is still open and
+dirty becomes a move too — the work landed, close the workspace.
+
+Counsel's holds are named in the `Quiet` line with the threshold they protect
+and the fact that one decision overrides them. Never let a hold remove
+something from the frontier silently.
+
+**Everything in both blocks is written for the owner, not an engineer** — a
+capability and what it costs, never the mechanism. No file path, function or
 line number appears anywhere in the brief. If a role handed you one, translate
-it; if you cannot translate it, that role has not finished its thinking, and
-say so instead of passing the mechanism through.
+it; if you cannot, that role has not finished its thinking, and say so instead
+of passing the mechanism through.
 
-Then, briefly, only if it has content:
-
-- What changed since the notebooks' last entries
-- Startable frontier, ranked, with any hold noted
-- Blocked, and where the constraint is written
-- Contradictions found this run
-- Charter lines whose ending condition has been met
-- Proposals that named a cost of delay — never the rest; say how many are
-  waiting and that `/cabinet:review` covers them
+**Never state that anything changed unless this run observed it.** Change
+comes from the snapshot's `recently_merged` and its window. If the window is
+null, say the change window is unknown. A notebook no longer listing a ticket
+is not evidence that it merged.
 
 Never volunteer full ticket bodies, full notebooks, or the whole ledger. Name
 counts and offer to expand.
