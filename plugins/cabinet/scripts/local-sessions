@@ -1,0 +1,369 @@
+#!/usr/bin/env python3
+"""Find the work already open on this machine, and write it where a role can read it.
+
+A Cabinet role holds no shell, by design: its tool grant is what makes the money
+invariant structural rather than a promise. So a role cannot look at the disk,
+and work started in another worktree is invisible to it. GitHub cannot see that
+work either: a workspace opened from a ticket is a local branch with nothing
+pushed, so the board shows the ticket as free while somebody is a commit deep in
+it.
+
+This script is how the dispatching command closes that gap. It enumerates every
+worktree of the repository on this machine, attributes each to a ticket from
+evidence on disk, and writes one snapshot file that is handed to the roles the
+same way the board snapshot is. Nothing is registered when a workspace opens:
+the worktree existing is the claim.
+
+Usage:   local-sessions <owner/repo> [--board <path>] [--cwd <path>]
+         local-sessions --self-test
+Prints:  sessions=/…/cabinet-sessions-owner-repo.json   on stdout
+         a one-line count summary                       on stderr
+
+Read-only. Exits 0 with an empty result when there is no signal to collect, so
+that a missing local picture never aborts the run that asked for it.
+"""
+
+from __future__ import annotations
+
+import argparse
+import json
+import os
+import re
+import subprocess
+import sys
+import tempfile
+from datetime import datetime, timezone
+from pathlib import Path
+
+DEFAULT_STALL_HOURS = 24.0
+
+
+# --------------------------------------------------------------- collection
+
+
+def now() -> datetime:
+    return datetime.now(timezone.utc)
+
+
+def git(args: list[str], cwd: Path) -> str | None:
+    """Run a read-only git command. None means it did not work, which is data."""
+    try:
+        done = subprocess.run(
+            ["git", *args], cwd=cwd, capture_output=True, text=True, check=False
+        )
+    except OSError:
+        return None
+    if done.returncode != 0:
+        return None
+    return done.stdout.strip()
+
+
+def normalize_remote(url: str) -> str:
+    """git@github.com:acme/widget.git and https://…/acme/widget both give acme/widget."""
+    trimmed = url.strip().removesuffix(".git")
+    trimmed = trimmed.split(":")[-1] if trimmed.startswith("git@") else trimmed
+    parts = [p for p in trimmed.replace(":", "/").split("/") if p]
+    return "/".join(parts[-2:]).lower() if len(parts) >= 2 else ""
+
+
+def parse_worktrees(text: str) -> list[dict]:
+    """`git worktree list --porcelain` into records. Bare worktrees are skipped."""
+    records: list[dict] = []
+    current: dict = {}
+    for line in text.splitlines():
+        if line.startswith("worktree "):
+            if current:
+                records.append(current)
+            current = {"path": line[len("worktree "):], "branch": None, "bare": False}
+        elif line.startswith("branch "):
+            current["branch"] = line[len("branch "):].removeprefix("refs/heads/")
+        elif line.strip() == "bare":
+            current["bare"] = True
+        elif line.strip() == "detached":
+            current["branch"] = None
+    if current:
+        records.append(current)
+    return [r for r in records if not r["bare"]]
+
+
+def default_branch(cwd: Path) -> str:
+    head = git(["symbolic-ref", "--short", "refs/remotes/origin/HEAD"], cwd)
+    if head:
+        return head.split("/", 1)[-1]
+    for candidate in ("main", "master"):
+        if git(["rev-parse", "--verify", f"refs/remotes/origin/{candidate}"], cwd):
+            return candidate
+    return "main"
+
+
+def dirty_paths(worktree: Path) -> tuple[int, list[str]]:
+    """Total dirty entries, and the tracked-modified paths among them."""
+    porcelain = git(["status", "--porcelain"], worktree)
+    if not porcelain:
+        return 0, []
+    lines = [line for line in porcelain.splitlines() if line.strip()]
+    tracked: list[str] = []
+    for line in lines:
+        code, path = line[:2], line[3:]
+        if code == "??":
+            continue
+        if " -> " in path:
+            path = path.split(" -> ", 1)[1]
+        tracked.append(path.strip('"'))
+    return len(lines), tracked
+
+
+def last_activity(worktree: Path, tracked: list[str]) -> datetime | None:
+    stamps: list[datetime] = []
+    committed = git(["log", "-1", "--format=%cI"], worktree)
+    if committed:
+        stamps.append(datetime.fromisoformat(committed).astimezone(timezone.utc))
+    for relative in tracked:
+        try:
+            mtime = (worktree / relative).stat().st_mtime
+        except OSError:
+            continue
+        stamps.append(datetime.fromtimestamp(mtime, timezone.utc))
+    return max(stamps) if stamps else None
+
+
+def collect(
+    repo: str,
+    cwd: Path,
+    board_numbers: set[int] | None,
+    stall_hours: float,
+    moment: datetime,
+) -> dict:
+    taken_at = moment.strftime("%Y-%m-%dT%H:%M:%SZ")
+
+    def empty(reason: str) -> dict:
+        return {
+            "repo": repo,
+            "taken_at": taken_at,
+            "stall_hours": stall_hours,
+            "reason": reason,
+            "counts": {"worktrees": 0, "in_flight": 0, "attributed": 0, "stalled": 0},
+            "worktrees": [],
+        }
+
+    toplevel = git(["rev-parse", "--show-toplevel"], cwd)
+    if not toplevel:
+        return empty("not inside a git repository, so no local work could be seen")
+
+    origin = git(["remote", "get-url", "origin"], cwd)
+    if not origin or normalize_remote(origin) != repo.lower():
+        return empty(f"this checkout's origin is not {repo}, so no local work was collected")
+
+    listing = git(["worktree", "list", "--porcelain"], cwd)
+    if listing is None:
+        return empty("git could not list worktrees, so no local work was collected")
+
+    base = default_branch(cwd)
+    here = Path(toplevel).resolve()
+    worktrees: list[dict] = []
+
+    for record in parse_worktrees(listing):
+        path = Path(record["path"])
+        branch = record["branch"]
+        ahead_raw = git(["rev-list", "--count", f"origin/{base}..HEAD"], path)
+        ahead = int(ahead_raw) if ahead_raw and ahead_raw.isdigit() else 0
+        unpushed_raw = git(["rev-list", "--count", "HEAD", "--not", "--remotes"], path)
+        unpushed = int(unpushed_raw) if unpushed_raw and unpushed_raw.isdigit() else 0
+        dirty, tracked = dirty_paths(path)
+        activity = last_activity(path, tracked)
+        idle_hours = (
+            round((moment - activity).total_seconds() / 3600.0, 1) if activity else None
+        )
+
+        is_checkout = branch == base and dirty == 0 and ahead == 0
+        worktrees.append(
+            {
+                "path": str(path),
+                "branch": branch,
+                "is_current": path.resolve() == here,
+                "kind": "checkout" if is_checkout else "workspace",
+                "in_flight": not is_checkout,
+                "ticket": None,
+                "ticket_source": "none",
+                "rejected_ticket": None,
+                "commits_ahead": ahead,
+                "unpushed": unpushed,
+                "dirty": dirty,
+                "last_activity": activity.strftime("%Y-%m-%dT%H:%M:%SZ") if activity else None,
+                "idle_hours": idle_hours,
+                "stalled": bool(
+                    (not is_checkout) and idle_hours is not None and idle_hours >= stall_hours
+                ),
+            }
+        )
+
+    in_flight = [w for w in worktrees if w["in_flight"]]
+    return {
+        "repo": repo,
+        "taken_at": taken_at,
+        "stall_hours": stall_hours,
+        "counts": {
+            "worktrees": len(worktrees),
+            "in_flight": len(in_flight),
+            "attributed": len([w for w in in_flight if w["ticket"] is not None]),
+            "stalled": len([w for w in worktrees if w["stalled"]]),
+        },
+        "worktrees": worktrees,
+    }
+
+
+# ----------------------------------------------------------------- self-test
+
+
+def run(args: list[str], cwd: Path) -> None:
+    subprocess.run(args, cwd=cwd, check=True, capture_output=True)
+
+
+def build_fixture(base: Path) -> Path:
+    """A repository with a main checkout and two worktrees."""
+    origin = base / "origin.git"
+    run(["git", "init", "--bare", "-b", "main", str(origin)], base)
+
+    main = base / "main"
+    run(["git", "clone", str(origin), str(main)], base)
+    run(["git", "config", "user.email", "t@example.com"], main)
+    run(["git", "config", "user.name", "T"], main)
+    # A clone of an empty bare repository leaves HEAD on whatever
+    # init.defaultBranch happens to be locally. Pin it.
+    run(["git", "symbolic-ref", "HEAD", "refs/heads/main"], main)
+    (main / "README.md").write_text("x\n", encoding="utf-8")
+    run(["git", "add", "-A"], main)
+    run(["git", "commit", "-m", "init"], main)
+    # Push while origin is still the path, so refs/remotes/origin/main exists,
+    # and only then make the remote look like the real thing.
+    run(["git", "push", "-u", "origin", "main"], main)
+    run(["git", "remote", "set-url", "origin", "git@github.com:acme/widget.git"], main)
+
+    # A worktree with committed and uncommitted work.
+    busy = base / "busy"
+    run(["git", "worktree", "add", "-b", "feat/shared-writers", str(busy)], main)
+    (busy / "a.txt").write_text("one\n", encoding="utf-8")
+    run(["git", "add", "-A"], busy)
+    run(["git", "commit", "-m", "work"], busy)
+    (busy / "a.txt").write_text("two\n", encoding="utf-8")
+
+    # The main checkout itself is the clean-default-branch case.
+    return main
+
+
+def self_test() -> int:
+    problems: list[str] = []
+
+    def expect(condition: bool, description: str) -> None:
+        if not condition:
+            problems.append(description)
+
+    with tempfile.TemporaryDirectory() as tmp:
+        base = Path(tmp)
+        main = build_fixture(base)
+
+        result = collect("acme/widget", main, None, DEFAULT_STALL_HOURS, now())
+        by_branch = {w["branch"]: w for w in result["worktrees"]}
+
+        expect(result["counts"]["worktrees"] == 2,
+               f"expected 2 worktrees, got {result['counts']['worktrees']}")
+        expect("feat/shared-writers" in by_branch,
+               f"branches found: {sorted(by_branch)}")
+
+        busy = by_branch.get("feat/shared-writers", {})
+        expect(busy.get("commits_ahead") == 1,
+               f"expected 1 commit ahead, got {busy.get('commits_ahead')}")
+        expect(busy.get("unpushed") == 1,
+               f"expected 1 unpushed commit, got {busy.get('unpushed')}")
+        expect(busy.get("dirty") == 1,
+               f"expected 1 dirty file, got {busy.get('dirty')}")
+        expect(busy.get("in_flight") is True, "a worktree with work is in flight")
+        expect(busy.get("kind") == "workspace",
+               f"expected kind workspace, got {busy.get('kind')}")
+
+        checkout = by_branch.get("main", {})
+        expect(checkout.get("kind") == "checkout",
+               "a clean worktree on the default branch is a checkout, not a session")
+        expect(checkout.get("in_flight") is False,
+               "a clean default-branch checkout is not work in flight")
+
+        outside = base / "not-a-repo"
+        outside.mkdir()
+        empty = collect("acme/widget", outside, None, DEFAULT_STALL_HOURS, now())
+        expect(empty["counts"]["worktrees"] == 0,
+               "outside a git repository the result must be empty")
+        expect("reason" in empty, "an empty result must say why it is empty")
+
+        wrong = collect("acme/other", main, None, DEFAULT_STALL_HOURS, now())
+        expect(wrong["counts"]["worktrees"] == 0,
+               "a repository whose origin does not match must produce an empty result")
+
+    if problems:
+        print("local-sessions self-test FAILED:\n")
+        for problem in problems:
+            print(f"  - {problem}")
+        return 1
+    print("local-sessions self-test passed.")
+    return 0
+
+
+def summary_line(result: dict) -> str:
+    counts = result["counts"]
+    if "reason" in result:
+        return f"Local: no signal — {result['reason']}"
+    detail = ""
+    named = [w for w in result["worktrees"] if w["in_flight"] and w["ticket"]]
+    if named:
+        parts = [
+            f"#{w['ticket']}"
+            + (f", {w['idle_hours']:.0f}h" if w["idle_hours"] is not None else "")
+            for w in named
+        ]
+        detail = f" ({'; '.join(parts)})"
+    return (
+        f"Local: {counts['worktrees']} worktrees · "
+        f"{counts['in_flight']} in flight{detail} · {counts['stalled']} stalled"
+    )
+
+
+def main() -> int:
+    parser = argparse.ArgumentParser(add_help=True)
+    parser.add_argument("repo", nargs="?")
+    parser.add_argument("--board")
+    parser.add_argument("--cwd")
+    parser.add_argument("--self-test", action="store_true", dest="self_test")
+    args = parser.parse_args()
+
+    if args.self_test:
+        return self_test()
+
+    if not args.repo or "/" not in args.repo:
+        print("usage: local-sessions <owner/repo> [--board <path>]", file=sys.stderr)
+        return 64
+
+    stall_hours = DEFAULT_STALL_HOURS
+    override = os.environ.get("CABINET_STALL_HOURS")
+    if override:
+        try:
+            stall_hours = float(override)
+        except ValueError:
+            print(
+                f"local-sessions: CABINET_STALL_HOURS is not a number ('{override}'); "
+                f"using {DEFAULT_STALL_HOURS}",
+                file=sys.stderr,
+            )
+
+    cwd = Path(args.cwd) if args.cwd else Path.cwd()
+    result = collect(args.repo, cwd, None, stall_hours, now())
+
+    slug = args.repo.replace("/", "-")
+    out = Path(os.environ.get("TMPDIR", "/tmp")) / f"cabinet-sessions-{slug}.json"
+    out.write_text(json.dumps(result, indent=2) + "\n", encoding="utf-8")
+
+    print(summary_line(result), file=sys.stderr)
+    print(f"sessions={out}")
+    return 0
+
+
+if __name__ == "__main__":
+    sys.exit(main())
