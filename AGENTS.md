@@ -115,6 +115,14 @@ Frontmatter and manifest JSON are the fragile parts — a malformed YAML block o
 
 ## Cabinet — design intent
 
+Before designing, changing, or planning Cabinet, read
+[`docs/superpowers/specs/2026-09-09-cabinet-company-design.md`](docs/superpowers/specs/2026-09-09-cabinet-company-design.md).
+It records the owner's confirmed company vision and authority boundaries, the
+proposed first operational batch, and its current verification status. Preserve
+that direction across sessions. The constraints below describe the shipped
+design; replace them only through an explicit design change with a concrete
+enforcement mechanism.
+
 Cabinet gives one person the executive team they cannot afford to hire: six
 roles with their own remits, notebooks, and a standing question each. Its
 rules live in `plugins/cabinet/skills/coordination-rules/SKILL.md`.
