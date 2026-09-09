@@ -186,6 +186,15 @@ class DialogText(ApprovalCase):
         self.assertIn(self.store.get_batch("B001", 1)["digest"][:12], message)
         self.assertEqual(schema, BRIEF_SCHEMA)
 
+    def test_message_shows_the_blast_radius(self):
+        ui = FakeElicitor(ACCEPT)
+        ApprovalService(self.store, ui).request("B001", 1)
+        message = ui.requests[0][0]
+        body = batch()
+        self.assertIn(body["owned_paths"][0], message)
+        self.assertIn(body["base_sha"], message)
+        self.assertIn(body["check_profile_ids"][0], message)
+
     def test_message_states_what_approval_does_not_authorize(self):
         ui = FakeElicitor(ACCEPT)
         ApprovalService(self.store, ui).request("B001", 1)
@@ -292,12 +301,105 @@ class ResponseReplay(ApprovalCase):
         self.assertEqual(caught.exception.code, "APPROVAL_REQUEST_USED")
         self.assertNoGrant()
 
+    def test_an_unanswered_request_cannot_be_answered_later(self):
+        ui = RaisingElicitor(TimeoutError("the owner did not answer in time"))
+        outcome = ApprovalService(self.store, ui).request("B001", 1)
+        with self.assertRaises(CabinetError) as caught:
+            self.store.save_grant(outcome["pending_request_id"], ACCEPT)
+        self.assertEqual(caught.exception.code, "APPROVAL_REQUEST_USED")
+        self.assertNoGrant()
+
+    def test_an_unanswered_request_records_no_owner_response(self):
+        ui = RaisingElicitor(TimeoutError("the owner did not answer in time"))
+        outcome = ApprovalService(self.store, ui).request("B001", 1)
+        self.assertEqual(outcome["detail"], "TimeoutError")
+        events = [event for event in self.store.get_events()
+                  if event["kind"] == "approval.unanswered"]
+        self.assertEqual(len(events), 1)
+        self.assertEqual(events[0]["payload"]["reason"], "unavailable")
+        self.assertNotIn("response", events[0]["payload"])
+
+    def test_a_timeout_during_a_lease_change_still_returns_a_non_answer(self):
+        """A non-answer reports itself; it does not raise the invariant code."""
+
+        def take_the_lease():
+            pid, _marker = own_process_identity()
+            rival = Store(self.root, FakeClock(),
+                          process_alive=dead_processes(pid)).open()
+            self.addCleanup(rival.close)
+            rival.acquire_lease("S2", 8765, "start-marker-2")
+
+        ui = RaisingElicitor(TimeoutError("no answer"), hook=take_the_lease)
+        outcome = ApprovalService(self.store, ui).request("B001", 1)
+        self.assertFalse(outcome["granted"])
+        self.assertEqual(outcome["reason"], "unavailable")
+        self.assertNoGrant()
+
     def test_repeating_an_approval_returns_the_same_grant(self):
         first = self.service(ACCEPT).request("B001", 1)
         second = self.service(ACCEPT).request("B001", 1)
         self.assertTrue(second["granted"])
         self.assertEqual(second["grant"]["grant_id"], first["grant"]["grant_id"])
         self.assertEqual(len(self.store.get_grants()), 1)
+
+
+class RevisionOrder(ApprovalCase):
+    """One batch has one live agreement, and revisions only move forward."""
+
+    def propose(self, revision, **changes):
+        body = batch()
+        body["revision"] = revision
+        body.update(changes)
+        return self.store.propose_batch(body)
+
+    def live_grants(self):
+        return [(grant["batch_id"], grant["revision"])
+                for grant in self.store.get_grants()
+                if grant["revoked_seq"] is None]
+
+    def test_a_skipped_revision_is_refused(self):
+        with self.assertRaises(CabinetError) as caught:
+            self.propose(3)
+        self.assertEqual(caught.exception.code, "REVISION_ORDER")
+
+    def test_a_first_revision_other_than_one_is_refused(self):
+        body = batch()
+        body["batch_id"] = "B002"
+        body["revision"] = 2
+        with self.assertRaises(CabinetError) as caught:
+            self.store.propose_batch(body)
+        self.assertEqual(caught.exception.code, "REVISION_ORDER")
+
+    def test_reproposing_the_current_revision_stays_idempotent(self):
+        again = self.store.propose_batch(batch())
+        self.assertEqual(again["revision"], 1)
+        self.assertEqual(again["state"], "proposed")
+        self.assertEqual(len(self.store.get_batches()), 1)
+
+    def test_the_out_of_order_reproduction_cannot_leave_two_live_grants(self):
+        """The reviewer's reproduction: revision 3 approved, then revision 2.
+
+        It needed a jump to revision 3 to open the gap. The jump is refused,
+        and walking the revisions in order retires each grant as it goes.
+        """
+
+        with self.assertRaises(CabinetError) as caught:
+            self.propose(3)
+        self.assertEqual(caught.exception.code, "REVISION_ORDER")
+
+        self.service(ACCEPT).request("B001", 1)
+        self.propose(2)
+        self.service(ACCEPT).request("B001", 2)
+        self.assertEqual(self.live_grants(), [("B001", 2)])
+
+    def test_at_most_one_live_grant_survives_a_walk_up_the_revisions(self):
+        for revision in (1, 2, 3):
+            if revision > 1:
+                self.propose(revision, out_of_scope=["Payments", str(revision)])
+            self.service(ACCEPT).request("B001", revision)
+            self.assertEqual(self.live_grants(), [("B001", revision)])
+        states = {row["revision"]: row["state"] for row in self.store.get_batches()}
+        self.assertEqual(states, {1: "superseded", 2: "superseded", 3: "approved"})
 
 
 class Supersede(ApprovalCase):

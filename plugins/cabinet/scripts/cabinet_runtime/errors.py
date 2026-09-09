@@ -21,6 +21,8 @@ ERROR_CODES = {
     # Records
     "BATCH_NOT_FOUND": "No batch exists at that identifier and revision.",
     "REVISION_CONFLICT": "A different body already occupies that revision.",
+    "REVISION_ORDER": "A batch revision must be the next one after the highest.",
+    "GRANT_NOT_FOUND": "No grant exists with that identifier.",
     "ACTION_NOT_FOUND": "No action exists with that identifier.",
     "DOCUMENT_NOT_FOUND": "No document exists with that name and revision.",
     "IDEMPOTENCY_CONFLICT": "An idempotency key was reused with another body.",
@@ -45,6 +47,9 @@ ERROR_CODES = {
     "SETUP_NOT_APPROVED": "No setup grant covers this repository's board.",
     "OPERATION_NOT_AUTHORIZED": "The setup grant does not list that operation.",
     "PUBLIC_PROSE_FORBIDDEN": "Public repository prose is not automatic.",
+    "CHECK_PROFILE_NOT_APPROVED": "That check profile is not in both the batch "
+                                  "and the setup grant.",
+    "CAPACITY_EXCEEDED": "The batch asks for more workers than setup allows.",
     "REPO_MISMATCH": "The action names a repository other than this company's.",
     # Backup and restore
     "BACKUP_DESTINATION_EXISTS": "The backup destination already exists.",

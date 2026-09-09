@@ -52,14 +52,21 @@ class FakeElicitor:
 
 
 class RaisingElicitor:
-    """An elicitor whose dialog never returns: timeout, closed session, refusal."""
+    """An elicitor whose dialog never returns: timeout, closed session, refusal.
 
-    def __init__(self, error):
+    `hook` runs before the error is raised, for the case where the company
+    also moved during the same unanswered wait.
+    """
+
+    def __init__(self, error, hook=None):
         self.error = error
+        self.hook = hook
         self.requests = []
 
     def request(self, message, schema):
         self.requests.append((message, copy.deepcopy(schema)))
+        if self.hook is not None:
+            self.hook()
         raise self.error
 
 
@@ -99,9 +106,12 @@ def guarded_execute(policy, executor, envelope):
     return grant, executor.run(envelope)
 
 
-def setup_scope(repo="demo/company", visibility="private", operations=None):
+def setup_scope(repo="demo/company", visibility="private", operations=None,
+                profiles=None, workers=1):
     """The setup scope the owner is asked to approve in the setup dialog."""
 
+    if profiles is None:
+        profiles = ["local-unit"]
     return {
         "repo": repo,
         "visibility": visibility,
@@ -109,10 +119,11 @@ def setup_scope(repo="demo/company", visibility="private", operations=None):
             "github.create_issue", "github.update_issue", "github.set_labels",
             "github.set_assignees", "github.set_parent", "github.remove_parent",
             "github.add_blocker", "github.remove_blocker", "github.set_state")),
-        "check_profiles": [{"profile_id": "local-unit",
+        "check_profiles": [{"profile_id": name,
                             "argv": ["python3", "-m", "unittest"],
-                            "env": {"PYTHONHASHSEED": "0"}}],
-        "capacity": {"implementation_workers": 1},
+                            "env": {"PYTHONHASHSEED": "0"}}
+                           for name in profiles],
+        "capacity": {"implementation_workers": workers},
     }
 
 

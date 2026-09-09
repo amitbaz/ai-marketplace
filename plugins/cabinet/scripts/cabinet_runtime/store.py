@@ -680,6 +680,7 @@ class Store:
                         "%s revision %d is already frozen at digest %s"
                         % (batch_id, revision, existing["digest"]))
                 return self._batch_row(existing)
+            self._check_revision_order(conn, batch_id, revision)
             event = self._append_event_locked(
                 conn, "batch.proposed", batch_id, revision,
                 {"digest": frozen, "body": body})
@@ -688,18 +689,40 @@ class Store:
                 "state, created_seq, updated_seq) VALUES (?, ?, ?, ?, ?, ?, ?)",
                 (batch_id, revision, canonical_json(body), frozen, "proposed",
                  event["seq"], event["seq"]))
-            self._supersede_earlier_revisions(conn, batch_id, revision)
+            self._supersede_other_revisions(conn, batch_id, revision)
         return self.get_batch(batch_id, revision)
 
-    def _supersede_earlier_revisions(self, conn, batch_id, revision):
-        """Retire every earlier revision of a batch and revoke its grants.
+    def _check_revision_order(self, conn, batch_id, revision):
+        """A new revision must be the one after the highest already stored.
+
+        Without this, a lower revision number proposed after a higher one
+        inserts a fresh batch that supersedes nothing above it, and both can
+        then be approved. Two live agreements for one batch is the state the
+        whole supersede rule exists to prevent, and `revision` comes from the
+        caller's body, so ordering cannot be left to the caller's good manners.
+        """
+
+        highest = conn.execute(
+            "SELECT COALESCE(MAX(revision), 0) FROM batches WHERE batch_id = ?",
+            (batch_id,)).fetchone()[0]
+        if revision != highest + 1:
+            raise CabinetError(
+                "REVISION_ORDER",
+                "%s is at revision %d; the next revision is %d, not %d"
+                % (batch_id, highest, highest + 1, revision))
+
+    def _supersede_other_revisions(self, conn, batch_id, revision):
+        """Retire every other revision of a batch and revoke its grants.
 
         A newer revision is a different agreement. Leaving the old revision's
-        grant live would let work approved against retired wording keep running.
+        grant live would let work approved against retired wording keep
+        running. The predicate is "every other revision" rather than "every
+        lower one" so that the one-live-agreement invariant does not depend on
+        the ordering check above still being there.
         """
 
         rows = conn.execute(
-            "SELECT * FROM batches WHERE batch_id = ? AND revision < ? "
+            "SELECT * FROM batches WHERE batch_id = ? AND revision != ? "
             "AND state != 'superseded' ORDER BY revision",
             (batch_id, revision)).fetchall()
         for row in rows:
@@ -887,6 +910,26 @@ class Store:
                 return self._grant_batch(conn, request, response)
             return self._grant_setup(conn, request, response)
 
+    def close_approval_request(self, pending_request_id, reason, detail=None):
+        """Close a request the owner never answered, so it cannot be replayed.
+
+        No response is recorded, because there was none: storing Cabinet's own
+        placeholder in an owner-response field would make a non-answer look
+        like an answer in the log. Nothing here rechecks the batch or the
+        lease either, so a company that moved during the wait still reports
+        the non-answer rather than raising about the movement.
+        """
+
+        with self._transaction(fence=False) as conn:
+            request = self._pending_request(conn, pending_request_id)
+            self._append_event_locked(
+                conn, "approval.unanswered", pending_request_id,
+                request["revision"],
+                {"pending_request_id": pending_request_id,
+                 "kind": request["kind"], "reason": reason, "detail": detail})
+        return {"pending_request_id": pending_request_id, "reason": reason,
+                "detail": detail}
+
     def _pending_request(self, conn, pending_request_id):
         row = conn.execute(
             "SELECT payload_json FROM events WHERE entity_id = ? AND "
@@ -897,8 +940,8 @@ class Store:
                                "no pending approval request %s" % pending_request_id)
         answered = conn.execute(
             "SELECT 1 FROM events WHERE entity_id = ? AND kind IN "
-            "('approval.granted', 'approval.declined') LIMIT 1",
-            (pending_request_id,)).fetchone()
+            "('approval.granted', 'approval.declined', 'approval.unanswered') "
+            "LIMIT 1", (pending_request_id,)).fetchone()
         if answered is not None:
             raise CabinetError("APPROVAL_REQUEST_USED",
                                "request %s was already answered" % pending_request_id)
@@ -1037,7 +1080,7 @@ class Store:
             row = conn.execute("SELECT * FROM grants WHERE grant_id = ?",
                                (grant_id,)).fetchone()
             if row is None:
-                raise CabinetError("BATCH_NOT_APPROVED", "no grant %s" % grant_id)
+                raise CabinetError("GRANT_NOT_FOUND", "no grant %s" % grant_id)
             if row["revoked_seq"] is None:
                 self._revoke_grant_locked(conn, grant_id, reason)
         return self.get_grant(grant_id)
@@ -1047,7 +1090,7 @@ class Store:
         row = conn.execute("SELECT * FROM grants WHERE grant_id = ?",
                            (grant_id,)).fetchone()
         if row is None:
-            raise CabinetError("BATCH_NOT_APPROVED", "no grant %s" % grant_id)
+            raise CabinetError("GRANT_NOT_FOUND", "no grant %s" % grant_id)
         return self._grant_row(row)
 
     def get_grants(self):

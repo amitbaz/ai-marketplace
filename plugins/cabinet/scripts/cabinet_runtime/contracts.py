@@ -223,6 +223,15 @@ BATCH_EXECUTION_OPERATIONS = (
     "check.collect",
 )
 
+# Execution operations that make something run rather than prepare a place for
+# it. These need the repository's setup grant as well as the batch grant,
+# because what runs is named in the setup grant and nowhere else.
+CHECK_PROFILE_OPERATIONS = ("check.collect",)
+LAUNCH_OPERATIONS = ("worker.launch",)
+
+# Execution operations bounded by the setup grant's worker ceiling.
+CAPACITY_OPERATIONS = ("worker.launch", "workspace.create", "workspace.reserve")
+
 # Named operations that have no executor at any approval level.
 FORBIDDEN_OPERATIONS = (
     "finance.purchase", "finance.pay", "finance.refund",

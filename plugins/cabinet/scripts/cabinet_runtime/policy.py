@@ -12,6 +12,9 @@ that first refusal, not behind a later approval check.
 """
 
 from .contracts import (
+    CAPACITY_OPERATIONS,
+    CHECK_PROFILE_OPERATIONS,
+    LAUNCH_OPERATIONS,
     PUBLIC_PROSE_OPERATIONS,
     action_authority,
     validate_action_envelope,
@@ -20,6 +23,9 @@ from .errors import CabinetError
 
 # Payload keys through which an action can name a repository. An action that
 # names one other than this company's is refused whatever else authorizes it.
+# This catches only top-level keys, and it is a second line rather than the
+# first: an adapter takes the repository from the grant's scope or the bound
+# identity, never from the payload it was handed.
 REPO_KEYS = ("repo", "repository", "owner_repo")
 
 
@@ -143,5 +149,64 @@ class Policy:
             raise CabinetError(
                 "REVISION_SUPERSEDED",
                 "the grant for %s revision %d was revoked" % (batch_id, revision))
+        self._check_execution_limits(envelope, stored)
         self._check_not_paused()
         return grant
+
+    # --- setup limits on approved execution ---------------------------------
+
+    def _check_execution_limits(self, envelope, stored):
+        """Apply the limits the owner set at setup to an approved batch.
+
+        The setup dialog asks the owner which commands Cabinet may run and how
+        many workers it may run at once. A limit that is shown, agreed and
+        then not enforced is worse than one never asked about, so both are
+        checked here rather than left to the adapter that would run them.
+        """
+
+        kind = envelope["kind"]
+        needs_setup = kind in CHECK_PROFILE_OPERATIONS or kind in LAUNCH_OPERATIONS
+        capped = kind in CAPACITY_OPERATIONS
+        if not needs_setup and not capped:
+            return
+        setup = self.store.active_setup_grant(self._repo())
+        if setup is None:
+            if needs_setup:
+                raise CabinetError(
+                    "SETUP_NOT_APPROVED",
+                    "%s runs something on %s; that needs the setup grant, "
+                    "which names what may run" % (kind, self._repo()))
+            # Reserving a workspace runs nothing, and the ceiling is a
+            # property of the setup grant, so an unconfigured company has no
+            # ceiling to exceed.
+            return
+        if kind in CHECK_PROFILE_OPERATIONS:
+            self._check_profile(envelope, stored, setup)
+        if capped:
+            self._check_capacity(stored, setup)
+
+    @staticmethod
+    def _check_profile(envelope, stored, setup):
+        named = envelope["payload"].get("check_profile_id")
+        approved = [profile["profile_id"]
+                    for profile in setup["scope"]["check_profiles"]]
+        if named not in stored["body"]["check_profile_ids"]:
+            raise CabinetError(
+                "CHECK_PROFILE_NOT_APPROVED",
+                "%r is not one of the check profiles in %s revision %d"
+                % (named, stored["batch_id"], stored["revision"]))
+        if named not in approved:
+            raise CabinetError(
+                "CHECK_PROFILE_NOT_APPROVED",
+                "%r is not one of the check profiles the setup grant approved"
+                % (named,))
+
+    @staticmethod
+    def _check_capacity(stored, setup):
+        wanted = stored["body"]["capacity"].get("implementation_workers", 0)
+        ceiling = setup["scope"]["capacity"]["implementation_workers"]
+        if wanted > ceiling:
+            raise CabinetError(
+                "CAPACITY_EXCEEDED",
+                "%s revision %d asks for %d workers; setup allows %d"
+                % (stored["batch_id"], stored["revision"], wanted, ceiling))

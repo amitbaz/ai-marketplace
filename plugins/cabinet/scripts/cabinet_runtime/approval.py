@@ -84,13 +84,13 @@ class ApprovalService:
             pending_request_id, "batch", batch_id=stored["batch_id"],
             revision=stored["revision"])
         message = self.batch_message(stored)
-        response, reason = self._ask(message, BATCH_SCHEMA)
+        response, reason, detail = self._ask(message, BATCH_SCHEMA)
         outcome = {"pending_request_id": pending_request_id,
                    "batch_id": stored["batch_id"], "revision": stored["revision"],
                    "digest": stored["digest"], "granted": False,
-                   "reason": reason, "grant": None}
+                   "reason": reason, "detail": detail, "grant": None}
         if reason is not None:
-            self.store.save_grant(pending_request_id, {"action": reason})
+            self.store.close_approval_request(pending_request_id, reason, detail)
             return outcome
         grant = self.store.save_grant(pending_request_id, response)
         if grant is None:
@@ -124,6 +124,20 @@ class ApprovalService:
             "",
             "Issues: %s" % (issues or "(none)"),
             "",
+            # The blast radius: which files may change, what the work starts
+            # from, and which commands will run. These decide what actually
+            # executes, so the owner sees them in the question they answer.
+            "Files workers may change:",
+            _bullets(body["owned_paths"]),
+            "",
+            "Starting from commit: %s" % body["base_sha"],
+            "",
+            "Checks that will run:",
+            _bullets(body["check_profile_ids"]),
+            "",
+            "Workers at once: %d"
+            % body["capacity"].get("implementation_workers", 0),
+            "",
             "Risks:",
             _bullets(body["risks"]),
             "",
@@ -141,12 +155,12 @@ class ApprovalService:
         request = self.store.record_approval_request(
             pending_request_id, "setup", scope=scope)
         message = self.setup_message(request["scope"])
-        response, reason = self._ask(message, SETUP_SCHEMA)
+        response, reason, detail = self._ask(message, SETUP_SCHEMA)
         outcome = {"pending_request_id": pending_request_id,
                    "repo": request["scope"]["repo"], "granted": False,
-                   "reason": reason, "grant": None}
+                   "reason": reason, "detail": detail, "grant": None}
         if reason is not None:
-            self.store.save_setup_grant(pending_request_id, {"action": reason})
+            self.store.close_approval_request(pending_request_id, reason, detail)
             return outcome
         grant = self.store.save_setup_grant(pending_request_id, response)
         if grant is None:
@@ -206,9 +220,9 @@ class ApprovalService:
             detail or "",
             LIMITS,
         ])
-        response, reason = self._ask(message, DECISION_SCHEMA)
+        response, reason, detail = self._ask(message, DECISION_SCHEMA)
         if reason is not None:
-            response = {"action": reason}
+            response = {"action": reason, "detail": detail}
         event = self.store.record_owner_decision(subject, question, response,
                                                  detail=detail)
         return {"subject": subject, "decided": is_owner_acceptance(response),
@@ -221,20 +235,25 @@ class ApprovalService:
         return "AR%s" % uuid.uuid4().hex[:12]
 
     def _ask(self, message, schema):
-        """Return (response, None), or (None, reason) when there is no answer."""
+        """Return (response, None, None), or (None, reason, detail) on no answer.
+
+        `detail` names what went wrong. All three causes fail closed the same
+        way, but a wiring bug and an owner who walked away should not be
+        indistinguishable in the log.
+        """
 
         request = getattr(self.elicitor, "request", None)
         if not callable(request):
-            return None, "unavailable"
+            return None, "unavailable", "no_elicitation_capability"
         try:
             response = request(message, schema)
         except CabinetError:
             raise
-        except Exception:
+        except Exception as problem:
             # A timeout, a closed session and a refused capability all arrive
             # as an exception from the client. None of them is an answer.
-            return None, "unavailable"
-        return response, None
+            return None, "unavailable", type(problem).__name__
+        return response, None, None
 
     @staticmethod
     def _refusal_reason(response):

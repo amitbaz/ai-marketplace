@@ -59,6 +59,7 @@ class BriefContract(PolicyCase):
         with self.assertRaises(CabinetError) as caught:
             Policy(self.store).authorize(action())
         self.assertEqual(caught.exception.code, "BATCH_NOT_APPROVED")
+        self.assertEqual(self.executor.calls, [])
 
     def test_exact_human_acceptance_authorizes(self):
         ui = FakeElicitor({"action": "accept", "content": {"approve": True}})
@@ -71,6 +72,7 @@ class BriefContract(PolicyCase):
         with self.assertRaises(CabinetError) as caught:
             Policy(self.store).authorize(item)
         self.assertEqual(caught.exception.code, "OPERATION_FORBIDDEN")
+        self.assertEqual(self.executor.calls, [])
 
 
 class ForbiddenKinds(PolicyCase):
@@ -199,10 +201,13 @@ class BatchAuthority(PolicyCase):
 
     def test_every_execution_operation_is_covered_by_one_grant(self):
         self.approve()
+        self.approve_setup()
         for kind in contracts.BATCH_EXECUTION_OPERATIONS:
             with self.subTest(kind=kind):
                 item = action(key="run-%s" % kind)
                 item["kind"] = kind
+                if kind in contracts.CHECK_PROFILE_OPERATIONS:
+                    item["payload"]["check_profile_id"] = "local-unit"
                 self.assertEqual(self.policy().authorize(item)["kind"], "batch")
 
     def test_no_approval_is_refused(self):
@@ -303,6 +308,107 @@ class BatchAuthority(PolicyCase):
     def test_a_setup_grant_does_not_authorize_execution(self):
         self.approve_setup()
         self.refuse(action(), "BATCH_NOT_APPROVED")
+
+
+class ExecutionLimits(PolicyCase):
+    """The setup grant's check profiles and worker ceiling are enforced."""
+
+    def check_action(self, profile_id="local-unit", revision=1):
+        envelope = action(key="check-%s" % profile_id)
+        envelope["kind"] = "check.collect"
+        envelope["revision"] = revision
+        payload = {"issue_number": 12}
+        if profile_id is not None:
+            payload["check_profile_id"] = profile_id
+        envelope["payload"] = payload
+        return envelope
+
+    def launch_action(self, kind="worker.launch", revision=1):
+        envelope = action(key="launch-%d" % revision)
+        envelope["kind"] = kind
+        envelope["revision"] = revision
+        envelope["payload"] = {"issue_number": 12, "role": "engineering"}
+        return envelope
+
+    def approve_wider_capacity(self):
+        """Approve a revision 2 asking for more workers than setup allows."""
+
+        body = batch()
+        body["revision"] = 2
+        body["capacity"] = {"implementation_workers": 4}
+        self.store.propose_batch(body)
+        self.approve(revision=2)
+
+    def test_an_approved_profile_authorizes_a_check(self):
+        self.approve()
+        self.approve_setup()
+        grant, result = guarded_execute(self.policy(), self.executor,
+                                        self.check_action())
+        self.assertEqual(grant["kind"], "batch")
+        self.assertEqual(result, {"ok": True})
+
+    def test_a_profile_outside_the_setup_grant_is_refused(self):
+        self.approve()
+        self.approve_setup(profiles=["other-profile"])
+        self.refuse(self.check_action(), "CHECK_PROFILE_NOT_APPROVED")
+
+    def test_a_profile_outside_the_approved_batch_is_refused(self):
+        self.approve()
+        self.approve_setup(profiles=["local-unit", "extra-profile"])
+        self.refuse(self.check_action("extra-profile"),
+                    "CHECK_PROFILE_NOT_APPROVED")
+
+    def test_a_check_naming_no_profile_is_refused(self):
+        self.approve()
+        self.approve_setup()
+        self.refuse(self.check_action(profile_id=None),
+                    "CHECK_PROFILE_NOT_APPROVED")
+
+    def test_a_check_without_setup_is_refused(self):
+        self.approve()
+        self.refuse(self.check_action(), "SETUP_NOT_APPROVED")
+
+    def test_a_worker_launch_without_setup_is_refused(self):
+        self.approve()
+        self.refuse(self.launch_action(), "SETUP_NOT_APPROVED")
+
+    def test_a_launch_within_the_ceiling_is_authorized(self):
+        self.approve()
+        self.approve_setup()
+        grant = self.policy().authorize(self.launch_action())
+        self.assertEqual(grant["kind"], "batch")
+
+    def test_a_launch_above_the_setup_ceiling_is_refused(self):
+        self.approve_setup(workers=1)
+        self.approve_wider_capacity()
+        self.refuse(self.launch_action(revision=2), "CAPACITY_EXCEEDED")
+
+    def test_a_workspace_above_the_setup_ceiling_is_refused(self):
+        self.approve_setup(workers=1)
+        self.approve_wider_capacity()
+        self.refuse(self.launch_action("workspace.create", revision=2),
+                    "CAPACITY_EXCEEDED")
+
+    def test_a_raised_ceiling_authorizes_the_wider_batch(self):
+        self.approve_setup(workers=4)
+        self.approve_wider_capacity()
+        grant = self.policy().authorize(self.launch_action(revision=2))
+        self.assertEqual(grant["revision"], 2)
+
+    def test_a_workspace_without_setup_has_no_ceiling_to_check(self):
+        """Pins the residual: reserving a directory does not need setup.
+
+        The brief's own acceptance case authorizes `workspace.create` on the
+        batch grant alone. The ceiling is a property of the setup grant, so a
+        company that has not run setup has no ceiling to exceed. The two
+        operations that make something run, `worker.launch` and
+        `check.collect`, do require it.
+        """
+
+        self.approve_wider_capacity()
+        grant = self.policy().authorize(
+            self.launch_action("workspace.create", revision=2))
+        self.assertEqual(grant["revision"], 2)
 
 
 class SetupAuthority(PolicyCase):
