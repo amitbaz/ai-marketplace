@@ -1,0 +1,6 @@
+{
+  "name": "muster",
+  "description": "A read-only coordination layer for someone running several agent sessions: roles that reconstruct board state from a tracker, plus a /muster standup, backed by explicit state files instead of a long conversation.",
+  "version": "0.1.0",
+  "keywords": ["coordination", "standup", "tracker", "status", "agents"]
+}

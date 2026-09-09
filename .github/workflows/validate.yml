@@ -15,7 +15,9 @@ jobs:
         run: |
           for f in .claude-plugin/marketplace.json .agents/plugins/marketplace.json \
                    plugins/groundwork/.claude-plugin/plugin.json \
-                   plugins/groundwork/.codex-plugin/plugin.json; do
+                   plugins/groundwork/.codex-plugin/plugin.json \
+                   plugins/muster/.claude-plugin/plugin.json \
+                   plugins/muster/.codex-plugin/plugin.json; do
             python3 -c "import json,sys; json.load(open(sys.argv[1]))" "$f"
             echo "ok $f"
           done

@@ -7,6 +7,7 @@ A plugin marketplace for reusable AI coding-agent workflows. Supports **Claude C
 | Plugin | Version | Description |
 | --- | --- | --- |
 | [groundwork](./plugins/groundwork) | 1.8.1 | Extension for `obra/superpowers` that adds parallel reconnaissance, discussion, and planning before committing to code. **Requires Superpowers.** |
+| [muster](./plugins/muster) | 0.1.0 | Read-only coordination layer for someone running several agent sessions: board-state roles, a decision trail, and a `/muster` standup, backed by explicit state files instead of a long conversation. |
 
 ## Groundwork prerequisite: Superpowers
 

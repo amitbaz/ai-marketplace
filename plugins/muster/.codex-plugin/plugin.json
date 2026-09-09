@@ -1,0 +1,22 @@
+{
+  "name": "muster",
+  "version": "0.1.0",
+  "description": "A read-only coordination layer for someone running several agent sessions: roles that reconstruct board state from a tracker, plus a /muster standup, backed by explicit state files instead of a long conversation.",
+  "author": {
+    "name": "Amit Baz",
+    "email": "amitbaz2@gmail.com",
+    "url": "https://github.com/amitbaz"
+  },
+  "homepage": "https://github.com/amitbaz/ai-marketplace/tree/main/plugins/muster",
+  "repository": "https://github.com/amitbaz/ai-marketplace",
+  "keywords": ["coordination", "standup", "tracker", "status", "agents"],
+  "skills": "./skills/",
+  "interface": {
+    "displayName": "Muster",
+    "shortDescription": "Roll call for people running several agent sessions",
+    "longDescription": "Rebuild the board on demand from your tracker and pull requests, and hold the decision trail a stateless role would otherwise re-derive or lose.",
+    "developerName": "Amit Baz",
+    "category": "Developer Tools",
+    "capabilities": ["Interactive", "Read"]
+  }
+}
