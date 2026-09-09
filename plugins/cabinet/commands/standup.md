@@ -239,6 +239,12 @@ signal, write `In flight: unknown — no local signal this run` instead of a
 zero. A zero that means "I could not see" is the failure this line exists to
 prevent.
 
+Name the gate the charter names. If the charter records more than one ending
+condition, report against the nearest one — that is the one the next decision
+is about. If the charter records no gate, say what the stage is and that
+nothing defines its end, because that absence is itself worth a charter
+amendment.
+
 Where the "to gate" counts come from: the charter's *what is absent* section
 and whatever launch or preconditions epic it cites. If neither exists, say
 the count cannot be derived rather than inventing one. A made-up number here
@@ -256,9 +262,12 @@ YOUR MOVES · <n>        (all delivery lead — shallow run)
 
  2. ...
 
-Quiet: <n> handled · <n> proposals · <n> more startable · <n> blocked.
+Quiet: <n> handled · <n> proposals · <n> more startable · <n> blocked · <n> contradictions.
 Ask for any of these.
 ```
+
+When there are no moves, say so plainly under the position block rather than
+printing an empty list, and say what the owner is waiting on instead.
 
 Four rules make this list worth reading:
 
@@ -291,6 +300,13 @@ dirty becomes a move too — the work landed, close the workspace.
 Counsel's holds are named in the `Quiet` line with the threshold they protect
 and the fact that one decision overrides them. Never let a hold remove
 something from the frontier silently.
+
+A contradiction someone is about to build on is ranked as a move under §7;
+the rest are counted in the `Quiet` line's `contradictions` figure and
+expanded on request. A contradiction that is not itself an actionable move
+still needs a destination — two notebooks disagreeing on a fact is not the
+same failure as the duplication this brief exists to fix, and letting it
+vanish silently would trade one failure for another.
 
 **Everything in both blocks is written for the owner, not an engineer** — a
 capability and what it costs, never the mechanism. No file path, function or
