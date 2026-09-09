@@ -11,7 +11,7 @@ and no business pilot has been implemented.
 
 | Task | State | Implementation commit | Verification and next action |
 | --- | --- | --- | --- |
-| F1 Capability contract | IMPLEMENTED | `f9e7861` | Probes run and recorded in [`docs/cabinet/acceptance/environment.md`](../../cabinet/acceptance/environment.md); README version drift fixed under a structural test. Next: F2, and re-probe idle wake from a main session |
+| F1 Capability contract | IMPLEMENTED | `0d9fb97` | Probes run and recorded in [`docs/cabinet/acceptance/environment.md`](../../cabinet/acceptance/environment.md); README version drift fixed under a structural test. Next: F2, and re-probe idle wake from a main session |
 | F2 Transactional state | NOT_STARTED | — | Implement journal, revisions, migration and recovery fixtures |
 | F3 Owner approval/policy | NOT_STARTED | — | Implement and test frozen-revision owner consent |
 | F4 Service/restricted profiles | NOT_STARTED | — | Implement protocol and verify actual isolation |
