@@ -22,10 +22,31 @@ and the late ones are the expensive ones.
 `.cabinet/money.md`, `.cabinet/proposals.md`, and every notebook. Missing
 charter: say so, suggest `/cabinet:hire`, and stop.
 
-## 2. Run every hired role in parallel
+## 2. Take one board snapshot for the whole meeting
+
+Before dispatching anyone, run
+
+```
+"${CLAUDE_PLUGIN_ROOT}"/scripts/board-snapshot <owner/repo>
+```
+
+with the `owner/repo` from the charter, and show the owner the counts it prints
+on one line. Six roles left to enumerate the board themselves derive the same
+board six times, a round trip at a time, and none of them holds a shell to do
+it faster — that is six times a multi-minute wait for one identical answer.
+
+Hand every role the `board=` path. Hand the `epics=` path only to the delivery
+lead and the architect: ordering and drift are the two questions that read epic
+bodies, and the other four should not pay for prose they will not use.
+
+If the script reports `gh` missing or unauthenticated, say so in one line and
+run the meeting without a snapshot — the roles fall back to their own tools,
+correctly but slowly.
+
+## 3. Run every hired role in parallel
 
 Dispatch every role that has a notebook, at once, each on its own standing
-question:
+question, each given the snapshot paths:
 
 Remind each role that a **two-way door is its own call**: a review is for
 telling the owner what it decided and what it found, not for asking permission
@@ -46,7 +67,7 @@ Wait for all of them before writing anything. Reacting to the first report
 turns the later ones into footnotes, and the value of running six roles is
 precisely that they disagree.
 
-## 3. Each role reviews its own record
+## 4. Each role reviews its own record
 
 Before reporting, every role reads its own calibration record — what it
 predicted the owner would decide, against what the owner actually decided —
@@ -68,7 +89,7 @@ something notes it rather than asking.
 Report a role's self-assessment in one line, not a paragraph. It is a
 correction to how it works, not an apology.
 
-## 4. Proposals — the once-a-week airing
+## 5. Proposals — the once-a-week airing
 
 Read `.cabinet/proposals.md` in full. This is the only command that does.
 
@@ -84,14 +105,14 @@ nobody opens.
 longer matches how the owner actually decides. Present the evidence, and point
 at `/cabinet:charter` — roles propose, only the owner amends.
 
-## 5. Re-check what the stage conditioned
+## 6. Re-check what the stage conditioned
 
 Every judgement recorded while the project was at an earlier stage was correct
 only while that stage held. If the charter's stage line has changed since a
 notebook entry was written, list the entries that the change reopens. Do not
 re-decide them; name them and put them in front of the owner.
 
-## 6. Write back
+## 7. Write back
 
 Append each role's `## NOTEBOOK` content to its own file, newest first, dated.
 Add `## DECISIONS` items to `.cabinet/decisions.md`, numbered, dated,
@@ -102,7 +123,7 @@ days-open rather than duplicating anything already there. Add `## PROPOSALS`
 items to `.cabinet/proposals.md`, and route `## FOR <role>` sections into the
 receiving roles' notebooks as inbound.
 
-## 7. Report
+## 8. Report
 
 One block per role, its standing question and what it found, in its own voice
 with its name on it. Then the chief of staff's own line: which two or three of
@@ -125,3 +146,9 @@ BOARD REVIEW · <date>
 Never merge two roles' findings into one voice. Two roles reaching the same
 conclusion independently is itself a finding, and saying so is more useful
 than presenting it once.
+
+Every finding is written for the owner: a capability and what it costs, never
+the mechanism. No file path, function or line number reaches this report. A
+role that handed you one has not finished translating its own finding — say so
+rather than passing the mechanism through, and keep the mechanism in that
+role's notebook where the next run will read it.

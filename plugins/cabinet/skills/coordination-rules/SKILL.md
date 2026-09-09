@@ -57,6 +57,39 @@ brief that reaches the owner is ranked by cost of delay, and every item
 carries the name of the role that raised it, so the owner can ask that role
 why and get an accountable answer.
 
+## Who the one channel is for
+
+The owner runs the company. They are not reading to review the work; they are
+reading to decide where the company goes next and what is stopping it. A brief
+written for an engineer fails them even when every word in it is true, because
+it hands over a mechanism and leaves the consequence to be worked out.
+
+So every line that reaches the owner names a capability and what it costs, and
+never the mechanism that implements it. No file path, function, class, or line
+number reaches the owner. The same fact, twice:
+
+- Not this: "`config.py:261` reads one user id from the environment, and
+  nothing in the pipeline iterates users."
+- This: "A run serves one person. Nothing serves a second account — the
+  largest single item between here and inviting anybody."
+
+Both are true. Only the second can be decided on, and the second is shorter.
+
+Mechanism is not forbidden, it is **filed**: it belongs in the notebooks, where
+the roles read it, and in the answer a role gives when the owner asks for
+detail. Detail on request is the whole point of the one-channel rule; what the
+rule forbids is detail volunteered in place of a decision.
+
+This is also a test, not just a style. If a role cannot restate a finding as a
+capability and a cost, it has not finished working out what the finding means,
+and the finding is not ready to raise.
+
+**The owner also needs to know where the company stands, not only what needs
+them.** A brief that is nothing but a decision queue makes the owner rebuild
+the company's position from five unrelated items every morning. Position comes
+first, in a few lines, before anything asks for an answer: the stage, the gate
+it ends at, how much sits between here and that gate, and what has not moved.
+
 ## Initiative, and the rule that keeps it from becoming noise
 
 A role is expected to do more than answer the question it was given. It should
@@ -186,6 +219,49 @@ answers today. **A stale copy of a derivable fact is worse than no copy.**
 Writing nothing is a correct outcome, not a failure. A role that checked and
 found everything still true has nothing worth keeping — the source already
 answers that. An empty notebook update is not less work than three entries.
+
+## The board snapshot — the command fetches, the roles read
+
+A role holds no shell. That is what makes the money invariant structural rather
+than a promise, and it is not negotiable. The cost of it is that a role asking
+the board a question pays one network round trip per page of tickets, and then
+one more for every body it wants to read. On a board of any size that is
+minutes of an owner watching a spinner, and the role has no way to make it
+faster from inside its own grant.
+
+The command that dispatched it does have a shell. So:
+
+**The dispatching command fetches the whole board once, before dispatch, and
+hands every role in the run the same snapshot. A role never enumerates the
+board while a snapshot exists.**
+
+`${CLAUDE_PLUGIN_ROOT}/scripts/board-snapshot <owner/repo>` does the fetching
+in four read-only calls and prints `board=<path>` and, when the board has
+epics, `epics=<path>`. The split exists because epic bodies are usually most of
+the bytes and only ordering work reads them; the board file carries an index of
+the epics, so every role knows which ones exist without paying for their prose.
+
+Three things follow:
+
+- **Pass the paths in the dispatch prompt.** A role that was not told cannot
+  know, and will fall back to enumerating.
+- **Say the counts to the owner before dispatching.** One line — how many
+  tickets, epics, pull requests and branches — so a wait has something in it.
+  A silent spinner is indistinguishable from a hung one.
+- **A snapshot is a moment, not a memory.** It is derivable state, so nothing
+  in it is ever copied into a notebook, and it lives outside the repository
+  where it cannot be committed by accident.
+
+A role may still use its own GitHub tools to fill a **named** gap — one ticket
+the snapshot does not carry, one pull request it needs in more depth. What it
+must not do is re-derive from scratch what it was handed.
+
+Where this stops, stated plainly because rule six applies here first: the
+snapshot is only as fresh as the moment it was taken, and a long run can act on
+a board that has since moved. It carries `taken_at` for exactly that reason. It
+also depends on `gh` being installed and authenticated; when it is not, the
+script says so and the roles fall back to their own tools, slowly but
+correctly.
 
 ## Decisions get written onto what will be read next
 
