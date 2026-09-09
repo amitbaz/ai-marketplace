@@ -7,7 +7,7 @@ A plugin marketplace for reusable AI coding-agent workflows. Supports **Claude C
 | Plugin | Version | Description |
 | --- | --- | --- |
 | [groundwork](./plugins/groundwork) | 1.8.1 | Extension for `obra/superpowers` that adds parallel reconnaissance, discussion, and planning before committing to code. **Requires Superpowers.** |
-| [muster](./plugins/muster) | 0.1.0 | Read-only coordination layer for someone running several agent sessions: board-state roles, a decision trail, `/muster:setup` and `/muster:wakeup`, backed by explicit state files instead of a long conversation. |
+| [muster](./plugins/muster) | 0.2.0 | The executive team a solo founder cannot afford to hire: six roles with their own remits and memory, one chief-of-staff brief a day, and a money invariant enforced by tool grants. |
 
 ## Groundwork prerequisite: Superpowers
 
@@ -47,6 +47,12 @@ Install Groundwork:
 /plugin install groundwork@amitbaz
 ```
 
+Install Muster:
+
+```text
+/plugin install muster@amitbaz
+```
+
 Adding the marketplace only registers the catalog. Plugins still need to be installed separately.
 
 To refresh the marketplace after updates:
@@ -67,6 +73,13 @@ Install Groundwork:
 
 ```text
 codex plugin add groundwork@amitbaz
+```
+
+Install Muster (Codex gets the `coordination-rules` skill only — see the
+[Muster README](./plugins/muster/README.md)):
+
+```text
+codex plugin add muster@amitbaz
 ```
 
 To refresh the Git-backed marketplace later:
@@ -97,6 +110,25 @@ Groundwork runs the same contract on both platforms: parallel read-only reconnai
 
 See the [Groundwork README](./plugins/groundwork/README.md) for the complete workflow, dependency rules, and platform differences.
 
+## Use Muster
+
+```text
+/muster:hire
+```
+
+Reads your repository's documentation, board and history, drafts a company
+charter from what it finds, asks only about what it could not find, and hires
+the roles your stage needs. Then, at the start of a working session:
+
+```text
+/muster:standup
+```
+
+Six roles — delivery, architecture, QA, counsel, finance and brand — report to
+a chief of staff who hands you one brief of at most five items. No agent in
+Muster can spend money; that is enforced by tool grants rather than promised
+in a prompt. See the [Muster README](./plugins/muster/README.md).
+
 ## Repository Structure
 
 ```text
@@ -112,16 +144,28 @@ ai-marketplace/
 ├── .claude-plugin/
 │   └── marketplace.json              # Claude Code marketplace
 ├── plugins/
-│   └── groundwork/
+│   ├── groundwork/
+│   │   ├── .codex-plugin/
+│   │   │   └── plugin.json           # Codex plugin manifest
+│   │   ├── .claude-plugin/
+│   │   │   └── plugin.json           # Claude Code plugin manifest
+│   │   ├── skills/
+│   │   │   └── groundwork/
+│   │   │       └── SKILL.md          # canonical Groundwork workflow (both platforms)
+│   │   ├── agents/                   # Claude Code recon agents
+│   │   ├── commands/                 # Claude Code /groundwork adapter
+│   │   └── README.md
+│   └── muster/
 │       ├── .codex-plugin/
 │       │   └── plugin.json           # Codex plugin manifest
 │       ├── .claude-plugin/
 │       │   └── plugin.json           # Claude Code plugin manifest
 │       ├── skills/
-│       │   └── groundwork/
-│       │       └── SKILL.md          # canonical Groundwork workflow (both platforms)
-│       ├── agents/                    # Claude Code recon agents
-│       ├── commands/                  # Claude Code /groundwork adapter
+│       │   └── coordination-rules/
+│       │       └── SKILL.md          # the rules every role runs under
+│       ├── agents/                   # the six roles, read-only by tool grant
+│       ├── commands/                 # /muster:hire, :standup, :decide, ...
+│       ├── FILES.md                  # what Muster writes and who writes it
 │       └── README.md
 └── README.md
 ```

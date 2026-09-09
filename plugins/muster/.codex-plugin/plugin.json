@@ -1,7 +1,7 @@
 {
   "name": "muster",
-  "version": "0.1.0",
-  "description": "A read-only coordination layer for someone running several agent sessions: roles that reconstruct board state from a tracker, a project profile from /muster:setup, and a /muster:wakeup catch-up, backed by explicit state files instead of a long conversation.",
+  "version": "0.2.0",
+  "description": "The executive team a solo founder cannot afford to hire: six roles with their own remits and memory, one chief-of-staff brief a day, and a money invariant enforced by tool grants — no agent can spend.",
   "author": {
     "name": "Amit Baz",
     "email": "amitbaz2@gmail.com",
@@ -9,14 +9,23 @@
   },
   "homepage": "https://github.com/amitbaz/ai-marketplace/tree/main/plugins/muster",
   "repository": "https://github.com/amitbaz/ai-marketplace",
-  "keywords": ["coordination", "standup", "tracker", "status", "agents"],
+  "keywords": [
+    "coordination",
+    "solo-founder",
+    "roles",
+    "decisions",
+    "agents"
+  ],
   "skills": "./skills/",
   "interface": {
     "displayName": "Muster",
-    "shortDescription": "Roll call for people running several agent sessions",
-    "longDescription": "Rebuild the board on demand from your tracker and pull requests, and hold the decision trail a stateless role would otherwise re-derive or lose.",
+    "shortDescription": "The executive team a solo founder cannot afford to hire",
+    "longDescription": "Six roles with real remits and their own memory — delivery, architecture, QA, counsel, finance and brand. Each asks a standing question every run, a chief of staff caps what reaches you at five items, and no agent can spend your money.",
     "developerName": "Amit Baz",
     "category": "Developer Tools",
-    "capabilities": ["Interactive", "Read"]
+    "capabilities": [
+      "Interactive",
+      "Read"
+    ]
   }
 }

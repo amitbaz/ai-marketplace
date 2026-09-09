@@ -4,7 +4,7 @@ This file provides guidance to coding agents (Claude Code, Codex, and any agent 
 
 ## What this repo is
 
-A personal plugin marketplace that ships **one plugin, Groundwork, to two platforms** — Claude Code and OpenAI Codex. Nearly every artifact is Markdown with YAML frontmatter, or a JSON manifest, consumed directly by each platform's plugin loader, so "changing behavior" here usually means editing prose instructions rather than code. The repo also ships executable scripts and hook definitions, under the constraint below.
+A personal plugin marketplace that ships **two plugins to two platforms** — Claude Code and OpenAI Codex. Groundwork ships fully to both; Muster ships its skill to Codex and everything else to Claude Code only. Nearly every artifact is Markdown with YAML frontmatter, or a JSON manifest, consumed directly by each platform's plugin loader, so "changing behavior" here usually means editing prose instructions rather than code. The repo also ships executable scripts and hook definitions, under the constraint below.
 
 ### The invariant: no build step, no third-party dependencies
 
@@ -112,6 +112,39 @@ codex plugin add groundwork@amitbaz
 ```
 
 Frontmatter and manifest JSON are the fragile parts — a malformed YAML block or JSON manifest makes a command, agent, or skill silently not appear, with no error. If something doesn't show up after install, suspect frontmatter first.
+
+## Muster — design intent
+
+Muster gives one person the executive team they cannot afford to hire: six
+roles with their own remits, notebooks, and a standing question each. Its
+rules live in `plugins/muster/skills/coordination-rules/SKILL.md`.
+
+Four constraints are load-bearing. Do not "simplify" them without
+understanding why:
+
+- **The money invariant.** No role may spend, commit to a cost, or change
+  pricing. It is enforced by enumerated tool grants — every role's `tools:`
+  line is an allowlist with no shell, no billing or deployment tools, and no
+  write access. Never switch a role to a denylist or add `Bash`: an allowlist
+  excludes tomorrow's tools by default, which is the property that makes the
+  guarantee survive. The README states plainly where the guarantee stops
+  (other agents on the machine), and that sentence must not be softened.
+- **Roles never write files.** Each returns `## NOTEBOOK`, `## DECISIONS` and
+  `## MONEY` sections, and the dispatching command records them. One writer
+  means parallel roles cannot race on appends, and it means no role needs a
+  write grant carved out of an otherwise read-only allowlist.
+- **State lives in `.muster/`, not `.claude/`.** Many repositories ignore
+  `.claude/` wholesale, which would have made the memory uncommittable. The
+  per-person layer is `~/.muster/founder.md`, so a second repository costs
+  almost no setup.
+- **Notebooks hold judgement, never derivable facts.** Status, labels, check
+  results and blocking edges are re-derived every run. A stale copy of a
+  derivable fact is worse than no copy.
+
+Muster ships no executables and no hooks. Plugin-shipped agents cannot declare
+`hooks`, `mcpServers` or `permissionMode` — Claude Code blocks all three for
+security — so the `tools:` allowlist is the only enforcement surface available,
+which is why it carries the whole invariant.
 
 ## Groundwork — design intent
 
