@@ -1,7 +1,7 @@
 {
   "name": "muster",
   "version": "0.1.0",
-  "description": "A read-only coordination layer for someone running several agent sessions: roles that reconstruct board state from a tracker, plus a /muster standup, backed by explicit state files instead of a long conversation.",
+  "description": "A read-only coordination layer for someone running several agent sessions: roles that reconstruct board state from a tracker, a project profile from /muster:setup, and a /muster:wakeup catch-up, backed by explicit state files instead of a long conversation.",
   "author": {
     "name": "Amit Baz",
     "email": "amitbaz2@gmail.com",

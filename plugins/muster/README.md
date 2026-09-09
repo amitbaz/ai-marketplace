@@ -20,11 +20,16 @@ a replacement for it — keeping implementation and QA in sessions you run
 yourself is a design choice this plugin assumes, not a limitation it's
 working around.
 
-**It does not remember your last conversation.** Every role here is a fresh
-subagent dispatch with no memory of the last time it ran. What looks like
-continuity comes entirely from state files it reads and writes on disk (see
-below), never from anything held in a session. A role that pretended
-otherwise would be telling you it knows something it doesn't.
+**It remembers decisions, not conversations.** Every role here is a fresh
+subagent dispatch — no session survives between runs. But that's not the
+same as having no memory: continuity comes from an explicit, written
+decision trail (see *The state files* below), and that's a better memory
+than a conversation transcript would be anyway. A transcript is long,
+carries abandoned reasoning next to conclusions, and nobody re-reads it. A
+person actually doing this job doesn't recall yesterday's meeting
+word-for-word either — they carry what was decided and why. That's what
+the state file holds, and it's read in full on every run, so what looks
+like a role "just knowing things" is a role that read its notes.
 
 ## The roles (Claude Code)
 
@@ -40,14 +45,34 @@ otherwise would be telling you it knows something it doesn't.
   positioning: what was proposed, what was rejected and why, and checks new
   proposals against that record before anyone re-evaluates from zero.
 
-Each is read-only by tool grant, not just by instruction — see below.
+Each is read-only by tool grant, not just by instruction — see below. Each
+also orients in your project's own documentation before touching the
+tracker — `AGENTS.md`/`CLAUDE.md`, contribution rules, architecture decision
+records, whatever's relevant to that role's function — read fresh every
+run, never cached into the state file, for the same reason the tracker
+itself is re-derived rather than trusted from a note. If a ticket
+contradicts what the docs say, that's reported as a finding, not quietly
+resolved either way.
 
-## `/muster`
+## `/muster:setup` and `/muster:wakeup`
 
-Rebuilds the current picture from your tracker on every run: decisions that
-need you, the startable frontier, what's blocked, open PRs. It does not
-summarize recent chat activity — that's a different, adjacent question
-("what did I do"). This one answers "what's true right now."
+Two commands, run at different times:
+
+- **`/muster:setup`** — once per repository, and again whenever
+  conventions change. Installs and verifies the tracker script, orients in
+  the repository's own documentation, and writes a project profile: where
+  things live and what the conventions are, not a summary of what the code
+  currently does. That profile records the commit it was written against,
+  so a later run can tell whether it's gone stale rather than trusting it
+  blindly.
+- **`/muster:wakeup`** — at the start of every working session. Reads the
+  project profile and every role's state file first — the actual memory —
+  then re-derives live state from the tracker and reports what happened,
+  what needs a decision, and what contradicts what was believed last time.
+  It is deliberately not just a fresh tracker listing with a friendlier
+  name: a report only from the tracker would be exactly the "no memory"
+  framing this plugin exists to avoid. Reading the memory first, then
+  checking it against what's true right now, is the whole point.
 
 ## Why the tool grant matters more than the role prompt
 
@@ -82,31 +107,42 @@ your tracker has no equivalent concept, `tracker.sh` says so explicitly
 (`unsupported`) instead of guessing, and the calling role falls back to a
 weaker signal and says that too.
 
+Writing nothing is a correct outcome, not a failure to write. A role that
+checks a ticket and finds it still matches the tree has nothing worth
+keeping — the tree already answers that question, so a note would just be
+a fact restated. Don't read an empty state-file update as the role having
+"done less" than one that wrote three judgements; it did exactly as much
+work and correctly decided none of it needed to survive to next time.
+
 ## Platform support
 
-**Claude Code**: all four roles plus `/muster` and both skills.
+**Claude Code**: all four roles, `/muster:setup`, `/muster:wakeup`, and the
+`coordination-rules` skill.
 
-**Codex**: the two skills (`muster:standup`-equivalent and
-`coordination-rules`) only — Codex's plugin manifest here declares
-`"skills": "./skills/"` and nothing else, the same pattern Groundwork uses
-in this marketplace. The four roles are defined as Claude Code subagents
-(`agents/*.md`, a Claude-specific construct); there is no Codex agent
-equivalent shipped yet. If you're on Codex, you get the tracker-reading
-skill content but not the four standing roles.
+**Codex**: the `coordination-rules` skill only — Codex's plugin manifest
+here declares `"skills": "./skills/"` and nothing else, the same pattern
+Groundwork uses in this marketplace. Commands and agent definitions are
+Claude Code constructs; there's no Codex equivalent shipped yet, so a
+Codex install of Muster today gets the background coordination rules and
+none of the roles or commands. Said plainly rather than papered over — if
+you're on Codex, this plugin isn't yet doing its main job for you.
 
 ## Setup
 
-1. Install the plugin.
-2. Copy `scripts/tracker.sh.github.example` to
-   `.claude/coordination-state/tracker.sh` in your repo and `chmod +x` it.
-   It wraps `gh` — install and authenticate the GitHub CLI first
-   (`gh auth login`); the script fails loudly, not silently, if that's
-   missing.
-3. Using a different forge? Write a script at the same path implementing
-   the same four commands (`list-tickets`, `get-ticket`, `list-prs`,
-   `in-progress`) against your tracker's API. Nothing in the role files
-   changes.
-4. Run `/muster`, or invoke any role directly, to check it's wired up.
+Run `/muster:setup` once per repository. It installs the tracker script,
+verifies it actually runs, orients in your repository's own documentation,
+and writes a project profile. Run it again any time your conventions
+change — it's re-runnable and won't touch any role's own notes.
+
+Then run `/muster:wakeup` at the start of a working session.
+
+**Using a forge other than GitHub?** `/muster:setup` will tell you the
+bundled `scripts/tracker.sh.github.example` won't fit if there's no GitHub
+remote. Write a script at `.claude/coordination-state/tracker.sh`
+implementing the same four commands (`list-tickets`, `get-ticket`,
+`list-prs`, `in-progress`) against your tracker's API — see
+`STATE_FILE_SPEC.md` for the exact contract. Nothing in the role files or
+commands changes; `/muster:setup` will detect and verify it the same way.
 
 ## Licence
 

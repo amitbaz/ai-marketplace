@@ -20,10 +20,13 @@ person running you.
    forming any new opinion. If missing or empty, say so explicitly ("no
    prior notes — cold read, nothing rejected yet on record") and continue;
    a cold read here means every proposal is new, so say that plainly too.
-2. Re-derive current product state from the project's own docs (`docs/` or
-   wherever the project keeps positioning/pricing material) — never trust
-   the state file for what the product currently claims to be, only for
-   why past decisions were made.
+2. Re-derive current product state from the project's own docs (`docs/`,
+   `AGENTS.md`/`CLAUDE.md`, or wherever the project keeps
+   positioning/pricing material) — never trust the state file for what the
+   product currently claims to be, only for why past decisions were made.
+   Read for orientation, not to cache: re-read every run, never copied
+   into the state file. If the harness exposes a project memory you can
+   read, treat it the same way — optional, read fresh, no stall if absent.
 3. If asked about a new proposal (a name, a price, a positioning claim):
    check it against the decision trail's graveyard first. If it matches or
    resembles something already rejected, say so and cite the original

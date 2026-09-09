@@ -18,8 +18,8 @@ everything else as available-on-request rather than volunteered.
 
 ## State lives outside the conversation
 
-The tracker and each role's state file (see `STATE_FILE_SPEC.md`) are the
-record. A conversation ending should lose nothing that matters — if it
+The tracker and each role's state file (see the plugin's
+`STATE_FILE_SPEC.md`) are the record. A conversation ending should lose nothing that matters — if it
 would, that fact belongs in a file, not in what gets remembered.
 
 ## Decisions get written onto what will be read next
