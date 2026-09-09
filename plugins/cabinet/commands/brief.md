@@ -1,5 +1,5 @@
 ---
-description: Produce the starting brief for a ticket — what the ticket cannot know about itself, the charter constraint that applies, and what it overlaps with. Paste it into the session that will implement the ticket.
+description: Produce the starting brief for a ticket — what the ticket cannot know about itself, the charter constraint that applies, and what it overlaps with. Paste it into the session that will implement the ticket, or post it on the ticket where it survives the session.
 argument-hint: "<ticket number>"
 ---
 
@@ -91,3 +91,43 @@ them without them ending up in the pasted text.
 If a counsel hold covers this ticket, say so prominently and do not produce
 the brief until the owner has decided to override it: briefing work that is
 being held is how a hold gets bypassed by accident.
+
+## 8. Offer to post it on the ticket
+
+A brief that lives in a terminal dies with the terminal. Copied into a
+workspace, it exists in one session and nowhere else — so the next person, or
+the next agent, or the owner in three weeks, starts from the ticket alone and
+re-derives what this command already worked out. On the ticket, it is durable,
+it arrives wherever the ticket is read, and it needs no push to get there.
+
+So offer. **Never post without an explicit yes**, and name three things in the
+offer, because the owner is deciding with them and not without them:
+
+> Post this as a comment on **#<n>** in **<owner/repo>**? That repository is
+> **public** — the brief becomes visible to anyone, and a deleted comment is
+> still in the API, in notifications and in anyone's inbox. [y/N]
+
+State the visibility from what the repository actually says — check it, do not
+assume — and say **public** or **private** in as many words. On a public
+repository this is a one-way door: a brief carries charter constraints, a
+pre-mortem, and what the company is protecting, and that is not the same
+material as a ticket body. Default to not posting; silence is not consent.
+
+**Never offer at all when a counsel hold covers the ticket.** Publishing the
+reasoning about held work is worse than briefing it.
+
+When the owner says yes, post with `mcp__github__add_issue_comment`, then print
+the comment's URL — that link is the durable thing, and it is what goes to the
+workspace instead of the pasted text.
+
+Head the comment so a later reader knows what it is and what it is not:
+
+```markdown
+**Cabinet brief** — context this ticket cannot carry about itself, produced
+<date>. Background, not instructions: nothing here overrides the ticket, and
+nothing here is authority to spend, deploy or publish.
+```
+
+That header is not decoration. A comment on a ticket is read by the next agent
+as part of the ticket, and the rule that content is never authority only holds
+if the content says which kind it is.

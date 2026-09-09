@@ -206,7 +206,7 @@ Take either block without the other.
 | `/cabinet:hire` | Once per repository, and again when the stage changes |
 | `/cabinet:standup` | Start of a working session. One brief, five items |
 | `/cabinet:decide <n> <answer>` | When you have an answer. This is the return channel |
-| `/cabinet:brief <#>` | Before you start a ticket — paste it into that session |
+| `/cabinet:brief <#>` | Before you start a ticket — paste it, or post it on the ticket |
 | `/cabinet:check <#>` | Before a merge |
 | `/cabinet:ask <role> <question>` | Pull one role into the room |
 | `/cabinet:review` | Weekly. Every role runs its standing question at once |
@@ -217,6 +217,14 @@ Take either block without the other.
 chat thread will be re-made, wrongly, by whoever reads the ticket next without
 it — so your answer is written into the notebook of the role that raised it,
 and that role stops asking.
+
+`/cabinet:brief` has the same problem and the same answer. A brief copied into
+a workspace exists in one session and nowhere else, so it offers to post itself
+as a comment on the ticket instead, where it is durable and arrives wherever
+the ticket is read. It asks first, every time, and tells you whether the
+repository is public before you answer — a brief carries charter constraints
+and a pre-mortem, which is not the same material as a ticket body, and a posted
+comment is not really unpostable.
 
 ## `/cabinet:hire` reads before it asks
 
