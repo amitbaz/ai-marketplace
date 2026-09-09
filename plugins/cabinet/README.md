@@ -34,34 +34,40 @@ is to raise it early, unprompted. That is what this is.
 ```
 Board: 67 open · 3 epics · 2 PRs · 4 branches → delivery lead
 
-WHERE THE COMPANY STANDS · Tue 09-09
+WHERE YOU STAND · Tue 09-09
 Stage: pre-launch, single user, no revenue. Gate A (a second account) not
 crossed.
-To Gate A: 6 open items, 3 not started, 1 held by counsel.
-In flight: 2. Longest untouched: #114 (12d) — blocks every licensed source.
+Gate A: 6 items · 2 startable · 1 purchase · 0 unticketed.
+In flight: #179 — local, 1 commit, 5 files dirty, 3h.
 
-CHIEF OF STAFF · Tue 09-09 · 4 items
+YOUR MOVES · 4        (all delivery lead — shallow run)
 
- 1. COUNSEL — I am holding #98 out of the startable frontier. It gates the
-    alpha with invitations; the day it ships, a second person's data is in
-    the database and you are a data controller. No privacy notice exists.
-    One decision overrides me.
- 2. CFO — Vercel Hobby is failing builds today and its terms say
-    non-commercial. $20/mo. Lead time: none. I cannot see your invoices —
-    that figure is from #201, not from billing.
- 3. CFO — Stripe verification, day 2, not started. Verification takes days
-    to weeks. This is one of two items on your list that does not care how
-    fast you work.
- 4. ARCHITECT — #187 describes facets in a shape that predates the #118
-    split, and it is labelled ready-for-agent. Whoever picks it up builds
-    the wrong thing. Unlabel it or rewrite the body.
+ 1. Decide the alpha's data-protection stance before it ships. Counsel is
+    holding #98 out of the frontier because no privacy notice exists.
+    → /cabinet:decide 1 <answer>
+ 2. Move off Vercel Hobby or accept the risk. Its terms say non-commercial
+    and builds are failing today; $20/mo, no lead time.
+    → /cabinet:decide 2 <answer>
+ 3. Chase Stripe verification. Day 2, not started, and it takes days to
+    weeks regardless of how fast you work.
+    → /cabinet:decide 3 <answer>
+ 4. Rewrite or unlabel #187. It describes facets in a shape that predates
+    the #118 split and is marked ready-for-agent as-is.
+    → /cabinet:brief 187
 
- Handled without you: 3 items. Ask for detail on any of these.
+Quiet: 3 handled · 2 proposals · 1 more startable · 0 blocked · 0 contradictions.
+Ask for detail on any of these.
 ```
 
 Position first, then decisions. A brief that is only a decision queue makes you
 rebuild where the company stands out of five unrelated items before you can
 judge any of them.
+
+Cabinet also sees the work already open on this machine. A workspace opened
+from a ticket is a local branch with nothing pushed, so the board shows the
+ticket as free; Cabinet reads the worktrees instead. Nothing is registered
+when you open one — the worktree existing is the claim. This covers the
+machine it runs on.
 
 Every item names the role that raised it, so you can ask that role why and get
 an accountable answer. And every item is written for the person running the
@@ -205,6 +211,7 @@ Take either block without the other.
 | --- | --- |
 | `/cabinet:hire` | Once per repository, and again when the stage changes |
 | `/cabinet:standup` | Start of a working session. One brief, five items |
+| `/cabinet:now` | Where things stand right now — what is in flight, what merged since the last standup. Seconds, and writes nothing |
 | `/cabinet:decide <n> <answer>` | When you have an answer. This is the return channel |
 | `/cabinet:brief <#>` | Before you start a ticket — paste it, or post it on the ticket |
 | `/cabinet:check <#>` | Before a merge |
@@ -312,7 +319,8 @@ happens when a note and the live board disagree.
 - **`gh` and `jq`**, for the two scripts. Because roles hold no shell, a role
   left to enumerate a board of any size pays a round trip per page and takes
   minutes; the commands do it instead, in one pass.
-  `scripts/board-snapshot` takes the board for the daily and weekly commands.
+  `scripts/board-snapshot` takes the board for the daily, weekly and
+  read-only commands.
   `scripts/charter-sources` gathers, for `/cabinet:hire`, the places where
   decisions get recorded rather than where work does — issues closed as *not
   planned*, merged `docs:` pull requests, comments on open tickets, and an

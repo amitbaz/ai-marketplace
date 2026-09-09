@@ -70,9 +70,16 @@ a role asking the board a question pays a network round trip per page of
 tickets, and another for every body it reads. The commands do have a shell, so
 they fetch once and hand roles a file.
 
-`scripts/board-snapshot` takes the board for `standup`, `review` and `ask`.
-Epic bodies are split into their own file because they are usually most of the
-bytes and only ordering work reads them.
+`scripts/board-snapshot` takes the board for `standup`, `review`, `ask` and
+`now`. Epic bodies are split into their own file because they are usually most
+of the bytes and only ordering work reads them.
+
+- `scripts/local-sessions` — Enumerates every worktree of this repository on
+  this machine and attributes each to a ticket from evidence on disk, so the
+  delivery lead can see work that was never pushed. Passed to roles as
+  `sessions=`.
+- `commands/now.md` — `/cabinet:now`. What is in flight and what merged since
+  the last standup. Reads only: no roles dispatched, nothing written.
 
 `scripts/charter-sources` is for `/cabinet:hire`, and gathers the places where
 decisions actually get recorded rather than where work does: issues closed as
