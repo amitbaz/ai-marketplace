@@ -11,7 +11,7 @@
 # uses it: four read-only calls, one snapshot file, handed to every role in the
 # run. Roles read the file instead of enumerating the board themselves.
 #
-# Usage:   board-snapshot <owner/repo>
+# Usage:   board-snapshot <owner/repo> [--since <YYYY-MM-DD | UTC instant>]
 # Prints:  two `key=path` lines on stdout, and a one-line count summary on
 #          stderr so the dispatching command can show the owner what it got.
 #
@@ -29,11 +29,19 @@
 set -euo pipefail
 
 normalize_since() {
-    # An ISO-8601 instant, or empty when there is no usable window. Callers
+    # A UTC ISO-8601 instant, or empty when there is no usable window. Callers
     # treat empty as "the window is unknown" rather than substituting a guess.
+    #
+    # The Z is required, not decoration. This value is compared against gh's
+    # own mergedAt strings, and that comparison is lexical: 2026-09-01T00:00:00
+    # written as +02:00 sorts as though it were two hours later than the same
+    # moment written in UTC, and pull requests either side of the boundary
+    # would land on the wrong side of the window. Anything that is not a plain
+    # UTC instant is rejected the same way nonsense is.
     case "${1:-}" in
         [0-9][0-9][0-9][0-9]-[0-9][0-9]-[0-9][0-9]) printf '%sT00:00:00Z' "$1" ;;
-        [0-9][0-9][0-9][0-9]-[0-9][0-9]-[0-9][0-9]T*) printf '%s' "$1" ;;
+        [0-9][0-9][0-9][0-9]-[0-9][0-9]-[0-9][0-9]T[0-9][0-9]:[0-9][0-9]:[0-9][0-9]Z)
+            printf '%s' "$1" ;;
         *) printf '' ;;
     esac
 }
@@ -54,6 +62,9 @@ if [ "${1:-}" = "--self-test" ]; then
     check "an instant is kept" "$(normalize_since 2026-09-01T10:11:12Z)" "2026-09-01T10:11:12Z"
     check "nonsense is rejected" "$(normalize_since yesterday)" ""
     check "an absent window is empty" "$(normalize_since)" ""
+    check "an offset is rejected" "$(normalize_since 2026-09-01T10:11:12+02:00)" ""
+    check "an instant with no zone is rejected" "$(normalize_since 2026-09-01T10:11:12)" ""
+    check "a fractional instant is rejected" "$(normalize_since 2026-09-01T10:11:12.5Z)" ""
     check "the slug replaces every slash" "$(out_path board acme/widget)" \
         "${TMPDIR:-/tmp}/cabinet-board-acme-widget.json"
     if [ "$fail" -ne 0 ]; then
@@ -66,7 +77,7 @@ fi
 
 REPO="${1:-}"
 if [ -z "$REPO" ]; then
-    echo "usage: board-snapshot <owner/repo>" >&2
+    echo "usage: board-snapshot <owner/repo> [--since <YYYY-MM-DD>]" >&2
     exit 64
 fi
 
@@ -176,7 +187,7 @@ jq -n \
     --argjson epics "$epics" \
     '{repo: $repo, taken_at: $taken_at, epics: $epics}' > "$EPICS_OUT"
 
-jq -r '"Board: \(.counts.open_issues) open · \(.counts.epics) epics · \(.counts.open_prs) PRs · \(.counts.branches) branches"' "$OUT" >&2
+jq -r '"Board: \(.counts.open_issues) open · \(.counts.epics) epics · \(.counts.open_prs) PRs · \(.counts.branches) branches · \(.counts.merged_since) merged"' "$OUT" >&2
 
 echo "board=$OUT"
 if [ "$(jq -r '.counts.epics' "$OUT")" != "0" ]; then
