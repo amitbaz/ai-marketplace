@@ -60,6 +60,12 @@ Never report a pull request that the board snapshot did not return, and
 never report a worktree as "in flight" beyond what `local-sessions` itself
 marked `in_flight`.
 
+This block is deliberately wider than the standup's position block: it
+carries open pull requests alongside local worktrees because this command's
+whole job is what is happening right now, whereas the standup's position
+block reports only what the local scan saw and lets pull requests surface
+as moves.
+
 ```
 NOW · <date> <time>
 
@@ -76,6 +82,23 @@ Board
   67 open · 0 pull requests · 4 startable.
 ```
 
+When there is nothing in flight, the block reads:
+
+```
+In flight
+  none
+```
+
+When the run had no local signal, the block reads:
+
+```
+In flight
+  unknown — no local signal this run
+```
+
+— the same words `standup.md` §9 uses for these two states, laid out as a
+block instead of inline because this report is a block throughout.
+
 Rules, the same ones the brief runs under:
 
 - **Written for the owner, not an engineer.** No file path, function or line
@@ -83,8 +106,9 @@ Rules, the same ones the brief runs under:
   directory.
 - **A ticket with no attribution is reported as unattributed local work.**
   Never attach it to a guess.
-- **`In flight: unknown — no local signal` when the scan found nothing to
-  read.** A zero that means "I could not see" is worse than saying so.
+- **A zero that means "I could not see" is worse than saying so** — use the
+  `unknown — no local signal this run` line above when the scan found
+  nothing to read.
 - **Nothing is described as having changed unless `recently_merged` says so.**
   With no window, say the window is unknown.
 - **Stalled work is named** with its age. Work claimed and abandoned holds
