@@ -253,10 +253,19 @@ why a rule is shaped the way it is:
   with `cbrock84/headcount`, which states it well: a split by topic has no
   checkable boundary, so two agents split by topic end up in the same file.
 
-Cabinet ships no executables and no hooks. Plugin-shipped agents cannot declare
-`hooks`, `mcpServers` or `permissionMode` — Claude Code blocks all three for
-security — so the `tools:` allowlist is the only enforcement surface available,
-which is why it carries the whole invariant.
+Plugin-shipped agents cannot declare `hooks`, `mcpServers` or `permissionMode`
+— Claude Code blocks all three for security — so for a role definition the
+`tools:` allowlist is the only enforcement surface available, which is why it
+carries the whole invariant. The advisory roles rely on nothing else.
+
+Cabinet does now ship executables and a hook definition, added for the runtime
+in `docs/superpowers/plans/2026-09-09-cabinet-ai-company.md`: the runtime
+package under `plugins/cabinet/scripts/`, and a plugin-level `PreToolUse` hook
+at `plugins/cabinet/hooks/hooks.json`. The hook is a second enforcement
+surface, not a replacement for the first: it checks the requested agent type
+and message recipient mechanically, and it is inert unless a Cabinet launch
+profile set `CABINET_PROFILE_KIND`, so an ordinary session is unaffected. It
+can only refuse; nothing in it widens a grant.
 
 ## Groundwork — design intent
 

@@ -51,6 +51,19 @@ ERROR_CODES = {
                                   "and the setup grant.",
     "CAPACITY_EXCEEDED": "The batch asks for more workers than setup allows.",
     "REPO_MISMATCH": "The action names a repository other than this company's.",
+    # Subprocess adapter
+    "ARGV_INVALID": "A command is not a list of plain strings.",
+    "ENV_INVALID": "A child environment was not built from an allowlist.",
+    # Launch profiles
+    "ROLE_UNKNOWN": "That role is not a packaged staff or worker type.",
+    "PROFILE_PATH_UNSAFE": "A profile path is relative, traversing, or quoted.",
+    "PROFILE_TOOLS_FORBIDDEN": "A profile grants a tool that role must not hold.",
+    "PROFILE_HOOKS_FORBIDDEN": "A profile carries a hook that could answer for "
+                               "the owner.",
+    "PROFILE_MCP_FORBIDDEN": "A profile declares an MCP server outside Cabinet.",
+    "PROFILE_SANDBOX_REQUIRED": "A worker profile lacks the mandatory sandbox.",
+    "PROFILE_SETTINGS_WIDENING": "A profile's settings widen permissions.",
+    "PROFILE_CREDENTIALS_EXPOSED": "A profile exposes a credential directory.",
     # Backup and restore
     "BACKUP_DESTINATION_EXISTS": "The backup destination already exists.",
     "RESTORE_DESTINATION_EXISTS": "The restore destination already exists.",

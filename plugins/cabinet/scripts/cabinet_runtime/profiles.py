@@ -1,0 +1,612 @@
+"""Restricted launch profiles for the chief, the staff roles and the workers.
+
+A profile is the whole description of one session's authority: the tool names
+it may hold, the directories it may reach, the deny rules and sandbox block
+written into its settings, and the argv that starts it. `build_profile` writes
+one; `verify_profile` refuses one that would hand a role something it must not
+have; `worker_launch` turns a worker profile into argv without running it.
+
+Two properties are worth stating because they are what the refusals protect:
+
+* a profile carries no hooks. An `Elicitation` or `ElicitationResult` hook can
+  answer a dialog before the owner sees it, so a session that must obtain real
+  consent cannot carry one, and an unrecognised hook is refused for the same
+  reason rather than inspected.
+* every path is absolute and comes from the trusted worktree or toolchain. No
+  path is assembled from a ticket, an issue title or any other text a model
+  produced, and a path carrying shell syntax is refused rather than quoted.
+
+Flag names follow the measured environment contract in
+docs/cabinet/acceptance/environment.md: `--tools` is the flag that narrows the
+tool set, and `crossSessionInbound` has no flag at all, so it is passed as
+settings.
+"""
+
+import os
+import re
+import uuid
+from types import MappingProxyType
+
+from . import contracts
+from .errors import CabinetError
+
+CHIEF_ROLE = "chief-of-staff"
+
+#: Agent types the chief may dispatch, addressed as `cabinet:<type>`.
+STAFF_AGENT_TYPES = (
+    "chief-of-staff", "product", "delivery-lead", "engineering", "qa",
+    "architect", "design", "marketing", "brand", "cfo", "counsel",
+)
+
+#: Isolated session types. These are launched as their own processes and are
+#: never reachable through the chief's Agent tool.
+WORKER_TYPES = ("implementer", "test-runner")
+
+SERVICE_METHODS = (
+    "snapshot", "doctor", "context", "acquire_lead", "setup", "propose_batch",
+    "request_owner_approval", "record_handoff", "update_handoff",
+    "prepare_action", "execute_action", "register_session", "record_verdict",
+    "pause", "reconcile", "checkpoint", "export_company", "backup",
+    "wait_events",
+)
+SERVICE_TOOLS = tuple("mcp__cabinet__cabinet_%s" % name
+                      for name in SERVICE_METHODS)
+
+CHIEF_TOOLS = ("Read", "Grep", "Glob", "Skill", "Agent", "SendMessage",
+               "ListAgents")
+STAFF_TOOLS = ("Read", "Grep", "Glob", "Skill", "SendMessage", "ListAgents")
+IMPLEMENTER_TOOLS = ("Read", "Edit", "Write", "Grep", "Glob", "SendMessage",
+                     "ListAgents")
+TEST_RUNNER_TOOLS = ("Read", "Grep", "Glob", "Bash", "SendMessage",
+                     "ListAgents")
+
+#: Directories whose contents authenticate somebody. A worker that can read one
+#: of these has the owner's credentials, whatever its tool list says.
+CREDENTIAL_HOME_DIRS = (".claude", ".cabinet", ".ssh", ".aws", ".docker",
+                        ".config/gh", ".config/gcloud")
+CREDENTIAL_ABSOLUTE_DIRS = ("/var/run/docker.sock", "/run/docker.sock")
+
+SETTINGS_KEYS = ("crossSessionInbound", "permissions", "sandbox")
+PERMISSION_KEYS = ("defaultMode", "deny", "disableBypassPermissionsMode")
+WIDENING_MODES = ("bypassPermissions", "auto", "dontAsk")
+INBOUND_VALUES = ("accept", "refuse")
+WRITE_TOOLS = ("Edit", "Write", "NotebookEdit")
+
+_SAFE_PATH = re.compile(r"^/[^\s;|&<>$`\"'\\!*?\n\r\x00]*$")
+_SLUG = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._-]{0,63}$")
+_PROGRAM = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._-]*$")
+_ARGV_WORD = re.compile(r"^[^;|&<>$`\"'\\\n\r\x00]*$")
+
+WORKSPACE_FIELDS = ("assignment", "path", "claude_path", "plugin_root",
+                    "mcp_config", "settings_path", "session_id")
+REQUIRED_WORKSPACE = {
+    "chief": ("assignment", "claude_path", "plugin_root", "mcp_config",
+              "settings_path", "session_id"),
+    "staff": ("plugin_root",),
+    "worker": ("assignment", "path", "claude_path", "plugin_root"),
+}
+
+PROMPT_LIMIT = 128 * 1024
+
+
+# --- freezing ---------------------------------------------------------------
+
+def _freeze(value):
+    if isinstance(value, dict):
+        return MappingProxyType({key: _freeze(item)
+                                 for key, item in value.items()})
+    if isinstance(value, (list, tuple)):
+        return tuple(_freeze(item) for item in value)
+    return value
+
+
+def plain(value):
+    """Return a mutable deep copy of a frozen profile or any part of one."""
+
+    if isinstance(value, (dict, MappingProxyType)):
+        return {key: plain(item) for key, item in value.items()}
+    if isinstance(value, (list, tuple)):
+        return [plain(item) for item in value]
+    return value
+
+
+def settings_json(profile):
+    """Return the canonical JSON text to hand to `--settings`."""
+
+    return contracts.canonical_json(plain(profile)["settings"])
+
+
+def digest_of(profile):
+    """Return the digest a profile's body should carry."""
+
+    body = plain(profile)
+    body.pop("digest", None)
+    return contracts.digest(body)
+
+
+# --- validation helpers -----------------------------------------------------
+
+def role_kind(role):
+    """Return `chief`, `staff` or `worker`, or raise ROLE_UNKNOWN."""
+
+    if role == CHIEF_ROLE:
+        return "chief"
+    if role in STAFF_AGENT_TYPES:
+        return "staff"
+    if role in WORKER_TYPES:
+        return "worker"
+    raise CabinetError("ROLE_UNKNOWN",
+                       "%r is not a packaged Cabinet role" % (role,))
+
+
+def expected_tools(role):
+    kind = role_kind(role)
+    if kind == "chief":
+        return CHIEF_TOOLS
+    if kind == "staff":
+        return STAFF_TOOLS
+    return IMPLEMENTER_TOOLS if role == "implementer" else TEST_RUNNER_TOOLS
+
+
+def safe_path(value, label):
+    """Return an absolute, non-traversing, shell-inert path, or raise."""
+
+    if not isinstance(value, str) or not value:
+        raise CabinetError("PROFILE_PATH_UNSAFE", "%s must be a path" % label)
+    if not value.startswith("/"):
+        raise CabinetError("PROFILE_PATH_UNSAFE",
+                           "%s must be absolute: %r" % (label, value))
+    if ".." in value.split("/"):
+        raise CabinetError("PROFILE_PATH_UNSAFE",
+                           "%s must not traverse: %r" % (label, value))
+    if not _SAFE_PATH.match(value):
+        raise CabinetError("PROFILE_PATH_UNSAFE",
+                           "%s carries shell syntax: %r" % (label, value))
+    return value.rstrip("/") or "/"
+
+
+def safe_slug(value, label):
+    if not isinstance(value, str) or not _SLUG.match(value):
+        raise CabinetError("PROFILE_PATH_UNSAFE",
+                           "%s must be a plain identifier: %r" % (label, value))
+    return value
+
+
+def safe_session_id(value):
+    try:
+        uuid.UUID(str(value))
+    except (ValueError, AttributeError, TypeError):
+        raise CabinetError("FIELD_INVALID",
+                           "a session id must be a UUID: %r" % (value,))
+    return str(value)
+
+
+def credential_paths(home=None):
+    """Return every directory a Cabinet session must never read."""
+
+    home = safe_path(home or os.path.expanduser("~"), "home")
+    paths = [safe_path(os.path.join(home, name), "credential path")
+             for name in CREDENTIAL_HOME_DIRS]
+    paths.extend(CREDENTIAL_ABSOLUTE_DIRS)
+    return tuple(paths)
+
+
+def required_deny(plugin_root, public_context, creds):
+    """Deny rules every profile carries, whatever else it is allowed to do."""
+
+    rules = []
+    for base in (plugin_root, public_context):
+        for tool in WRITE_TOOLS:
+            rules.append("%s(%s/**)" % (tool, base))
+    for path in creds:
+        for tool in ("Read",) + WRITE_TOOLS:
+            rules.append("%s(%s/**)" % (tool, path))
+    return tuple(rules)
+
+
+def _validate_workspace(kind, workspace):
+    if not isinstance(workspace, dict):
+        raise CabinetError("FIELD_INVALID", "workspace must be an object")
+    for key in workspace:
+        if key not in WORKSPACE_FIELDS:
+            raise CabinetError("FIELD_UNKNOWN",
+                               "workspace.%s is not a launch field" % key)
+    for key in REQUIRED_WORKSPACE[kind]:
+        if key not in workspace:
+            raise CabinetError("FIELD_MISSING",
+                               "workspace.%s is required for a %s profile"
+                               % (key, kind))
+    checked = {}
+    for key in ("path", "claude_path", "plugin_root", "mcp_config",
+                "settings_path"):
+        if key in workspace:
+            checked[key] = safe_path(workspace[key], "workspace.%s" % key)
+    if "assignment" in workspace:
+        checked["assignment"] = safe_slug(workspace["assignment"],
+                                          "workspace.assignment")
+    if "session_id" in workspace:
+        checked["session_id"] = safe_session_id(workspace["session_id"])
+    return checked
+
+
+def _validate_check_profiles(role, check_profiles):
+    items = list(check_profiles or ())
+    if items and role != "test-runner":
+        raise CabinetError("FIELD_INVALID",
+                           "only a test-runner profile carries check profiles")
+    checked = []
+    for item in items:
+        if not isinstance(item, dict):
+            raise CabinetError("FIELD_INVALID", "a check profile must be an object")
+        for key in ("profile_id", "argv", "env"):
+            if key not in item:
+                raise CabinetError("FIELD_MISSING",
+                                   "check profile.%s is required" % key)
+        safe_slug(item["profile_id"], "check profile id")
+        argv = item["argv"]
+        if not isinstance(argv, list) or not argv:
+            raise CabinetError("FIELD_INVALID", "check profile argv is empty")
+        for position, word in enumerate(argv):
+            if not isinstance(word, str) or not _ARGV_WORD.match(word):
+                raise CabinetError("PROFILE_PATH_UNSAFE",
+                                   "check profile argv[%d] carries shell "
+                                   "syntax: %r" % (position, word))
+        program = argv[0]
+        if not _PROGRAM.match(program):
+            safe_path(program, "check profile program")
+        env = item["env"]
+        if not isinstance(env, dict):
+            raise CabinetError("FIELD_INVALID", "check profile env must be an object")
+        for name, value in env.items():
+            if not isinstance(name, str) or not isinstance(value, str):
+                raise CabinetError("FIELD_INVALID",
+                                   "check profile env must be strings")
+        checked.append({"profile_id": item["profile_id"], "argv": list(argv),
+                        "env": dict(env)})
+    return checked
+
+
+# --- sandbox ---------------------------------------------------------------
+
+def worker_sandbox(plugin_root, public_context, creds):
+    """The mandatory worker sandbox block.
+
+    Key names are the ones this Claude Code build documents in its installed
+    changelog: `sandbox.enabled`, `sandbox.failIfUnavailable`,
+    `sandbox.allowUnsandboxedCommands`, `sandbox.excludedCommands`,
+    `sandbox.filesystem.disabled`, `sandbox.network.strictAllowlist` and
+    `sandbox.network.allowedDomains`. An empty allowlist with the strict flag
+    set is the documented shape for no external egress.
+    """
+
+    return {
+        "enabled": True,
+        "failIfUnavailable": True,
+        "allowUnsandboxedCommands": False,
+        "excludedCommands": [],
+        "filesystem": {
+            "disabled": False,
+            "denyRead": list(creds),
+            "denyWrite": [plugin_root, public_context] + list(creds),
+        },
+        "network": {
+            "strictAllowlist": True,
+            "allowedDomains": [],
+            "allowMachLookup": False,
+        },
+    }
+
+
+# --- building ---------------------------------------------------------------
+
+def build_profile(role, workspace, public_context, check_profiles=(),
+                  home=None):
+    """Return the immutable launch profile for one role."""
+
+    kind = role_kind(role)
+    space = _validate_workspace(kind, workspace)
+    public = safe_path(public_context, "public_context")
+    plugin_root = space["plugin_root"]
+    creds = credential_paths(home)
+    checks = _validate_check_profiles(role, check_profiles)
+    tools = expected_tools(role)
+    deny = required_deny(plugin_root, public, creds)
+
+    permissions = {"defaultMode": "acceptEdits" if kind == "worker" else "manual",
+                   "disableBypassPermissionsMode": "disable",
+                   "deny": list(deny)}
+    settings = {"permissions": permissions}
+    if kind in ("chief", "worker"):
+        settings["crossSessionInbound"] = "accept"
+    sandbox = None
+    if kind == "worker":
+        sandbox = worker_sandbox(plugin_root, public, creds)
+        settings["sandbox"] = sandbox
+
+    if kind == "chief":
+        session_name = "cabinet-chief-%s" % space["assignment"]
+        add_dirs = (public, plugin_root)
+        service_tools = SERVICE_TOOLS
+        mcp_servers = ("cabinet",)
+        argv = (
+            space["claude_path"], "--restricted", "--strict-mcp-config",
+            "--mcp-config", space["mcp_config"],
+            "--settings", space["settings_path"],
+            "--plugin-dir", plugin_root,
+            "--agent", "cabinet:%s" % CHIEF_ROLE,
+            "--add-dir", public, "--add-dir", plugin_root,
+            "--tools", ",".join(tools),
+            "--session-id", space["session_id"],
+            "--name", session_name,
+        )
+    elif kind == "staff":
+        # Staff run as the chief's in-process subagents, so they have no argv
+        # of their own; their enumerated `tools:` grant is the whole surface.
+        session_name = "cabinet-staff-%s" % role
+        add_dirs = (public, plugin_root)
+        service_tools = ()
+        mcp_servers = ()
+        argv = ()
+    else:
+        session_name = "cabinet-worker-%s" % space["assignment"]
+        add_dirs = (space["path"],)
+        service_tools = ()
+        mcp_servers = ()
+        argv = (
+            space["claude_path"], "--restricted", "--strict-mcp-config",
+            "--settings", contracts.canonical_json(settings),
+            "--add-dir", space["path"],
+            "--tools", ",".join(tools),
+        )
+
+    body = {
+        "role": role,
+        "kind": kind,
+        "tools": list(tools),
+        "service_tools": list(service_tools),
+        "mcp_servers": list(mcp_servers),
+        "add_dirs": list(add_dirs),
+        "deny": list(deny),
+        "credential_paths": list(creds),
+        "plugin_root": plugin_root,
+        "public_context": public,
+        "check_profiles": checks,
+        "sandbox": sandbox,
+        "settings": settings,
+        "argv": list(argv),
+        "session_name": session_name,
+    }
+    body["digest"] = contracts.digest(body)
+    verify_profile(body)
+    return _freeze(body)
+
+
+# --- verification -----------------------------------------------------------
+
+def verify_profile(profile):
+    """Raise CabinetError unless the profile is safe to launch.
+
+    The checks run in the order a reviewer would ask them: what could answer a
+    dialog for the owner, what tools does it hold, what can it talk to, what
+    can it read, and only then whether its settings and sandbox say what they
+    are supposed to say.
+    """
+
+    body = plain(profile)
+    role = body.get("role")
+    kind = role_kind(role)
+    if body.get("kind") != kind:
+        raise CabinetError("ROLE_UNKNOWN",
+                           "%r is a %s role, not %r" % (role, kind,
+                                                        body.get("kind")))
+    settings = body.get("settings") or {}
+    _verify_hooks(settings)
+    _verify_tools(role, kind, body)
+    _verify_mcp(kind, body)
+    _verify_directories(body)
+    _verify_settings(kind, body, settings)
+    _verify_sandbox(kind, body, settings)
+    return True
+
+
+def _verify_hooks(settings):
+    hooks = settings.get("hooks")
+    if not hooks:
+        return
+    names = sorted(hooks) if isinstance(hooks, dict) else [str(hooks)]
+    for name in names:
+        if name in ("Elicitation", "ElicitationResult"):
+            raise CabinetError(
+                "PROFILE_HOOKS_FORBIDDEN",
+                "a %s hook can answer an owner dialog before the owner sees "
+                "it; a profile that must obtain consent carries none" % name)
+    raise CabinetError("PROFILE_HOOKS_FORBIDDEN",
+                       "a launch profile registers no hooks; found %s"
+                       % ", ".join(names))
+
+
+def _verify_tools(role, kind, body):
+    wanted = expected_tools(role)
+    held = tuple(body.get("tools") or ())
+    if held != wanted:
+        extra = [name for name in held if name not in wanted]
+        missing = [name for name in wanted if name not in held]
+        raise CabinetError(
+            "PROFILE_TOOLS_FORBIDDEN",
+            "a %s profile holds exactly %s; extra %s, missing %s"
+            % (role, ",".join(wanted), extra or "none", missing or "none"))
+    service = tuple(body.get("service_tools") or ())
+    allowed = SERVICE_TOOLS if kind == "chief" else ()
+    if service != allowed:
+        raise CabinetError(
+            "PROFILE_TOOLS_FORBIDDEN",
+            "only the chief holds the Cabinet service tools; a %s profile "
+            "named %s" % (kind, ", ".join(service) or "none"))
+
+
+def _verify_mcp(kind, body):
+    servers = tuple(body.get("mcp_servers") or ())
+    allowed = ("cabinet",) if kind == "chief" else ()
+    if servers != allowed:
+        raise CabinetError(
+            "PROFILE_MCP_FORBIDDEN",
+            "a %s profile may declare %s, not %s"
+            % (kind, ", ".join(allowed) or "no MCP server",
+               ", ".join(servers) or "none"))
+
+
+def _verify_directories(body):
+    creds = list(body.get("credential_paths") or ())
+    creds.extend(CREDENTIAL_ABSOLUTE_DIRS)
+    for directory in body.get("add_dirs") or ():
+        safe_path(directory, "add_dirs entry")
+        for path in creds:
+            if directory == path or directory.startswith(path.rstrip("/") + "/"):
+                raise CabinetError(
+                    "PROFILE_CREDENTIALS_EXPOSED",
+                    "%s is inside %s, which authenticates the owner"
+                    % (directory, path))
+    for word in body.get("argv") or ():
+        if isinstance(word, str) and word.startswith("/"):
+            safe_path(word, "argv path")
+
+
+def _verify_settings(kind, body, settings):
+    for key in settings:
+        if key not in SETTINGS_KEYS:
+            raise CabinetError("PROFILE_SETTINGS_WIDENING",
+                               "%r is not a Cabinet profile setting" % key)
+    inbound = settings.get("crossSessionInbound")
+    if kind in ("chief", "worker"):
+        if inbound != "accept":
+            raise CabinetError(
+                "PROFILE_SETTINGS_WIDENING",
+                "a %s session must state crossSessionInbound=accept; it is the "
+                "consent that lets it receive company messages, and %r is not "
+                "a value it may hold" % (kind, inbound))
+    elif inbound is not None and inbound not in INBOUND_VALUES:
+        raise CabinetError("PROFILE_SETTINGS_WIDENING",
+                           "crossSessionInbound=%r is not a valid value"
+                           % (inbound,))
+
+    permissions = settings.get("permissions")
+    if not isinstance(permissions, dict):
+        raise CabinetError("PROFILE_SETTINGS_WIDENING",
+                           "a profile states its permissions explicitly")
+    for key in permissions:
+        if key not in PERMISSION_KEYS:
+            raise CabinetError("PROFILE_SETTINGS_WIDENING",
+                               "permissions.%s widens a profile" % key)
+    mode = permissions.get("defaultMode")
+    if mode in WIDENING_MODES:
+        raise CabinetError("PROFILE_SETTINGS_WIDENING",
+                           "defaultMode=%r approves work nobody looked at"
+                           % (mode,))
+    if mode == "acceptEdits" and kind != "worker":
+        raise CabinetError("PROFILE_SETTINGS_WIDENING",
+                           "only an isolated worker runs in acceptEdits")
+    if mode not in ("manual", "acceptEdits", "plan"):
+        raise CabinetError("PROFILE_SETTINGS_WIDENING",
+                           "defaultMode=%r is not a mode Cabinet sets" % (mode,))
+    if permissions.get("disableBypassPermissionsMode") != "disable":
+        raise CabinetError(
+            "PROFILE_SETTINGS_WIDENING",
+            "a profile locks bypassPermissions off with "
+            "disableBypassPermissionsMode=disable")
+
+    wanted = set(required_deny(body.get("plugin_root"),
+                               body.get("public_context"),
+                               body.get("credential_paths") or ()))
+    declared = set(permissions.get("deny") or ())
+    if not wanted.issubset(declared):
+        missing = sorted(wanted - declared)[:3]
+        raise CabinetError(
+            "PROFILE_SETTINGS_WIDENING",
+            "a readable directory is not a writable one; these deny rules are "
+            "missing: %s" % ", ".join(missing))
+    if set(body.get("deny") or ()) != declared:
+        raise CabinetError("PROFILE_SETTINGS_WIDENING",
+                           "the profile's deny rules and its settings disagree")
+
+
+def _verify_sandbox(kind, body, settings):
+    if kind != "worker":
+        return
+    block = settings.get("sandbox")
+    if not isinstance(block, dict):
+        raise CabinetError(
+            "PROFILE_SANDBOX_REQUIRED",
+            "a worker runs under the mandatory sandbox or it does not run")
+    if body.get("sandbox") != block:
+        raise CabinetError("PROFILE_SANDBOX_REQUIRED",
+                           "the profile's sandbox and its settings disagree")
+    required = (("enabled", True), ("failIfUnavailable", True),
+                ("allowUnsandboxedCommands", False))
+    for key, value in required:
+        if block.get(key) is not value:
+            raise CabinetError("PROFILE_SANDBOX_REQUIRED",
+                               "sandbox.%s must be %s" % (key, value))
+    if block.get("excludedCommands"):
+        raise CabinetError("PROFILE_SANDBOX_REQUIRED",
+                           "sandbox.excludedCommands names commands that would "
+                           "run outside the sandbox")
+    filesystem = block.get("filesystem")
+    if not isinstance(filesystem, dict) or filesystem.get("disabled") is not False:
+        raise CabinetError("PROFILE_SANDBOX_REQUIRED",
+                           "sandbox.filesystem.disabled must be false")
+    network = block.get("network")
+    if not isinstance(network, dict):
+        raise CabinetError("PROFILE_SANDBOX_REQUIRED",
+                           "a worker sandbox states its network policy")
+    if network.get("strictAllowlist") is not True:
+        raise CabinetError("PROFILE_SANDBOX_REQUIRED",
+                           "sandbox.network.strictAllowlist must be true")
+    if network.get("allowedDomains"):
+        raise CabinetError("PROFILE_SANDBOX_REQUIRED",
+                           "a worker has no external egress; "
+                           "sandbox.network.allowedDomains must be empty")
+    denied = set(filesystem.get("denyRead") or ())
+    for path in body.get("credential_paths") or ():
+        if path not in denied:
+            raise CabinetError("PROFILE_SANDBOX_REQUIRED",
+                               "sandbox.filesystem.denyRead must cover %s"
+                               % path)
+
+
+# --- launching --------------------------------------------------------------
+
+def worker_launch(profile, prompt_file, session_id):
+    """Return the argv and settings that start one worker. Runs nothing."""
+
+    body = plain(profile)
+    if body.get("kind") != "worker":
+        raise CabinetError("ROLE_UNKNOWN",
+                           "only a worker profile is launched as its own "
+                           "session; %r is a %s profile"
+                           % (body.get("role"), body.get("kind")))
+    verify_profile(body)
+    session_id = safe_session_id(session_id)
+    prompt = _read_prompt(prompt_file)
+    argv = list(body["argv"]) + ["--session-id", session_id,
+                                 "--name", body["session_name"], prompt]
+    return {"argv": argv, "settings": body["settings"],
+            "session_name": body["session_name"]}
+
+
+def _read_prompt(prompt_file):
+    path = safe_path(prompt_file, "prompt_file")
+    if os.path.islink(path):
+        raise CabinetError("PROFILE_PATH_UNSAFE",
+                           "a prompt file is not followed through a symlink: %r"
+                           % (path,))
+    if not os.path.isfile(path):
+        raise CabinetError("PROFILE_PATH_UNSAFE",
+                           "no prompt file at %r" % (path,))
+    if os.path.getsize(path) > PROMPT_LIMIT:
+        raise CabinetError("FIELD_INVALID",
+                           "a worker prompt is at most %d bytes" % PROMPT_LIMIT)
+    with open(path, "r", encoding="utf-8") as handle:
+        text = handle.read()
+    if "\x00" in text:
+        raise CabinetError("FIELD_INVALID", "a worker prompt is text")
+    return text
