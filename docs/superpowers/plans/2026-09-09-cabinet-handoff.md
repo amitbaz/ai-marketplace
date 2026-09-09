@@ -49,6 +49,6 @@ Begin with the first unfinished task; do not restart the vision discussion.
 ```
 
 The planning branch is `codex/cabinet-company-design`. Transfer the entire branch
-or all linked documents, not only this prompt. Planning commits are local until
-the owner separately requests a push. Another worktree must start from a commit
+or all linked documents, not only this prompt. The owner authorized publishing
+this planning branch as a draft PR. Another worktree must start from a commit
 containing the plan; an unrelated checkout of main will not contain it.

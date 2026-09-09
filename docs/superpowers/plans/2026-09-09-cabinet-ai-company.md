@@ -55,6 +55,13 @@ does not authorize changing the target.
 | Role allowlists exclude spending tools | This property does not automatically extend to a new coordinator or shell worker | Restricted launch profiles, scoped action service, isolated execution and negative tests |
 | Structural script passes | It checks Groundwork manifest sync, not Cabinet version sync; root table says 0.5.0 while Cabinet manifests say 0.8.0 | Dedicated Cabinet manifest, role, command, policy and integration checks |
 
+PR preparation update: main through `e5b2598` (PR #28) was incorporated in this
+branch. It adds read-only local-session detection, merged-work observations,
+an actionable standup and `/cabinet:now`; Cabinet's manifest is now 0.9.0.
+The table above remains the recorded planning-baseline audit. Reuse and preserve
+those newer readers and tests where relevant, but they do not establish active
+staff messaging, execution ownership, approval enforcement or restart recovery.
+
 ## Delivery sequence
 
 This is one product delivery divided into three reviewable implementation parts.

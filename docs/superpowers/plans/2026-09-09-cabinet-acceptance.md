@@ -96,7 +96,7 @@ Export current views; give the opening brief; resume only authorized work.
 ## A2: Business reporting, owner steering and consistent commands
 
 **Files:** Create `commands/status.md`, `pause.md`, `close.md`; rewrite
-`standup.md`, `review.md`, `decide.md`, `brief.md`, `check.md`, `charter.md`,
+`standup.md`, `now.md`, `review.md`, `decide.md`, `brief.md`, `check.md`, `charter.md`,
 `help.md`; complete `references/briefing.md`; extend `exports.py`,
 `tests/cabinet/test_exports.py` and lifecycle scenario fixtures.
 
@@ -152,7 +152,8 @@ distinction. A human/independent reviewer judges language quality; a filename
 regex alone cannot prove that the brief is understandable.
 
 - [ ] Make commands coherent: `company` starts/resumes; `batch` proposes/presents;
-  `status` reads current state; `pause` fences dispatch; `close` checkpoints and
+  `status` reads current state; `now` remains a compatible read-only status entry;
+  `pause` fences dispatch; `close` checkpoints and
   pauses by default; `standup` produces the opening brief; `review` activates
   relevant standing questions; `ask` addresses a named staff role; `brief` supplies
   context from the approved record without manual courier work; `check` requests
@@ -191,7 +192,7 @@ new neutral mechanical file needs its boundary handling corrected explicitly.
   tool, fictional native tool, legacy-only workflow claims, description/version
   drift, missing MCP executable, changed Groundwork manifest, and Codex Cabinet
   discovery still enabled. Test actual semantic manifest fields, not only strings.
-- [ ] Run red. Set unreleased development version to `0.9.0-dev.1` consistently
+- [ ] Run red. Set unreleased development version to `1.0.0-rc.1` consistently
   in Cabinet's Claude manifest and root table. Use this description identically
   in the Claude plugin and marketplace manifests:
 
@@ -217,6 +218,8 @@ python3 scripts/check-adapter-boundary.py
 python3 scripts/check-adapter-boundary.py --self-test
 python3 plugins/groundwork/scripts/harvest-transcripts --self-test
 python3 plugins/groundwork/scripts/collect-metrics --self-test
+python3 plugins/cabinet/scripts/local-sessions --self-test
+bash plugins/cabinet/scripts/board-snapshot --self-test
 python3 scripts/check-cabinet.py
 python3 scripts/check-cabinet.py --self-test
 PYTHONPATH=plugins/cabinet/scripts:tests/cabinet python3 -m unittest discover -s tests/cabinet -v

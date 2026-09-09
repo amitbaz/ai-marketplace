@@ -86,9 +86,10 @@ class ManifestContract(unittest.TestCase):
 ```
 
 - [ ] Run `python3 -m unittest discover -s tests/cabinet -p test_distribution.py -v`.
-  At the inspected baseline, expect a 0.5.0 versus 0.8.0 failure. Correct only
-  the factual root version row to 0.8.0, rerun, and retain the broader packaging
-  work for A3. If a later commit already fixed it, record that and keep the test.
+  At the original baseline, the mismatch was 0.5.0 versus 0.8.0; incorporated
+  PR #28 changes the manifest to 0.9.0. Correct only the factual root version row
+  to the actual current manifest version, rerun, and retain the broader packaging
+  work for A3. If already fixed, record that and keep the test.
 - [ ] Commit: `test(cabinet): establish capability and distribution baseline`.
   Update F1 and native probe statuses separately in the ledger.
 

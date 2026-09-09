@@ -1,6 +1,9 @@
 # Cabinet implementation progress and evidence
 
 Planning baseline: `cd52caf` on `codex/cabinet-company-design`.
+PR preparation incorporated main at `e5b2598` (PR #28), including Cabinet 0.9.0,
+the local-session reader and `/cabinet:now`. Preserve these improvements and
+their tests; they do not complete any new operational acceptance gate by themselves.
 This file is the cross-session execution checkpoint. Update it after each task;
 link evidence rather than copying transcripts. It currently records planning
 only. No new runtime, native team test or business pilot has been implemented.
