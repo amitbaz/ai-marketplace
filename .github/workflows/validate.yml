@@ -34,6 +34,9 @@ jobs:
       - name: Check the metrics collector
         run: python3 plugins/groundwork/scripts/collect-metrics --self-test
 
+      - name: Check the local session scan
+        run: python3 plugins/cabinet/scripts/local-sessions --self-test
+
       - name: Reject workflow prose in a plugin script
         run: |
           set -e

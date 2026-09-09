@@ -127,6 +127,55 @@ def last_activity(worktree: Path, tracked: list[str]) -> datetime | None:
     return max(stamps) if stamps else None
 
 
+ATTACHMENT = re.compile(r"^github-issue-(\d+)\.md$")
+
+# Only unambiguous shapes. A bare number anywhere in a branch name is not a
+# ticket: fix/v2-parser is a parser, not ticket 2.
+BRANCH_TICKET = [
+    re.compile(r"#(\d+)"),
+    re.compile(r"(?:^|[/_-])issues?[/_-]?(\d+)(?=$|[/_-])"),
+    re.compile(r"(?:^|[/_-])gh[/_-](\d+)(?=$|[/_-])"),
+    re.compile(r"^(\d+)-"),
+]
+
+COMMIT_TICKET = re.compile(r"#(\d+)")
+
+
+def ticket_for(
+    worktree: Path, branch: str | None, base: str, board_numbers: set[int] | None
+) -> tuple[int | None, str, int | None]:
+    """(ticket, source, rejected candidate). Evidence on disk beats a name."""
+    attachments = worktree / ".superset" / "attachments"
+    if attachments.is_dir():
+        for entry in sorted(attachments.iterdir()):
+            found = ATTACHMENT.match(entry.name)
+            if found:
+                # An attachment is the ticket the workspace was opened from.
+                # It is not cross-checked: a ticket can close while its
+                # workspace is still open, and that is exactly the state the
+                # brief needs to report.
+                return int(found.group(1)), "attachment", None
+
+    def accept(candidate: int, source: str) -> tuple[int | None, str, int | None]:
+        if board_numbers is not None and candidate not in board_numbers:
+            return None, "none", candidate
+        return candidate, source, None
+
+    if branch:
+        for pattern in BRANCH_TICKET:
+            found = pattern.search(branch)
+            if found:
+                return accept(int(found.group(1)), "branch")
+
+    log = git(["log", "--format=%s%n%b", f"origin/{base}..HEAD"], worktree)
+    if log:
+        found = COMMIT_TICKET.search(log)
+        if found:
+            return accept(int(found.group(1)), "commit")
+
+    return None, "none", None
+
+
 def collect(
     repo: str,
     cwd: Path,
@@ -176,6 +225,7 @@ def collect(
         )
 
         is_checkout = branch == base and dirty == 0 and ahead == 0
+        ticket, ticket_source, rejected = ticket_for(path, branch, base, board_numbers)
         worktrees.append(
             {
                 "path": str(path),
@@ -183,9 +233,9 @@ def collect(
                 "is_current": path.resolve() == here,
                 "kind": "checkout" if is_checkout else "workspace",
                 "in_flight": not is_checkout,
-                "ticket": None,
-                "ticket_source": "none",
-                "rejected_ticket": None,
+                "ticket": ticket,
+                "ticket_source": ticket_source,
+                "rejected_ticket": rejected,
                 "commits_ahead": ahead,
                 "unpushed": unpushed,
                 "dirty": dirty,
@@ -247,6 +297,24 @@ def build_fixture(base: Path) -> Path:
     run(["git", "commit", "-m", "work"], busy)
     (busy / "a.txt").write_text("two\n", encoding="utf-8")
 
+    attach = busy / ".superset" / "attachments"
+    attach.mkdir(parents=True)
+    (attach / "github-issue-179.md").write_text("body\n", encoding="utf-8")
+
+    # A branch whose name carries a version, not a ticket.
+    trap = base / "trap"
+    run(["git", "worktree", "add", "-b", "fix/v2-parser", str(trap)], main)
+    (trap / "b.txt").write_text("x\n", encoding="utf-8")
+    run(["git", "add", "-A"], trap)
+    run(["git", "commit", "-m", "parser fix"], trap)
+
+    # A branch whose name does carry a ticket, for the board cross-check.
+    named = base / "named"
+    run(["git", "worktree", "add", "-b", "issue-4242-cleanup", str(named)], main)
+    (named / "c.txt").write_text("x\n", encoding="utf-8")
+    run(["git", "add", "-A"], named)
+    run(["git", "commit", "-m", "cleanup"], named)
+
     # The main checkout itself is the clean-default-branch case.
     return main
 
@@ -265,8 +333,8 @@ def self_test() -> int:
         result = collect("acme/widget", main, None, DEFAULT_STALL_HOURS, now())
         by_branch = {w["branch"]: w for w in result["worktrees"]}
 
-        expect(result["counts"]["worktrees"] == 2,
-               f"expected 2 worktrees, got {result['counts']['worktrees']}")
+        expect(result["counts"]["worktrees"] == 4,
+               f"expected 4 worktrees, got {result['counts']['worktrees']}")
         expect("feat/shared-writers" in by_branch,
                f"branches found: {sorted(by_branch)}")
 
@@ -275,8 +343,10 @@ def self_test() -> int:
                f"expected 1 commit ahead, got {busy.get('commits_ahead')}")
         expect(busy.get("unpushed") == 1,
                f"expected 1 unpushed commit, got {busy.get('unpushed')}")
-        expect(busy.get("dirty") == 1,
-               f"expected 1 dirty file, got {busy.get('dirty')}")
+        # The attachment directory added in this worktree is itself an
+        # untracked entry, alongside the one modified tracked file.
+        expect(busy.get("dirty") == 2,
+               f"expected 2 dirty entries, got {busy.get('dirty')}")
         expect(busy.get("in_flight") is True, "a worktree with work is in flight")
         expect(busy.get("kind") == "workspace",
                f"expected kind workspace, got {busy.get('kind')}")
@@ -286,6 +356,35 @@ def self_test() -> int:
                "a clean worktree on the default branch is a checkout, not a session")
         expect(checkout.get("in_flight") is False,
                "a clean default-branch checkout is not work in flight")
+
+        expect(busy.get("ticket") == 179,
+               f"attachment must win attribution, got {busy.get('ticket')}")
+        expect(busy.get("ticket_source") == "attachment",
+               f"expected source attachment, got {busy.get('ticket_source')}")
+
+        trap = by_branch.get("fix/v2-parser", {})
+        expect(trap.get("ticket") is None,
+               f"a version in a branch name is not a ticket, got {trap.get('ticket')}")
+        expect(trap.get("ticket_source") == "none",
+               f"expected source none, got {trap.get('ticket_source')}")
+
+        named = by_branch.get("issue-4242-cleanup", {})
+        expect(named.get("ticket") == 4242,
+               f"issue-<n> in a branch name is a ticket, got {named.get('ticket')}")
+
+        checked = collect("acme/widget", main, {179}, DEFAULT_STALL_HOURS, now())
+        checked_by_branch = {w["branch"]: w for w in checked["worktrees"]}
+        rejected = checked_by_branch.get("issue-4242-cleanup", {})
+        expect(rejected.get("ticket") is None,
+               "a branch-derived number absent from the board must be rejected")
+        expect(rejected.get("rejected_ticket") == 4242,
+               f"the rejected candidate must be recorded, got {rejected.get('rejected_ticket')}")
+        expect(checked["counts"]["attributed"] == 1,
+               f"expected 1 attributed worktree, got {checked['counts']['attributed']}")
+
+        stale = collect("acme/widget", main, None, 0.0, now())
+        expect(all(w["stalled"] for w in stale["worktrees"] if w["in_flight"]),
+               "a zero-hour threshold must mark every in-flight worktree stalled")
 
         outside = base / "not-a-repo"
         outside.mkdir()
@@ -354,7 +453,20 @@ def main() -> int:
             )
 
     cwd = Path(args.cwd) if args.cwd else Path.cwd()
-    result = collect(args.repo, cwd, None, stall_hours, now())
+
+    board_numbers: set[int] | None = None
+    if args.board:
+        try:
+            board = json.loads(Path(args.board).read_text(encoding="utf-8"))
+            board_numbers = {int(issue["number"]) for issue in board.get("open_issues", [])}
+        except (OSError, ValueError, KeyError, TypeError):
+            print(
+                f"local-sessions: could not read the board at {args.board}; "
+                "ticket numbers from branch names and commits are reported unverified",
+                file=sys.stderr,
+            )
+
+    result = collect(args.repo, cwd, board_numbers, stall_hours, now())
 
     slug = args.repo.replace("/", "-")
     out = Path(os.environ.get("TMPDIR", "/tmp")) / f"cabinet-sessions-{slug}.json"
