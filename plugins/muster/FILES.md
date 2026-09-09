@@ -10,10 +10,12 @@ cannot read in a text editor with the plugin uninstalled.
 ```
 ~/.muster/founder.md          about the person — not committed
 .muster/                      about this project — committed
-  company.md                  the charter
+  company.md                  the charter, and its amendment log
   decisions.md                the open queue and its history
   money.md                    the ledger
-  <role>.md                   one notebook per hired role
+  proposals.md                what the roles suggested that nobody asked for
+  <role>.md                   one notebook per hired role, plus that role's
+                              inbound notes and calibration record
 ```
 
 `founder.md` holds what is true across every project the owner runs: how they
@@ -66,6 +68,42 @@ History is never deleted. A superseded entry stays, marked superseded, so the
 graveyard of rejected ideas and reversed decisions remains searchable by a run
 that was not there.
 
+## A notebook holds three things
+
+Beyond the role's own judgements, each `<role>.md` carries:
+
+- **Inbound notes from other roles.** A role that notices something in
+  another's territory addresses it to them rather than to the owner, and the
+  command routes it here. The receiving role reads it on its next run and
+  decides whether it matters. This never reaches the owner unless it does.
+- **A calibration record.** When a role puts something in front of the owner,
+  it records what it expects the owner to decide. `/muster:decide` appends the
+  owner's actual answer with a one-word verdict: matched, or missed. Over
+  time the role reads its own record and adjusts — a role that knows the owner
+  will decline something notes it rather than asking, which makes the brief
+  shorter rather than longer.
+
+The calibration record is evidence, not impression: the owner's own answers,
+with dates. A role that has been wrong four times running should say so.
+
+## Proposals, `proposals.md`
+
+Initiative has to go somewhere that is not the owner's attention.
+
+A **decision** is something the owner must answer. A **proposal** is something
+nobody asked for — an improvement, a convention worth adopting, work worth
+dropping. Proposals accumulate here and are aired once a week by
+`/muster:review`. One reaches the daily brief only when the role that made it
+named the cost of *not* doing it.
+
+Each entry carries the role that made it, the date, the cost of delay or an
+explicit "no cost named", and how many runs it has gone without an answer. A
+proposal the owner keeps passing over is withdrawn by its author with the
+reason recorded — people stop pushing an idea the company keeps declining, and
+a file that only grows is a file nobody opens.
+
+Charter amendments proposed by roles live here too, marked as such.
+
 ## The charter, `company.md`
 
 A map of what this project is and what is true about it, with a source against
@@ -83,6 +121,18 @@ re-checking rather than silently continuing to apply.
 
 The charter also records `owner/repo`. Roles have no shell, so this is the one
 fact they cannot derive for themselves.
+
+**It is a living document.** A company does not stay the way it was described
+on its first day. Lines whose ending condition has been met are reported every
+run until the owner resolves them. Amendments are made with `/muster:charter`,
+never by overwriting: the superseded line stays, marked superseded and dated,
+and the amendment log at the end of the file records what changed and why. The
+shape is not fixed either — a pre-launch charter has no pricing section or
+support policy, and gains them when the company grows into needing them.
+
+Roles propose amendments; only the owner makes them. Every role reads this
+file before forming an opinion, so a role that could edit it would be
+rewriting its own instructions.
 
 ## The ledger, `money.md`
 
@@ -120,5 +170,9 @@ condition as a reopening trigger.
   wrong answer, which is the failure this whole design exists to avoid.
 - **The charter is missing.** Roles stop rather than guess which repository
   they are looking at. Run `/muster:hire`.
+- **A charter line has outlived its condition.** Reported at every standup,
+  and by `/muster:charter`, until the owner amends it. It is never silently
+  updated and never quietly ignored — a line the company has outgrown is worse
+  than a missing one, because roles act on it.
 - **No GitHub tools are available.** Roles say so and stop, or clearly label a
   partial answer derived from the tree alone. They never invent board state.

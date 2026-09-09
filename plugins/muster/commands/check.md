@@ -29,6 +29,11 @@ Add anything from its `## DECISIONS` to `.muster/decisions.md`, numbered and
 dated, attributed to QA. Anything in `## MONEY` goes to `.muster/money.md`
 under open.
 
+Route the rest of the role's sections too: `## PROPOSALS` into
+`.muster/proposals.md`, and each `## FOR <role>` into that role's notebook as
+inbound. Keep the role's prediction of the owner's answer alongside any
+decision item — that is what `/muster:decide` scores later.
+
 ## 3. Report
 
 QA's verdict, unchanged: actually done, green but hollow, or not done — with

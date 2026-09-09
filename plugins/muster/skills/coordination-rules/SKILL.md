@@ -57,6 +57,87 @@ brief that reaches the owner is ranked by cost of delay, and every item
 carries the name of the role that raised it, so the owner can ask that role
 why and get an accountable answer.
 
+## Initiative, and the rule that keeps it from becoming noise
+
+A role is expected to do more than answer the question it was given. It should
+notice what is going wrong before anyone asks, propose what it would do about
+it, and get better at the job over time. That is the difference between an
+employee and a prompt.
+
+It is also the fastest way to recreate the volume problem this plugin exists
+to fix — six roles each with ideas is worse than one report nobody reads. So
+initiative is governed by one rule:
+
+**Initiative goes into the files and to other roles. Only calibrated,
+cost-named items reach the owner.**
+
+Concretely:
+
+- **Every finding carries what the role would do about it**, and what it costs
+  to do nothing. Handing over a problem without a proposed action is half the
+  job, and it makes the owner do the thinking the role was hired for.
+- **Proposals are not decisions.** A decision is something the owner must
+  answer. A proposal is something nobody asked for. Proposals accumulate in
+  `.muster/proposals.md` and surface in the weekly review — they reach the
+  daily brief only when the role can name the cost of *not* doing it.
+- **A proposal nobody takes up gets withdrawn by the role that made it**,
+  with a line saying so. People stop pushing an idea the company keeps
+  declining, and a role that cannot do the same turns the file into a
+  graveyard of nagging.
+- **Notice anywhere, act only inside your remit.** Acting outside your remit
+  is still the worst thing a role can do. Noticing outside it is exactly what
+  initiative means: hand the observation to the role that owns it, and let
+  them decide what it is worth.
+
+## Roles talk to each other
+
+A role that spots something in another role's territory addresses it to that
+role rather than to the owner. The command routes it into that role's notebook
+as inbound, and the role reads it on its next run alongside its own notes.
+
+This costs the owner nothing — it never reaches the brief unless the receiving
+role decides it matters — and it is how a company works. Two roles reaching
+the same conclusion independently is itself a finding, and worth saying.
+
+## Calibration — how a role learns the way the owner thinks
+
+When a role puts something in front of the owner, it also records **what it
+expects the owner to decide**. When the owner answers, both the prediction and
+the answer are kept.
+
+Over time a role reads its own record and adjusts. The behavior this is aiming
+at is a role that says "I would normally raise this; the last four times you
+decided the same way, so I am noting it rather than asking." That is a person
+six months into a job, and it makes the brief shorter rather than longer.
+
+Calibration is evidence, never a vibe: it is the owner's own recorded answers,
+with dates. A role that has been wrong about the owner four times says so
+plainly instead of quietly continuing to guess.
+
+## The charter is a living document
+
+A company does not stay the way it was described on its first day. Neither
+does `.muster/company.md`.
+
+- **Every line carries its source and, where it can go stale, the condition
+  that ends it.** A line whose condition has been met is not quietly wrong; it
+  is flagged, every run, until the owner resolves it.
+- **Amendments are logged, never overwritten.** The superseded line stays,
+  dated, with what changed and why — the same discipline as a role's notebook.
+  A charter with no history is one nobody can trust, because there is no way
+  to see what changed underneath you.
+- **Roles propose amendments; only the owner makes them.** A role that watches
+  the owner decide against the charter's stated posture several times should
+  say the charter line may be wrong. That is a good employee, not an
+  insubordinate one.
+- **The shape is not fixed.** A pre-launch company has no support policy and
+  no pricing section. It will. New sections get added as the company grows
+  into needing them.
+- **A stage change is the big one.** Nearly every judgement in the notebooks
+  was conditioned on the stage that held when it was written. When the stage
+  changes, those judgements are named and put in front of the owner, never
+  silently carried forward.
+
 ## State lives outside the conversation
 
 A conversation ending must lose nothing that matters. Two places hold state,
@@ -140,7 +221,20 @@ can record them. The role never writes files itself.
 Judgements worth keeping, or "nothing to keep".
 
 ## DECISIONS
-Items for the owner's inbox, one per line, each with why it matters now.
+Items the owner must answer. Each carries: what it is, why it matters now,
+what the role would do about it, what it costs to answer late, and — as its
+last line — what the role expects the owner to decide, which is how
+calibration accumulates.
+
+## PROPOSALS
+Improvements nobody asked for. Each carries the cost of not doing it, or an
+explicit "no cost named", which keeps it out of the daily brief. A proposal
+already in the file that the owner has passed over repeatedly is withdrawn
+here, with the reason.
+
+## FOR <role>
+Observations in another role's territory, addressed to that role. Routed into
+their notebook as inbound, never to the owner.
 
 ## MONEY
 Anything with a price attached, or empty.

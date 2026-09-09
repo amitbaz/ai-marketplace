@@ -7,7 +7,7 @@ A plugin marketplace for reusable AI coding-agent workflows. Supports **Claude C
 | Plugin | Version | Description |
 | --- | --- | --- |
 | [groundwork](./plugins/groundwork) | 1.8.1 | Extension for `obra/superpowers` that adds parallel reconnaissance, discussion, and planning before committing to code. **Requires Superpowers.** |
-| [muster](./plugins/muster) | 0.2.0 | The executive team a solo founder cannot afford to hire: six roles with their own remits and memory, one chief-of-staff brief a day, and a money invariant enforced by tool grants. |
+| [muster](./plugins/muster) | 0.3.0 | The executive team a solo founder cannot afford to hire: six roles that show initiative, learn how you decide, and keep their own memory, with a living charter and a money invariant enforced by tool grants. |
 
 ## Groundwork prerequisite: Superpowers
 
@@ -164,7 +164,7 @@ ai-marketplace/
 │       │   └── coordination-rules/
 │       │       └── SKILL.md          # the rules every role runs under
 │       ├── agents/                   # the six roles, read-only by tool grant
-│       ├── commands/                 # /muster:hire, :standup, :decide, ...
+│       ├── commands/                 # :hire, :standup, :decide, :charter, ...
 │       ├── FILES.md                  # what Muster writes and who writes it
 │       └── README.md
 └── README.md

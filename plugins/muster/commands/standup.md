@@ -24,17 +24,26 @@ Do not narrate the steps. Produce the brief.
 - `.muster/money.md` — open purchases and their lead times.
 - Every `.muster/<role>.md` notebook that exists, for open findings, active
   holds, and anything with a named condition that may now have been met.
+- `.muster/proposals.md` — standing proposals, and how long each has gone
+  without an answer.
 
 Reading memory before deriving anything is the point of this command. A brief
 built only from the live board is a status report with a friendlier name.
 
 ## 2. Check the charter against reality
 
-Compare the charter's stage line against what the board now shows. If
-something has ended the stage — a second account, first revenue, a launch —
-say so at the top: nearly every judgement in the notebooks was conditioned on
-that stage, and they all need re-checking. Suggest `/muster:hire` to re-run
-the diff.
+The charter is a living document, and a line whose ending condition has been
+met is not quietly wrong — it is wrong loudly, every run, until the owner
+resolves it.
+
+Check **every** line carrying an "Ends when" condition, not only the stage
+line. Report any whose condition the board now shows as met.
+
+Stage is the one that matters most: nearly every judgement in the notebooks
+was conditioned on the stage that held when it was written. If the stage has
+ended — a second account, first revenue, a launch — say so at the top, name
+the notebook entries that the change reopens, and suggest `/muster:charter` to
+amend and `/muster:review` to re-run every role against the new stage.
 
 ## 3. Re-derive the board
 
@@ -56,7 +65,36 @@ startable frontier, and say in the brief that you did, which threshold it
 protects, and that one decision overrides it. Never apply a hold silently —
 a frontier that quietly omits work is worse than one that explains itself.
 
-## 5. Rank and cut
+## 5. Route what the roles addressed to each other
+
+A role's `## FOR <role>` sections are observations in someone else's
+territory. Append each to the receiving role's notebook under an inbound
+heading, dated, naming the role that sent it. These never reach the owner: the
+receiving role decides on its next run whether it matters.
+
+`## FOR charter` is the exception in destination only — it is a proposed
+charter amendment, and it goes into `.muster/proposals.md` marked as such, so
+the owner sees it at review rather than having a role edit the charter.
+
+If two roles independently raised the same thing, say so once in the brief.
+Two roles converging is a stronger signal than either one alone, and it is
+worth a line.
+
+## 6. Handle proposals without spending the owner's attention
+
+Append new `## PROPOSALS` items to `.muster/proposals.md`, dated, with the
+role that made them and their stated cost of not doing them.
+
+A proposal reaches the brief **only** when its author named the cost of not
+doing it. Everything else waits for `/muster:review`. This is the rule that
+keeps six roles' worth of initiative from becoming the volume problem this
+plugin exists to fix.
+
+Increment the runs-without-an-answer count on standing proposals. If a role
+withdrew one this run, record the withdrawal and its reason rather than
+deleting the entry.
+
+## 7. Rank and cut
 
 At most five items reach the owner. Rank by cost of delay, not by severity in
 the abstract:
@@ -71,12 +109,15 @@ the abstract:
 Say how many items you handled without them. If more than five deserve
 attention, say the count and offer the rest — never stretch the list.
 
-## 6. Write back
+## 8. Write back
 
 Use Write or Edit:
 
 - New items from the roles' `## DECISIONS` sections go into
-  `.muster/decisions.md`, numbered, dated, with the role that raised them.
+  `.muster/decisions.md`, numbered, dated, with the role that raised them, and
+  with the role's **prediction** of what the owner will decide kept alongside.
+  The prediction is what `/muster:decide` scores later, and it is how a role
+  learns the way this owner thinks.
   Numbers only ever go up: never renumber an open item and never reuse the
   number of a closed one. The owner refers to these by number, and a reused
   number silently answers the wrong question.
@@ -84,9 +125,10 @@ Use Write or Edit:
   unless it is already there; update the days-open count instead of
   duplicating.
 - Each role's `## NOTEBOOK` content is appended to that role's own file,
-  newest first, dated. "Nothing to keep" means append nothing.
+  newest first, dated, in whatever structure that role's file defines.
+  "Nothing to keep" means append nothing.
 
-## 7. The brief
+## 9. The brief
 
 ```
 CHIEF OF STAFF · <date> · <n> items
@@ -103,6 +145,9 @@ Then, briefly, only if it has content:
 - Startable frontier, ranked, with any hold noted
 - Blocked, and where the constraint is written
 - Contradictions found this run
+- Charter lines whose ending condition has been met
+- Proposals that named a cost of delay — never the rest; say how many are
+  waiting and that `/muster:review` covers them
 
 Never volunteer full ticket bodies, full notebooks, or the whole ledger. Name
 counts and offer to expand.

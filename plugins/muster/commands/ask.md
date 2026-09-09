@@ -35,6 +35,11 @@ were fresh.
 Add `## DECISIONS` items to `.muster/decisions.md` and `## MONEY` items to
 `.muster/money.md`, both attributed to the role.
 
+Route the rest of the role's sections too: `## PROPOSALS` into
+`.muster/proposals.md`, and each `## FOR <role>` into that role's notebook as
+inbound. Keep the role's prediction of the owner's answer alongside any
+decision item — that is what `/muster:decide` scores later.
+
 ## 3. Report
 
 The role's answer, in its own voice, with its name on it. Then one line on

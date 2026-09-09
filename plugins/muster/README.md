@@ -46,6 +46,55 @@ hired by having a notebook; firing one is deleting a file.
 
 Roles report to the chief of staff, never to you directly. You read one brief.
 
+## Initiative, without the noise
+
+A role is expected to do more than answer the question it was handed. It
+notices what is going wrong before anyone asks, says what it would do about
+it, and gets better at the job over time.
+
+That is also the fastest way to recreate the volume problem this exists to
+fix, so it is governed by one rule: **initiative goes into the files and to
+other roles; only calibrated, cost-named items reach you.** Done right it
+makes the brief shorter over time, not longer.
+
+- **Every finding names what the role would do about it**, and what it costs
+  to do nothing. Handing over a problem without a proposed action is half the
+  job.
+- **Proposals are not decisions.** Things nobody asked for accumulate in
+  `.muster/proposals.md` and are aired weekly by `/muster:review`. One reaches
+  the daily brief only when the role can name the cost of not doing it. A
+  proposal you keep passing over is withdrawn by the role that made it — real
+  employees stop pushing an idea the company keeps declining.
+- **Roles notice outside their remit and act only inside it.** The CFO
+  spotting a suite that only passes because a paid service is stubbed sends it
+  to QA's notebook, not to you. Two roles reaching the same conclusion
+  independently is itself a finding.
+- **Roles learn how you think.** When a role raises something it records what
+  it expects you to decide; `/muster:decide` keeps that next to your actual
+  answer. The behaviour this aims at is a role saying *"normally I'd raise
+  this — the last four times you decided the same way, so I'm noting it
+  instead of asking."* That is a new hire at six months, and it is evidence
+  rather than a vibe.
+
+## The charter is a living document
+
+A company does not stay the way it was described on its first day, so
+`.muster/company.md` does not either.
+
+Every line carries its source and, where it can go stale, the condition that
+ends it. A line whose condition has been met is reported at every standup
+until you resolve it — a line the company has outgrown is worse than a missing
+one, because the roles act on it.
+
+Amendments never overwrite. The superseded line stays, dated, and the
+amendment log records what changed and why. The shape is not fixed either: a
+pre-launch charter has no pricing section or support policy, and gains them
+when the company grows into needing them.
+
+Roles propose amendments; only you make them, with `/muster:charter`. Every
+role reads this file before forming an opinion, so a role that could edit it
+would be rewriting its own instructions.
+
 ## The money invariant
 
 **No agent spends your money, commits you to a cost, or changes what you
@@ -88,6 +137,11 @@ unenforced claim this plugin's own rules forbid.
 | `/muster:check <#>` | Before a merge |
 | `/muster:ask <role> <question>` | Pull one role into the room |
 | `/muster:review` | Weekly. Every role runs its standing question at once |
+| `/muster:charter` | Show or amend the charter as the company changes |
+| `/muster:help` | Where you stand, and what to run next |
+
+`/muster:help` tells you where this repository stands — who is hired, what is
+waiting on you, and which single command to run next.
 
 `/muster:decide` matters more than it looks. A decision that exists only in a
 chat thread will be re-made, wrongly, by whoever reads the ticket next without
@@ -148,7 +202,7 @@ what happens when a note and the live board disagree.
 
 ## Platform support
 
-**Claude Code**: all six roles, all seven commands, and the
+**Claude Code**: all six roles, all nine commands, and the
 `coordination-rules` skill.
 
 **Codex**: the `coordination-rules` skill only. Commands and agent definitions

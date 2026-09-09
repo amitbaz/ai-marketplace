@@ -98,8 +98,15 @@ would end it:
   Ends when: a second account exists, or any revenue arrives.
 ```
 
+The charter is a living document, not a snapshot taken once. End the file with
+an **amendment log** — empty at first — and say in the file that superseded
+lines stay, marked superseded, rather than being overwritten. Amendments are
+made with `/muster:charter`; roles propose them and only the owner makes them.
+
 Then create the empty scaffolding: `.muster/decisions.md` with an empty open
-queue, and `.muster/money.md` with empty recurring and open tables.
+queue, `.muster/money.md` with empty recurring and open tables, and
+`.muster/proposals.md` with an empty list and a one-line header saying it holds
+what the roles suggested that nobody asked for.
 
 **Check that `.muster/` will actually be committed.** Run
 `git check-ignore -q .muster/company.md`; if it exits 0, the path is ignored
@@ -150,6 +157,10 @@ Decisions first, one screen:
 5. What you could not determine — say it plainly rather than leaving it implicit
 6. Next: run `/muster:standup`
 
+Then say, in one line, that the charter is expected to change as the company
+does, and that `/muster:charter` is how — so the owner does not treat what was
+just written as permanent.
+
 ## Re-running
 
 `/muster:hire` on an existing install is a **diff**, never a rewrite. Re-read
@@ -157,6 +168,9 @@ the sources, compare against the current charter, and report only what moved.
 
 Never touch a role's notebook — those hold judgement and this command has no
 business writing them.
+
+Report which charter lines have had their ending conditions met since the last
+run — those are the lines the company has already outgrown.
 
 If **stage** changed, that is the important case. Say which charter lines were
 conditioned on the old stage, flag every one of them for re-decision rather

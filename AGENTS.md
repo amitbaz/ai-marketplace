@@ -137,6 +137,16 @@ understanding why:
   `.claude/` wholesale, which would have made the memory uncommittable. The
   per-person layer is `~/.muster/founder.md`, so a second repository costs
   almost no setup.
+- **Initiative is capped by design.** Roles propose improvements and notice
+  outside their remit, but proposals go to `.muster/proposals.md` and
+  cross-role observations go to the other role's notebook — never to the
+  owner. Only an item whose author named the cost of delay reaches the daily
+  brief. Removing that gate recreates the volume problem the plugin exists to
+  fix.
+- **The charter is amended, never overwritten.** Superseded lines stay, dated,
+  with an amendment log. Roles propose amendments; only the owner makes them,
+  because every role reads `company.md` before forming an opinion and a role
+  that could edit it would be rewriting its own instructions.
 - **Notebooks hold judgement, never derivable facts.** Status, labels, check
   results and blocking edges are re-derived every run. A stale copy of a
   derivable fact is worse than no copy.

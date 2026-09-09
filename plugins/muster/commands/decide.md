@@ -36,7 +36,26 @@ what stops it being raised again next week.
 Where the answer has a condition attached — "yes, but revisit if X" — record
 the condition as the reopening trigger, not as a footnote.
 
-## 3. Money items take a second step
+## 3. Score the prediction
+
+Every item a role raised carries that role's prediction of what the owner
+would decide. Append both the prediction and the owner's actual answer to that
+role's calibration record, dated, with a one-word verdict: matched, or missed.
+
+Do not soften a miss and do not editorialize. The record is only useful if it
+is honest, and a role reading four misses in a row should conclude something
+about how it has been reading this owner.
+
+If the item was a **charter amendment** proposed by a role and the owner
+accepted it, apply it through `/muster:charter` so it is logged with its
+history rather than silently rewritten.
+
+If the item was a **proposal** the owner has now taken up, move it out of
+`.muster/proposals.md` and say what it became — a ticket to file, a decision,
+or work the owner will do themselves. A proposal declined is recorded as
+declined with the reason, never deleted.
+
+## 4. Money items take a second step
 
 Muster never buys anything. If the item has a price attached, the owner's
 answer is an intention, not a transaction:
@@ -55,7 +74,7 @@ typed by the owner, closes a money item.
 A declined money item is recorded with the reason and the condition that would
 reopen it, so the CFO does not raise it again as though it were new.
 
-## 4. Confirm, briefly
+## 5. Confirm, briefly
 
 One or two lines: what was recorded, where it was written, and whether
 anything is now unblocked — for example a counsel hold lifted, which returns a

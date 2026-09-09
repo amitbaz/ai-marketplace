@@ -1,7 +1,7 @@
 {
   "name": "muster",
-  "version": "0.2.0",
-  "description": "The executive team a solo founder cannot afford to hire: six roles with their own remits and memory, one chief-of-staff brief a day, and a money invariant enforced by tool grants — no agent can spend.",
+  "version": "0.3.0",
+  "description": "The executive team a solo founder cannot afford to hire: six roles that show initiative, learn how you decide, and keep their own memory — with a living charter and a money invariant enforced by tool grants, so no agent can spend.",
   "author": {
     "name": "Amit Baz",
     "email": "amitbaz2@gmail.com",
@@ -20,7 +20,7 @@
   "interface": {
     "displayName": "Muster",
     "shortDescription": "The executive team a solo founder cannot afford to hire",
-    "longDescription": "Six roles with real remits and their own memory — delivery, architecture, QA, counsel, finance and brand. Each asks a standing question every run, a chief of staff caps what reaches you at five items, and no agent can spend your money.",
+    "longDescription": "Six roles with real remits and their own memory — delivery, architecture, QA, counsel, finance and brand. Each asks a standing question every run, proposes improvements nobody asked for, and learns how you decide. A chief of staff caps what reaches you at five items, and no agent can spend your money.",
     "developerName": "Amit Baz",
     "category": "Developer Tools",
     "capabilities": [
