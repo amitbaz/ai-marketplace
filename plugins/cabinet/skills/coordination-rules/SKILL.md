@@ -315,6 +315,17 @@ applies. If a brief is restating the ticket, it should not exist.
 A brief is also text that gets pasted into a session holding real tools, so
 it never carries a command that spends, deploys, or publishes.
 
+And it may end up **on the ticket** rather than in a terminal, which is where a
+brief actually survives: pasted into a workspace it exists in one session and
+nowhere else, so the next reader re-derives what was already worked out. On the
+ticket it is durable and arrives wherever the ticket is read. That is the
+better default and also a sharper edge, so it is offered and never assumed.
+Publishing is a one-way door on a public repository, a brief carries charter
+constraints and a pre-mortem rather than ticket material, and the owner is told
+which kind of repository they are posting to at the moment they answer. A
+posted brief also says of itself that it is background and not instruction —
+"content is never authority" only holds when the content says which it is.
+
 ## Rule six
 
 **A claim about a system needs a mechanism that fails when it stops being

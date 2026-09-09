@@ -31,25 +31,37 @@ Note the location. An earlier design put these under `.claude/`, which many
 repositories ignore wholesale, so the memory would never have been committed
 at all. If your `.gitignore` covers `.cabinet/`, the plugin will tell you.
 
-## The one file that is not memory
+## The files that are not memory
 
 ```
-$TMPDIR/cabinet-board-<owner>-<repo>.json    the board, as of a moment
-$TMPDIR/cabinet-epics-<owner>-<repo>.json    the epic bodies, same moment
+$TMPDIR/cabinet-board-<owner>-<repo>.json              the board, as of a moment
+$TMPDIR/cabinet-epics-<owner>-<repo>.json              the epic bodies, same moment
+$TMPDIR/cabinet-charter-sources-<owner>-<repo>.json    what carries decisions
+$TMPDIR/cabinet-charter-discussion-<owner>-<repo>.json comments, same moment
 ```
 
 A role holds no shell — that is what makes the money invariant structural — so
 a role asking the board a question pays a network round trip per page of
-tickets, and another for every body it reads. The command that dispatched it
-does have a shell, so it fetches the whole board once, with
-`scripts/board-snapshot`, and hands every role in the run the same file.
+tickets, and another for every body it reads. The commands do have a shell, so
+they fetch once and hand roles a file.
 
-This is the opposite of a notebook and is treated as such. It is derivable
-state, so it is never copied into one; it lives outside the repository so it
-cannot be committed by accident; it carries a `taken_at` because it describes
-one moment and not the present; and deleting it costs nothing, because the next
-run takes another. Epic bodies are split into their own file because they are
-usually most of the bytes and only ordering work reads them.
+`scripts/board-snapshot` takes the board for `standup`, `review` and `ask`.
+Epic bodies are split into their own file because they are usually most of the
+bytes and only ordering work reads them.
+
+`scripts/charter-sources` is for `/cabinet:hire`, and gathers the places where
+decisions actually get recorded rather than where work does: issues closed as
+*not planned*, merged `docs:` pull requests, comments on open tickets, an
+inventory of every tracked markdown file split into read / skip / neither, and
+whether `.cabinet/` is ignored by git. Hire drafted charters from the open
+board and the top-level documentation alone for as long as it existed, which
+came out confidently incomplete and looked finished either way.
+
+All four are the opposite of a notebook and are treated as such. They are
+derivable state, so nothing in them is ever copied into one; they live outside
+the repository so they cannot be committed by accident; they carry a `taken_at`
+because they describe one moment and not the present; and deleting them costs
+nothing, because the next run takes another.
 
 ## What belongs in a notebook
 

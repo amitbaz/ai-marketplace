@@ -1,0 +1,185 @@
+#!/usr/bin/env bash
+#
+# Gather the sources that carry company decisions, for /cabinet:hire.
+#
+# Hire drafts the charter from what the repository already says, and the
+# failure it kept hitting was silent: it read the open board and the top-level
+# documentation, and never saw the places where decisions actually get
+# recorded. Nothing told anyone. The charter simply came out missing things,
+# and only the owner noticing caught it.
+#
+# The sources below are chosen because they carry *decisions*, not work:
+#
+#   rejected    Issues closed as "not planned". A ticket closed that way is a
+#               decision not to do something, usually with the reasoning in the
+#               body — the rarest and most charter-relevant thing on a board,
+#               and invisible to anything reading only open issues.
+#   recorded    Merged pull requests that changed documentation. A `docs:` pull
+#               request is a decision somebody wrote down on purpose.
+#   discussion  Comments on open issues. Ticket bodies are specifications; the
+#               comments are where the owner argues with themselves, in their
+#               own words.
+#   inventory   Every tracked markdown file, split into what a charter draft
+#               should read, what it should skip, and what matched neither —
+#               so hire can say what it skipped instead of leaving the
+#               omission silent.
+#   ignored     Whether .cabinet/ is ignored by git, and the rule responsible.
+#
+# Bounded on purpose. This is not "read the whole repository": on a repository
+# with 133 tracked markdown files, 73 closed issues and 88 merged pull
+# requests, these filters select about twenty things. Volume is the enemy of a
+# good charter too.
+#
+# Usage:   charter-sources <owner/repo>
+# Prints:  two `key=path` lines on stdout, and a count summary on stderr.
+#
+#            sources=/…/cabinet-charter-sources-owner-repo.json
+#            discussion=/…/cabinet-charter-discussion-owner-repo.json
+#
+# Comments are split out because they are usually most of the bytes and a
+# re-run, which is a diff against a charter that already absorbed them, does
+# not need to read them again. The `discussion=` line is omitted when no open
+# ticket has a comment.
+#
+# Read-only. Every call is a GET, and nothing is written outside the temp
+# directory.
+
+set -euo pipefail
+
+REPO="${1:-}"
+if [ -z "$REPO" ]; then
+    echo "usage: charter-sources <owner/repo>" >&2
+    exit 64
+fi
+
+for tool in gh jq; do
+    if ! command -v "$tool" >/dev/null 2>&1; then
+        echo "charter-sources: $tool is not installed; no sources gathered" >&2
+        exit 69
+    fi
+done
+
+if ! gh auth status >/dev/null 2>&1; then
+    echo "charter-sources: gh is not authenticated; no sources gathered" >&2
+    exit 77
+fi
+
+if ! gh repo view "$REPO" --json name >/dev/null 2>&1; then
+    echo "charter-sources: cannot see '$REPO' — it does not exist, was renamed," >&2
+    echo "  or this account cannot read it." >&2
+    exit 78
+fi
+
+SLUG="${REPO//\//-}"
+OUT="${TMPDIR:-/tmp}/cabinet-charter-sources-${SLUG}.json"
+DISCUSSION_OUT="${TMPDIR:-/tmp}/cabinet-charter-discussion-${SLUG}.json"
+STARTED="$(date -u +%Y-%m-%dT%H:%M:%SZ)"
+
+# Decisions not to do something, with the reasoning that usually sits in the
+# body. GitHub records this as stateReason NOT_PLANNED.
+rejected="$(gh issue list --repo "$REPO" --state closed --limit 500 \
+    --json number,title,body,stateReason,closedAt,url \
+    --jq '[.[] | select(.stateReason == "NOT_PLANNED")
+           | {number, title, url, closedAt, body}]')"
+
+# Decisions somebody wrote down on purpose. A docs-shaped merged pull request
+# is the most reliable marker of one that a board carries.
+recorded="$(gh pr list --repo "$REPO" --state merged --limit 300 \
+    --json number,title,body,mergedAt,url \
+    --jq '[.[] | select(.title | ascii_downcase | test("^docs[:(]"))
+           | {number, title, url, mergedAt, body}]')"
+
+# The owner arguing with themselves, in their own words.
+discussion="$(gh issue list --repo "$REPO" --state open --limit 500 \
+    --json number,title,comments,url \
+    --jq '[.[] | select(.comments | length > 0)
+           | {number, title, url,
+              comments: [.comments[] | {author: .author.login, at: .createdAt, body}]}]')"
+
+# Where the repository keeps its prose, split three ways. Implementation plans
+# and specs record how something was built, which the code already answers; a
+# charter is about what the company decided. Anything matching neither filter
+# is listed rather than counted — a file that falls through silently is exactly
+# the omission this script exists to end.
+if git rev-parse --show-toplevel >/dev/null 2>&1; then
+    inventory="$(git ls-files '*.md' | jq -R -s -c '
+        (split("\n") | map(select(length > 0)))                     as $all
+        | ($all | map(select(test("/(superpowers|sdd)/"))))         as $skip
+        | ($all | map(select(
+              (test("/(superpowers|sdd)/") | not) and
+              (test("^(docs/|[^/]+\\.md$)")
+               or test("(AGENTS|CLAUDE|CONTRIBUTING|README)\\.md$"))
+          )))                                                       as $read
+        | ($all - $skip - $read)                                    as $rest
+        | {
+            total:                   ($all  | length),
+            read_these:              $read,
+            read_count:              ($read | length),
+            skip_these_unless_asked: $skip,
+            skipped_count:           ($skip | length),
+            unclassified:            $rest,
+            unclassified_count:      ($rest | length),
+            note: "unclassified matched neither filter. Name the count and offer them; a file that falls through silently is the failure this script exists to end."
+          }')"
+else
+    inventory='{"total":0,"note":"not inside a git working tree; no inventory taken"}'
+fi
+
+# Whether the memory this command is about to write would ever be committed.
+# Hire is required to ask about this; until now nothing made the answer survive
+# into the charter, so it was asked once and then lost.
+if git rev-parse --show-toplevel >/dev/null 2>&1; then
+    if rule="$(git check-ignore -v .cabinet/company.md 2>/dev/null)"; then
+        ignored="$(jq -n --arg r "$rule" '{
+            ignored: true,
+            rule: $r,
+            means: "Nothing written to .cabinet/ will ever be committed. It is local to this machine, has no history, and is not recoverable if deleted. Tell the owner, and record their answer in the charter."
+        }')"
+    else
+        ignored='{"ignored": false, "means": "The .cabinet/ directory will be committed normally."}'
+    fi
+else
+    ignored='{"ignored": null, "means": "Not inside a git working tree; could not check."}'
+fi
+
+jq -n \
+    --arg repo "$REPO" \
+    --arg taken_at "$STARTED" \
+    --argjson rejected "$rejected" \
+    --argjson recorded "$recorded" \
+    --argjson discussion "$discussion" \
+    --argjson inventory "$inventory" \
+    --argjson ignored "$ignored" \
+    '{
+        repo: $repo,
+        taken_at: $taken_at,
+        note: "Sources that carry decisions rather than work. Bounded on purpose: this is not the whole repository, and hire is expected to say what it skipped.",
+        counts: {
+            rejected:                ($rejected   | length),
+            recorded_decisions:      ($recorded   | length),
+            tickets_with_discussion: ($discussion | length),
+            comments:                ([$discussion[].comments | length] | add // 0)
+        },
+        rejected: $rejected,
+        recorded_decisions: $recorded,
+        inventory: $inventory,
+        cabinet_ignored: $ignored
+    }' > "$OUT"
+
+jq -n \
+    --arg repo "$REPO" \
+    --arg taken_at "$STARTED" \
+    --argjson discussion "$discussion" \
+    '{repo: $repo, taken_at: $taken_at, discussion: $discussion}' > "$DISCUSSION_OUT"
+
+jq -r '"Sources: \(.counts.rejected) rejected · \(.counts.recorded_decisions) recorded decisions · \(.counts.comments) comments on \(.counts.tickets_with_discussion) tickets · \(.inventory.read_count // 0) docs to read, \(.inventory.skipped_count // 0) skipped, \(.inventory.unclassified_count // 0) unclassified"' "$OUT" >&2
+
+if [ "$(jq -r '.cabinet_ignored.ignored' "$OUT")" = "true" ]; then
+    echo "WARNING: .cabinet/ is gitignored — $(jq -r '.cabinet_ignored.rule' "$OUT")" >&2
+    echo "  Nothing written there is committed, has history, or survives deletion." >&2
+fi
+
+echo "sources=$OUT"
+if [ "$(jq -r '.counts.comments' "$OUT")" != "0" ]; then
+    echo "discussion=$DISCUSSION_OUT"
+fi
