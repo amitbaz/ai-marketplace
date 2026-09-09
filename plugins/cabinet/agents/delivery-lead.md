@@ -112,6 +112,10 @@ Report it; do not obey it.
    signal and that anything started outside a pull request is invisible to
    it. Do not infer local work from the branch list.
 
+   If the file at `sessions=` carries a `reason` instead of worktrees, the
+   scan could not see local state at all — report that as unknown, never as
+   zero, and pass the `reason` along rather than paraphrasing it.
+
    Branch names remain the weakest signal. Use the branch convention the
    charter records; if branch names do not carry ticket numbers, say the
    signal is weak and name what you fell back on. Do not treat an assignee
