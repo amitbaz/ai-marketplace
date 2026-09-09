@@ -56,7 +56,11 @@ A status here is `supported`, `unsupported` or `not_run`; `not_run` never means
 | `SendMessage` / `ListAgents` cross-session discovery | supported | A restricted child enumerated live sessions with name and busy/idle state |
 | `ListAgents` inside a teammate session | unsupported | Not exposed to a teammate; a role that must discover peers cannot be a teammate-of-a-teammate |
 | Named teammate spawned by a teammate | unsupported | Verbatim: the team roster is flat. O1/O2 cannot nest named roles |
-| Cross-session delivery across permission-mode classes | unsupported by default | The recipient held the message for a human and stayed blocked. O2 must align permission-mode classes or set `crossSessionInbound` deliberately |
+| Cross-session delivery, default | unsupported without recipient consent | The recipient held the message for its user and stayed blocked. Reproduced independently from the controller session. A launched worker cannot receive chief messages unattended |
+| Cross-session delivery with `crossSessionInbound: "accept"` | supported | Passed via `--settings` (there is no launcher flag), the same restricted worker received the message with no hold and no prompt. `--restricted` ignores user/project/local settings but `--settings` still applies. **This belongs in F4's argv contract** |
+| Subagent delivery into the parent session | supported | The parent confirmed `<agent-message from="…">` with the exact probe body. Replies route to the parent's main conversation, not to the sending subagent |
+| Round trip to a completed subagent | supported | Sending to a finished subagent's id resumed it and its reply arrived back |
+| Teammate name colliding with a cross-session peer name | unsupported — hazard | A bare name resolved to the peer socket, not the in-process teammate, and was then held. Namespace worker session names away from role names |
 | `notify_when_idle` idle wake | not_run | Documented as main-conversation only; F1 ran as a teammate, and the machine's other idle sessions are unrelated owner work. O2 must probe this from a main session before claiming it |
 | `ScheduleWakeup` timer | not_run | Tool name observed in a restricted child; schema not captured, never called |
 | MCP elicitation | supported (from changelog, not exercised) | Available since 2.1.76; no Cabinet MCP server exists yet to exercise it |
