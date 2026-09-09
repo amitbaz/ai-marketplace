@@ -37,6 +37,9 @@ jobs:
       - name: Check the local session scan
         run: python3 plugins/cabinet/scripts/local-sessions --self-test
 
+      - name: Check the board snapshot
+        run: bash plugins/cabinet/scripts/board-snapshot --self-test
+
       - name: Reject workflow prose in a plugin script
         run: |
           set -e
