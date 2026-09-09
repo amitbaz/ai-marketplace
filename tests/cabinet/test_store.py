@@ -13,6 +13,7 @@ import json
 import os
 import sqlite3
 import subprocess
+import threading
 import sys
 import tempfile
 import unittest
@@ -322,17 +323,63 @@ class LeaseContract(StoreCase):
         store.resume()
         self.assertEqual(store.prepare_action(action())["state"], "prepared")
 
+    def test_first_write_binds_a_lease_to_the_writing_process(self):
+        store = self.open_store()
+        self.assertIsNone(store.get_lease())
+        store.propose_batch(batch())
+        lease = store.get_lease()
+        self.assertEqual(lease["pid"], os.getpid())
+        self.assertEqual(lease["generation"], 1)
+        self.assertEqual([row["kind"] for row in store.get_events(0)],
+                         ["lease.acquired", "batch.proposed"])
+
+    def test_the_same_process_may_take_its_own_implicit_lease_explicitly(self):
+        from cabinet_runtime.store import process_start_marker
+
+        store = self.open_store()
+        store.propose_batch(batch())
+        later = self.open_store()
+        taken = later.acquire_lease("S9", os.getpid(), process_start_marker())
+        self.assertEqual(taken["generation"], 2)
+        self.assertEqual(taken["session_id"], "S9")
+
+    def test_another_live_process_cannot_take_an_implicit_lease(self):
+        store = self.open_store()
+        store.propose_batch(batch())
+        rival = self.open_store(process_alive=always_alive)
+        with self.assertRaises(CabinetError) as caught:
+            rival.acquire_lease("S2", 8765, "start-marker-2")
+        self.assertEqual(caught.exception.code, "LEAD_ACTIVE")
+
+    def test_a_leaseless_writer_is_refused_while_the_lead_is_live(self):
+        store = self.open_store(process_alive=always_alive)
+        store.acquire_lease("S1", 4321, "start-marker-1")
+        outsider = self.open_store(process_alive=always_alive)
+        with self.assertRaises(CabinetError) as caught:
+            outsider.propose_batch(batch())
+        self.assertEqual(caught.exception.code, "LEAD_ACTIVE")
+
+    def test_a_leaseless_writer_must_take_over_a_dead_lead_explicitly(self):
+        store = self.open_store(process_alive=always_alive)
+        store.acquire_lease("S1", 4321, "start-marker-1")
+        successor = self.open_store(process_alive=dead_processes(4321))
+        with self.assertRaises(CabinetError) as caught:
+            successor.propose_batch(batch())
+        self.assertEqual(caught.exception.code, "LEASE_REQUIRED")
+        successor.acquire_lease("S2", 8765, "start-marker-2")
+        self.assertEqual(successor.propose_batch(batch())["revision"], 1)
+
     def test_pause_without_a_lease_is_refused(self):
         store = self.open_store()
         with self.assertRaises(CabinetError) as caught:
             store.pause("no lead")
         self.assertEqual(caught.exception.code, "LEASE_REQUIRED")
 
-    def test_this_live_process_blocks_a_second_lead_with_the_real_probe(self):
+    def test_another_live_process_blocks_a_lead_under_the_real_probe(self):
         from cabinet_runtime.store import process_start_marker
 
         store = self.open_store()
-        store.acquire_lease("S1", os.getpid(), process_start_marker())
+        store.acquire_lease("S1", 1, process_start_marker(1))
         other = self.open_store()
         with self.assertRaises(CabinetError) as caught:
             other.acquire_lease("S2", os.getpid(), process_start_marker())
@@ -412,6 +459,66 @@ class AssignmentContract(StoreCase):
             store.get_assignment("W404")
         self.assertEqual(caught.exception.code, "ASSIGNMENT_NOT_FOUND")
 
+    def test_state_change_on_a_missing_assignment_is_not_a_conflict(self):
+        store = self.open_store()
+        store.propose_batch(batch())
+        with self.assertRaises(CabinetError) as caught:
+            store.set_assignment_state("W404", "running")
+        self.assertEqual(caught.exception.code, "ASSIGNMENT_NOT_FOUND")
+
+    def test_simultaneous_claims_settle_on_one_assignment(self):
+        seed = self.open_store()
+        seed.propose_batch(batch())
+        seed.close()
+        gate = threading.Barrier(2)
+        outcomes = {}
+
+        def claim(name):
+            store = Store(self.root, FakeClock()).open()
+            try:
+                gate.wait(timeout=10)
+                outcomes[name] = store.reserve_assignment(
+                    name, "B001", 1, "implementer",
+                    work_key="B001:r1:issue12", issue_number=12)
+            except CabinetError as problem:
+                outcomes[name] = problem
+            finally:
+                store.close()
+
+        racers = [threading.Thread(target=claim, args=(name,))
+                  for name in ("W001", "W002")]
+        for racer in racers:
+            racer.start()
+        for racer in racers:
+            racer.join(timeout=30)
+            self.assertFalse(racer.is_alive())
+
+        won = [name for name, result in outcomes.items()
+               if not isinstance(result, CabinetError)]
+        lost = [result for result in outcomes.values()
+                if isinstance(result, CabinetError)]
+        self.assertEqual(len(won), 1, outcomes)
+        self.assertEqual(len(lost), 1, outcomes)
+        self.assertIn(lost[0].code, ("ASSIGNMENT_CONFLICT", "STORE_BUSY"))
+        reader = self.open_store()
+        self.assertEqual([row["assignment_id"] for row in reader.get_assignments()],
+                         won)
+
+    def test_a_writer_past_the_busy_timeout_reports_a_stable_code(self):
+        seed = self.open_store()
+        seed.propose_batch(batch())
+        blocker = sqlite3.connect(str(self.root / "runtime" / "cabinet.sqlite3"),
+                                  isolation_level=None, timeout=1)
+        self.addCleanup(blocker.close)
+        blocker.execute("BEGIN IMMEDIATE")
+        impatient = Store(self.root, FakeClock(), busy_timeout=50).open()
+        self.addCleanup(impatient.close)
+        with self.assertRaises(CabinetError) as caught:
+            impatient.reserve_assignment("W001", "B001", 1, "implementer",
+                                         work_key="B001:r1:issue12")
+        self.assertEqual(caught.exception.code, "STORE_BUSY")
+        blocker.execute("ROLLBACK")
+
     def test_a_released_work_item_can_be_claimed_again(self):
         store = self.open_store()
         store.propose_batch(batch())
@@ -458,7 +565,8 @@ class FaultContract(StoreCase):
         self.assertEqual(finished.returncode, 0, finished.stderr)
         store = self.open_store()
         self.assertEqual(store.get_batch("B001", 1)["state"], "proposed")
-        self.assertEqual([row["kind"] for row in store.get_events(0)], ["batch.proposed"])
+        self.assertEqual([row["kind"] for row in store.get_events(0)],
+                         ["lease.acquired", "batch.proposed"])
 
     def test_newer_schema_opens_read_only(self):
         store = self.open_store()
@@ -521,6 +629,23 @@ class BackupContract(StoreCase):
         with self.assertRaises(CabinetError) as caught:
             store.backup(destination)
         self.assertEqual(caught.exception.code, "BACKUP_DESTINATION_EXISTS")
+
+    def test_restore_refuses_a_manifest_path_leaving_the_backup(self):
+        store = self.open_store()
+        store.propose_batch(batch())
+        destination = self.root / "backups" / "five"
+        store.backup(destination)
+        escape = self.root / "backups" / "elsewhere.txt"
+        escape.write_text("payload")
+        manifest = json.loads((destination / "manifest.json").read_text())
+        manifest["files"].append({
+            "path": "runtime/../../elsewhere.txt", "bytes": escape.stat().st_size,
+            "sha256": hashlib.sha256(escape.read_bytes()).hexdigest()})
+        (destination / "manifest.json").write_text(json.dumps(manifest))
+        with self.assertRaises(CabinetError) as caught:
+            Store.restore(destination, self.root / "restored-five")
+        self.assertEqual(caught.exception.code, "UNSAFE_PATH")
+        self.assertFalse((self.root / "restored-five").exists())
 
     def test_restore_refuses_to_overwrite_active_state(self):
         store = self.open_store()
@@ -593,7 +718,7 @@ class MigrationContract(StoreCase):
         self.assertEqual(store.get_batches(), [])
         self.assertEqual(store.get_assignments(), [])
         self.assertEqual([row["kind"] for row in store.get_events(0)],
-                         ["document.imported"] * 5)
+                         ["lease.acquired"] + ["document.imported"] * 5)
 
     def test_a_charter_naming_another_repository_is_refused(self):
         (self.root / "company.md").write_text(
@@ -602,6 +727,21 @@ class MigrationContract(StoreCase):
         with self.assertRaises(CabinetError) as caught:
             migrate_documents(store)
         self.assertEqual(caught.exception.code, "IDENTITY_CONFLICT")
+
+    def test_an_unbound_company_refuses_an_ambiguous_charter(self):
+        (self.root / "company.md").write_text(
+            "# Company charter\n\nRepository: demo/company\n"
+            "Mirrored at https://github.com/other/company\n")
+        store = self.open_store()
+        with self.assertRaises(CabinetError) as caught:
+            migrate_documents(store)
+        self.assertEqual(caught.exception.code, "IDENTITY_CONFLICT")
+        self.assertIsNone(store.identity)
+
+    def test_an_unbound_company_adopts_a_single_named_repository(self):
+        store = self.open_store()
+        migrate_documents(store)
+        self.assertEqual(store.identity["repo"], "demo/company")
 
     def test_snapshot_copies_are_kept_beside_the_database(self):
         store = self.open_store(repo="demo/company")
@@ -641,6 +781,31 @@ class ExportContract(StoreCase):
             self.assertNotIn("SESSION-PRIVATE-XYZ", text)
             self.assertNotIn("START-MARKER-PRIVATE", text)
             self.assertNotIn("cabinet.sqlite3", text)
+
+    def test_a_superseded_batch_is_never_published_as_current(self):
+        store = self.open_store()
+        store.propose_batch(batch())
+        store.set_batch_state("B001", 1, "superseded")
+        later = batch()
+        later["batch_id"] = "A010"
+        later["goal"] = "Invite a second tester"
+        store.propose_batch(later)
+        self.assertEqual(store.current_batch()["batch_id"], "A010")
+        store.export_company()
+        current = (self.root / "views" / "current-batch.md").read_text()
+        brief = (self.root / "views" / "latest-brief.md").read_text()
+        self.assertIn("A010", current)
+        self.assertNotIn("B001", current)
+        self.assertIn("A010", brief)
+
+    def test_the_current_batch_is_the_live_one_not_the_last_name(self):
+        store = self.open_store()
+        first = batch()
+        first["batch_id"] = "A010"
+        store.propose_batch(first)
+        store.propose_batch(batch())
+        store.set_batch_state("B001", 1, "superseded")
+        self.assertEqual(store.current_batch()["batch_id"], "A010")
 
     def test_rewriting_a_view_replaces_it_in_place(self):
         store = self.open_store(repo="demo/company")

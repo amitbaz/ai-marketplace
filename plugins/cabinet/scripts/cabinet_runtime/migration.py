@@ -111,6 +111,11 @@ def _verify_identity(store, charter_text):
     named = repositories_named_in(charter_text)
     identity = store.identity
     if identity is None:
+        if len(named) > 1:
+            raise CabinetError(
+                "IDENTITY_CONFLICT",
+                "the legacy charter names %d repositories (%s); bind the "
+                "company to one before importing" % (len(named), ", ".join(named)))
         if len(named) == 1:
             store.bind_identity(named[0])
         return

@@ -34,8 +34,7 @@ def export_company(store):
 
     generated = store.now()
     documents = {row["name"]: row for row in store.get_documents()}
-    batches = store.get_batches()
-    latest = batches[-1] if batches else None
+    latest = store.current_batch()
 
     pages = {
         "company-context.md": _company_context(store, documents, generated),

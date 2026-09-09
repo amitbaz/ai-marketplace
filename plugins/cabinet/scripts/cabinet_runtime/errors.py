@@ -13,6 +13,7 @@ ERROR_CODES = {
     # Schema and lifecycle
     "SCHEMA_TOO_NEW": "The database schema version is newer than this runtime.",
     "STORE_CLOSED": "The store connection is closed.",
+    "STORE_BUSY": "Another writer holds the database past the busy timeout.",
     # Field validation
     "FIELD_MISSING": "A required field is absent.",
     "FIELD_UNKNOWN": "An unknown field was supplied.",

@@ -33,6 +33,7 @@ from .contracts import (
     BATCH_TRANSITIONS,
     DOCUMENT_NAME_PATTERN,
     LIVE_ASSIGNMENT_STATES,
+    LIVE_BATCH_STATES,
     SCHEMA_VERSION,
     action_identity,
     canonical_json,
@@ -216,6 +217,19 @@ def process_start_marker(pid=None):
     return "lstart:%s" % " ".join(finished.stdout.split())
 
 
+_OWN_IDENTITY = {}
+
+
+def own_process_identity():
+    """Return this process's (pid, start marker), reading the marker once."""
+
+    pid = os.getpid()
+    if pid not in _OWN_IDENTITY:
+        _OWN_IDENTITY.clear()
+        _OWN_IDENTITY[pid] = (pid, process_start_marker(pid))
+    return _OWN_IDENTITY[pid]
+
+
 def default_process_alive(pid, process_start):
     """Report whether the recorded process is still the one running as `pid`.
 
@@ -238,6 +252,33 @@ def default_process_alive(pid, process_start):
     if not current or not process_start:
         return True
     return current == process_start
+
+
+def _lock_error(problem, action):
+    """Translate a SQLite lock timeout into a stable code, else pass it on."""
+
+    text = str(problem).lower()
+    if "locked" in text or "busy" in text:
+        return CabinetError(
+            "STORE_BUSY",
+            "another writer holds the company database; could not %s (%s)"
+            % (action, problem))
+    return problem
+
+
+def _rollback_quietly(conn):
+    try:
+        conn.execute("ROLLBACK")
+    except sqlite3.Error:
+        pass
+
+
+def _within(parent, child):
+    """Report whether `child` stays inside `parent` once both are resolved."""
+
+    parent_parts = Path(parent).resolve().parts
+    child_parts = Path(child).resolve().parts
+    return child_parts[:len(parent_parts)] == parent_parts
 
 
 # --- path safety ------------------------------------------------------------
@@ -282,10 +323,12 @@ class Store:
     injectable liveness probe used by lease acquisition.
     """
 
-    def __init__(self, root, clock, repo=None, process_alive=None):
+    def __init__(self, root, clock, repo=None, process_alive=None,
+                 busy_timeout=5000):
         self.root = Path(root).resolve()
         self._clock = clock
         self._requested_repo = repo
+        self._busy_timeout = busy_timeout
         self._process_alive = process_alive or default_process_alive
         self._conn = None
         self._identity = None
@@ -404,9 +447,10 @@ class Store:
         conn.execute("PRAGMA foreign_keys=ON")
         conn.execute("PRAGMA journal_mode=WAL")
         conn.execute("PRAGMA synchronous=FULL")
-        conn.execute("PRAGMA busy_timeout=5000")
+        conn.execute("PRAGMA busy_timeout=%d" % self._busy_timeout)
         if fresh:
             os.chmod(str(self.database_path), PRIVATE_FILE_MODE)
+        self._secure_sidecars()
         version = conn.execute("PRAGMA user_version").fetchone()[0]
         if version == 0:
             script = "BEGIN IMMEDIATE;\n%s\n%s;\nPRAGMA user_version = %d;\nCOMMIT;" % (
@@ -419,7 +463,12 @@ class Store:
                 if conn.execute("PRAGMA user_version").fetchone()[0] != SCHEMA_VERSION:
                     conn.close()
                     raise
+            self._secure_sidecars()
         elif version > SCHEMA_VERSION:
+            # Folding the write-ahead log into the main file is what makes the
+            # read-only reopen below possible. The log format is fixed by
+            # SQLite and does not depend on this schema, so checkpointing a
+            # database whose schema is too new to interpret is still safe.
             conn.execute("PRAGMA wal_checkpoint(TRUNCATE)")
             conn.close()
             conn = sqlite3.connect("file:%s?mode=ro" % self.database_path,
@@ -428,6 +477,17 @@ class Store:
             self.read_only = True
         self._conn = conn
         return conn
+
+    def _secure_sidecars(self):
+        """Hold the write-ahead log files to the same mode as the database."""
+
+        for suffix in ("-wal", "-shm"):
+            sidecar = Path(str(self.database_path) + suffix)
+            try:
+                if sidecar.exists():
+                    os.chmod(str(sidecar), PRIVATE_FILE_MODE)
+            except OSError:
+                pass
 
     def _require_open(self):
         if self._conn is None:
@@ -450,14 +510,32 @@ class Store:
         return conn.execute("SELECT * FROM lease WHERE key = 1").fetchone()
 
     def _check_fence(self, conn=None):
+        """Confirm this caller may write, adopting its own process's lease.
+
+        A caller holding no lease is not automatically a writer. When the
+        recorded lease belongs to this very process it is adopted, so a second
+        Store handle inside the lead process keeps working. Otherwise a live
+        holder gives LEAD_ACTIVE and a dead one gives LEASE_REQUIRED, because
+        taking over a dead lead is an explicit `acquire_lease` call.
+        """
+
         row = self._lease_row(conn)
         if row is None:
             return None
         if self._generation is None:
+            if own_process_identity() == (row["pid"], row["process_start"]):
+                self._session_id = row["session_id"]
+                self._generation = row["generation"]
+                return row
+            if self._process_alive(row["pid"], row["process_start"]):
+                raise CabinetError(
+                    "LEAD_ACTIVE",
+                    "session %s (pid %d) holds generation %d; this caller holds "
+                    "no lease" % (row["session_id"], row["pid"], row["generation"]))
             raise CabinetError(
-                "LEASE_FENCED",
-                "session %s holds generation %d; this caller holds no lease"
-                % (row["session_id"], row["generation"]))
+                "LEASE_REQUIRED",
+                "the recorded lead %s is gone; acquire the lease before writing"
+                % row["session_id"])
         if self._generation != row["generation"] or self._session_id != row["session_id"]:
             raise CabinetError(
                 "LEASE_FENCED",
@@ -471,18 +549,59 @@ class Store:
             raise CabinetError("PAUSED", "the company is paused: %s"
                                % (row["paused_reason"] or "no reason recorded"))
 
+    def _bind_implicit_lease(self, conn):
+        """Take the lease for this process on the first write of a new company.
+
+        A company whose lease table is empty has no lead yet. Rather than
+        leaving it open to every process, the first mutation binds a lease to
+        the writing process, so a second process gets LEAD_ACTIVE instead of a
+        free write. The same process can still call `acquire_lease` later.
+        """
+
+        pid, marker = own_process_identity()
+        session_id = "implicit-%s" % uuid.uuid4().hex[:12]
+        self._session_id = session_id
+        self._generation = 1
+        self._append_event_locked(
+            conn, "lease.acquired", session_id, 1,
+            {"pid": pid, "generation": 1, "implicit": True, "superseded": None})
+        conn.execute(
+            "INSERT INTO lease (key, session_id, pid, process_start, generation, "
+            "last_seen, paused, paused_reason) VALUES (1, ?, ?, ?, 1, ?, 0, NULL)",
+            (session_id, pid, marker, self._clock()))
+        return session_id
+
     @contextlib.contextmanager
     def _transaction(self, fence=True):
         conn = self._require_writable()
-        conn.execute("BEGIN IMMEDIATE")
         try:
-            if fence:
-                self._check_fence(conn)
+            conn.execute("BEGIN IMMEDIATE")
+        except sqlite3.OperationalError as problem:
+            raise _lock_error(problem, "start a transaction") from problem
+        held = (self._session_id, self._generation)
+        bound = False
+        try:
+            if fence and self._check_fence(conn) is None:
+                self._bind_implicit_lease(conn)
+                bound = True
             yield conn
+        except sqlite3.OperationalError as problem:
+            _rollback_quietly(conn)
+            if bound:
+                self._session_id, self._generation = held
+            raise _lock_error(problem, "finish a transaction") from problem
         except BaseException:
-            conn.execute("ROLLBACK")
+            _rollback_quietly(conn)
+            if bound:
+                self._session_id, self._generation = held
             raise
-        conn.execute("COMMIT")
+        try:
+            conn.execute("COMMIT")
+        except BaseException:
+            _rollback_quietly(conn)
+            if bound:
+                self._session_id, self._generation = held
+            raise
 
     # --- events -------------------------------------------------------------
 
@@ -538,7 +657,6 @@ class Store:
         """Freeze a batch body at its revision and return the stored record."""
 
         self._require_writable()
-        self._check_fence()
         body = validate_batch_body(body)
         self._bind_identity(body["repo"])
         frozen = digest(body)
@@ -586,6 +704,25 @@ class Store:
         return [self._batch_row(row) for row in conn.execute(
             "SELECT * FROM batches ORDER BY batch_id, revision")]
 
+    def current_batch(self):
+        """Return the batch the company is working on, or None.
+
+        A live state wins over history, and among live batches the most
+        recently created one wins. Ordering by identifier would publish
+        whichever name sorts last, which is not the same question.
+        """
+
+        conn = self._require_open()
+        placeholders = ", ".join("?" * len(LIVE_BATCH_STATES))
+        row = conn.execute(
+            "SELECT * FROM batches WHERE state IN (%s) "
+            "ORDER BY created_seq DESC LIMIT 1" % placeholders,
+            LIVE_BATCH_STATES).fetchone()
+        if row is None:
+            row = conn.execute(
+                "SELECT * FROM batches ORDER BY created_seq DESC LIMIT 1").fetchone()
+        return self._batch_row(row) if row is not None else None
+
     def set_batch_state(self, batch_id, revision, state, reason=None):
         """Record a batch state change as a new event plus its projection."""
 
@@ -620,7 +757,6 @@ class Store:
         """Validate an action envelope and persist the intent to run it."""
 
         self._require_writable()
-        self._check_fence()
         self._check_not_paused()
         envelope = validate_action_envelope(envelope)
         self.get_batch(envelope["batch_id"], envelope["revision"])
@@ -716,7 +852,6 @@ class Store:
         """Claim one work item. A second live claim on it is refused."""
 
         self._require_writable()
-        self._check_fence()
         self._check_not_paused()
         self.get_batch(batch_id, revision)
         with self._transaction() as conn:
@@ -738,6 +873,8 @@ class Store:
                     "ASSIGNMENT_CONFLICT",
                     "work item %s already has a live assignment (%s)"
                     % (work_key, problem))
+            except sqlite3.OperationalError as problem:
+                raise _lock_error(problem, "reserve %s" % work_key) from problem
         return self.get_assignment(assignment_id)
 
     def get_assignment(self, assignment_id):
@@ -769,7 +906,7 @@ class Store:
             row = conn.execute("SELECT * FROM assignments WHERE assignment_id = ?",
                                (assignment_id,)).fetchone()
             if row is None:
-                raise CabinetError("ASSIGNMENT_CONFLICT",
+                raise CabinetError("ASSIGNMENT_NOT_FOUND",
                                    "no assignment %s" % assignment_id)
             check_transition(ASSIGNMENT_TRANSITIONS, row["state"], state,
                              "assignment %s" % assignment_id)
@@ -810,7 +947,9 @@ class Store:
             paused = 0
             paused_reason = None
             if row is not None:
-                if row["session_id"] != session_id and \
+                same_process = (row["pid"], row["process_start"]) == \
+                    (pid, process_start)
+                if row["session_id"] != session_id and not same_process and \
                         self._process_alive(row["pid"], row["process_start"]):
                     raise CabinetError(
                         "LEAD_ACTIVE",
@@ -862,16 +1001,9 @@ class Store:
     def set_lease_last_seen(self, time=None):
         """Record a heartbeat. A stale heartbeat alone never releases a lease."""
 
-        conn = self._require_writable()
-        conn.execute("BEGIN IMMEDIATE")
-        try:
-            self._check_fence(conn)
+        with self._transaction() as conn:
             conn.execute("UPDATE lease SET last_seen = ? WHERE key = 1",
                          (time or self._clock(),))
-        except BaseException:
-            conn.execute("ROLLBACK")
-            raise
-        conn.execute("COMMIT")
         return self.get_lease()
 
     def _require_lease(self, conn):
@@ -1038,7 +1170,20 @@ class Store:
                                % destination)
         manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
         for entry in manifest["files"]:
-            source = backup_dir / entry["path"]
+            # The manifest supplies both the path and its hash, so hashing
+            # proves nothing about where a file is allowed to land. Check
+            # containment first, on both ends of the copy.
+            relative = Path(entry["path"])
+            if relative.is_absolute() or ".." in relative.parts \
+                    or not relative.parts:
+                raise CabinetError("UNSAFE_PATH",
+                                   "manifest entry %r escapes the backup"
+                                   % entry["path"])
+            source = backup_dir / relative
+            if not _within(backup_dir, source):
+                raise CabinetError("UNSAFE_PATH",
+                                   "manifest entry %r resolves outside %s"
+                                   % (entry["path"], backup_dir))
             if not source.exists():
                 raise CabinetError("BACKUP_INVALID", "missing %s" % entry["path"])
             if _hash_file(source) != entry["sha256"]:
@@ -1056,6 +1201,10 @@ class Store:
                 target = destination / relative.name
             else:
                 continue
+            if not _within(destination, target):
+                raise CabinetError("UNSAFE_PATH",
+                                   "manifest entry %r would write outside %s"
+                                   % (entry["path"], destination))
             target.parent.mkdir(mode=PRIVATE_DIR_MODE, parents=True, exist_ok=True)
             shutil.copy2(str(backup_dir / relative), str(target))
             restored.append(str(target.relative_to(destination)))

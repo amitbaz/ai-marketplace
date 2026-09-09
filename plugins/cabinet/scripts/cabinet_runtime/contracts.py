@@ -87,7 +87,13 @@ def _int_list(value, label):
 
 
 def check_relative_path(value, label):
-    """Refuse absolute paths, parent traversal and empty path segments."""
+    """Refuse absolute paths, parent traversal and empty path segments.
+
+    This is the textual half of the scope-path rule. Resolving a scope path
+    against a repository checkout and refusing a symlink that leaves it needs a
+    checkout to resolve against, which F2 does not have; O4 owns that check at
+    the point where it creates the workspace.
+    """
 
     _text(value, label)
     if value.startswith("/") or value.startswith("~"):
@@ -241,6 +247,12 @@ ASSIGNMENT_TRANSITIONS = {
 
 LIVE_ASSIGNMENT_STATES = ("reserved", "starting", "running", "reported",
                           "blocked", "cancel_requested")
+
+# States in which a batch is the one the company is currently working on.
+# `completed` and `superseded` are history, and must never be published as the
+# current batch.
+LIVE_BATCH_STATES = ("proposed", "approved", "running", "verifying",
+                     "ready_for_release", "paused", "blocked")
 
 
 def check_transition(machine, current, target, label):
