@@ -146,6 +146,26 @@ exist, create it with only this block.
 If no, record in the charter that the block was declined, so no later run
 re-asks as though it were new.
 
+**Then offer a second, separate block — and let the owner take one without the
+other.** Money is not the only thing that cannot be walked back. The same
+escalation boundary says every one-way door is the owner's, and the sessions
+Cabinet cannot see are the ones that hold the tools to walk through one:
+
+> Beyond spending, these are the actions no agent should take on your behalf
+> because you cannot undo them: merging or closing a pull request, commenting
+> or closing an issue in your name, publishing a release, force-pushing or
+> pushing to a protected branch, editing CI workflow files, and posting to a
+> webhook. Cabinet's roles cannot do any of it. Your implementation sessions
+> can. Add a deny block for those too?
+
+Cover what is actually reachable in this environment rather than a generic
+list — the forge CLI in use, its MCP equivalents, and webhook-capable fetches.
+Merge into `permissions.deny` the same way: show the diff, change nothing
+else, and record the answer in the charter.
+
+Say plainly which of the two blocks is which. A owner who wants the money
+block and not the second one has made a reasonable choice, not a mistake.
+
 ## 7. Report
 
 Decisions first, one screen:
@@ -153,7 +173,7 @@ Decisions first, one screen:
 1. **Needs a decision** — anything that blocked setup. Omit if nothing did.
 2. The charter, as written, one line per field
 3. Roles hired, and which were deliberately not hired at this stage
-4. Deny block: installed, declined, or not applicable
+4. Deny blocks: which of the two were installed, declined, or not applicable
 5. What you could not determine — say it plainly rather than leaving it implicit
 6. Next: run `/cabinet:standup`
 

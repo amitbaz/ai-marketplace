@@ -180,6 +180,46 @@ allowlist excludes tools that do not exist yet.
 means parallel roles cannot race on appends, and no role needs a write
 capability carved out of an otherwise read-only grant.
 
+### What the ecosystem does differently, and why we did not copy it
+
+The two largest Claude Code agent collections — `wshobson/agents` (194 agents)
+and `VoltAgent/awesome-claude-code-subagents` (154 agents) — were surveyed
+role by role before this plugin's roles were finalized. They are **expertise
+libraries**, not staff, and the difference is structural rather than a matter
+of quality:
+
+- Their agents activate when a request matches. That is pull; every standing
+  question here is push. An agent that loads on match cannot raise something
+  the owner never thought to ask about, which is the failure this plugin
+  exists to prevent.
+- They carry no project memory and no charter. Several open by querying a
+  "context manager" agent that may not be installed.
+- Their targets are generic rather than the project's ("test coverage > 90%",
+  "automation > 70%"). A pre-launch single-user repository has different
+  right answers, which is why QA here reads the charter first.
+- `VoltAgent`'s `architect-reviewer` ships `tools: Read, Write, Edit, Bash` —
+  a reviewer holding write access and a shell. That is precisely the
+  unenforced claim rule six forbids, and it is the clearest argument for the
+  enumerated grants here. Do not relax ours toward that shape.
+
+What was taken, deliberately and narrowly: counsel's named regime checklist
+and its mandatory not-a-lawyer line (from `wshobson`'s `legal-advisor`),
+the CFO's triangulation and conservative-end habit (from its
+`startup-analyst`), QA's exit-criteria-to-check mapping, and the architect
+looking at boundaries first. Domain checklists are where a library beats a
+small team, and they are cheap to borrow.
+
+What was rejected: the meta-orchestration agents (`multi-agent-coordinator`,
+`task-distributor`, `workflow-orchestrator`) dispatch and supervise workers,
+which this plugin deliberately does not do, and the generic testing and
+architecture taxonomies, which bloat a role without making it better at this
+project.
+
+The second deny block offered by `/cabinet:hire` — merges, releases, protected
+pushes, CI edits, webhook posts — is modelled on the gate list in `wshobson`'s
+`review-agent-governance`, which reaches the same conclusion by a different
+mechanism (Cedar policy plus hooks).
+
 ### Where the borrowed ideas come from
 
 Cabinet borrows deliberately, and the sources matter when someone later asks

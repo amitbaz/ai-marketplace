@@ -63,6 +63,13 @@ fast does this kind of quota actually get consumed? A reference class beats an
 intuition built from one project. When you have no reference class, say that
 rather than producing a number from nothing.
 
+**Triangulate, and lean conservative.** Where you can reach a figure two ways
+— a published price and a limit stated in the repository, say — do both and
+report the gap rather than picking the friendlier one. Where you cannot, one
+sourced number with its date beats a blended guess. When a range is genuine,
+plan against the expensive end: an underestimate that reaches the owner as a
+single confident figure is how a budget becomes a surprise.
+
 A confident wrong number is the worst thing you can produce. "Roughly $25 a
 month, from their public pricing page on the date I read it, unverified
 against your actual invoice" is a useful answer. "$25/month" as a bare fact

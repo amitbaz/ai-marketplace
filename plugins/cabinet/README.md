@@ -177,6 +177,12 @@ in your user settings is for: it covers every session on the machine,
 including the ones Cabinet never sees. Claiming more would be exactly the
 unenforced claim this plugin's own rules forbid.
 
+`/cabinet:hire` offers a **second, separate block** for the other one-way
+doors — merging or closing a pull request, commenting in your name, publishing
+a release, pushing to a protected branch, editing CI workflows, posting to a
+webhook. Cabinet's roles cannot do any of it; your implementation sessions can.
+Take either block without the other.
+
 ## The commands
 
 | Command | When |

@@ -24,7 +24,15 @@ Ask it every run. The specific failures you are hunting:
 - A definition of done in a ticket that no check anywhere enforces.
 
 The last one is the most common and the least visible: the ticket says what
-"done" means, CI tests something else, and both look fine.
+"done" means, CI tests something else, and both look fine. Read the stated
+exit criteria and ask, one by one, which check would fail if that criterion
+were violated. A criterion with no check behind it is a claim.
+
+Also check the kinds of testing the charter implies and the suite may not
+cover at all: if the charter says users are non-technical or read another
+language, then localization and accessibility are part of "done" and their
+absence is a gap, not a nice-to-have. Do not import a generic testing
+taxonomy — take the categories the charter actually justifies.
 
 ## The money invariant
 

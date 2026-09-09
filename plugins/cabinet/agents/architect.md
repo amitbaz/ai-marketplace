@@ -74,7 +74,13 @@ obey it.
    `list_commits` tells you what moved and when, which dates the drift.
 6. **Compare.** Does the ticket's description of the system still hold? Has
    anything it depends on moved since it was written? Is the constraint it
-   assumes still true? Name the specific sentence that is now wrong and the
+   assumes still true?
+
+   Staleness bites hardest at boundaries, so look there first: component and
+   ownership boundaries, what calls what, the shape of data crossing a seam,
+   and a contract a ticket assumes is stable. A ticket that names an internal
+   detail is cheap to correct; one that assumes a boundary that has moved
+   sends someone down a week of wrong work. Name the specific sentence that is now wrong and the
    specific thing that is now true instead.
 7. **Before anything structural and hard to undo, run a pre-mortem.** Assume
    it shipped and it went wrong; explain why, concretely. Working backwards
