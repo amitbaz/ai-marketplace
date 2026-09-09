@@ -29,10 +29,11 @@ import argparse
 import json
 import os
 import re
+import shutil
 import subprocess
 import sys
 import tempfile
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
 DEFAULT_STALL_HOURS = 24.0
@@ -67,20 +68,35 @@ def normalize_remote(url: str) -> str:
 
 
 def parse_worktrees(text: str) -> list[dict]:
-    """`git worktree list --porcelain` into records. Bare worktrees are skipped."""
+    """`git worktree list --porcelain` into records. Bare worktrees are skipped.
+
+    `prunable` and `locked` are part of that format and both matter here. A
+    prunable record is a worktree whose directory is gone while git's own note
+    of it survives; read as an ordinary record it becomes work in flight that
+    nobody can ever finish.
+    """
     records: list[dict] = []
     current: dict = {}
+
+    def blank(path: str) -> dict:
+        return {"path": path, "branch": None, "bare": False,
+                "prunable": None, "locked": None}
+
     for line in text.splitlines():
         if line.startswith("worktree "):
             if current:
                 records.append(current)
-            current = {"path": line[len("worktree "):], "branch": None, "bare": False}
+            current = blank(line[len("worktree "):])
         elif line.startswith("branch "):
             current["branch"] = line[len("branch "):].removeprefix("refs/heads/")
         elif line.strip() == "bare":
             current["bare"] = True
         elif line.strip() == "detached":
             current["branch"] = None
+        elif line.strip() == "prunable" or line.startswith("prunable "):
+            current["prunable"] = line[len("prunable "):].strip() or "git says it can be pruned"
+        elif line.strip() == "locked" or line.startswith("locked "):
+            current["locked"] = line[len("locked "):].strip() or "locked, with no reason given"
     if current:
         records.append(current)
     return [r for r in records if not r["bare"]]
@@ -96,29 +112,44 @@ def default_branch(cwd: Path) -> str:
     return "main"
 
 
-def dirty_paths(worktree: Path) -> tuple[int, list[str]]:
-    """Total dirty entries, and the tracked-modified paths among them."""
+def dirty_paths(worktree: Path) -> tuple[int, list[str], list[str]] | None:
+    """Total dirty entries, the tracked-modified ones, and every dirty path.
+
+    None means the read itself failed, which is not the same fact as a clean
+    tree and must not be flattened into one.
+    """
     porcelain = git(["status", "--porcelain"], worktree)
-    if not porcelain:
-        return 0, []
+    if porcelain is None:
+        return None
     lines = [line for line in porcelain.splitlines() if line.strip()]
     tracked: list[str] = []
+    changed: list[str] = []
     for line in lines:
         code, path = line[:2], line[3:]
-        if code == "??":
-            continue
         if " -> " in path:
             path = path.split(" -> ", 1)[1]
-        tracked.append(path.strip('"'))
-    return len(lines), tracked
+        path = path.strip('"')
+        changed.append(path)
+        if code != "??":
+            tracked.append(path)
+    return len(lines), tracked, changed
 
 
-def last_activity(worktree: Path, tracked: list[str]) -> datetime | None:
+def last_activity(worktree: Path, changed: list[str]) -> datetime | None:
+    """The newest of the branch tip and the modification time of every dirty path.
+
+    Untracked files count towards it. The first hour of a workspace is nothing
+    but untracked files, so reading only tracked ones dates a workspace opened
+    minutes ago to whenever the commit it branched from was written — which
+    reads as a stall, and tells the owner to abandon work that is live. Ignored
+    paths never reach `git status --porcelain` at all, so a build artefact
+    cannot refresh this clock.
+    """
     stamps: list[datetime] = []
     committed = git(["log", "-1", "--format=%cI"], worktree)
     if committed:
         stamps.append(datetime.fromisoformat(committed).astimezone(timezone.utc))
-    for relative in tracked:
+    for relative in changed:
         try:
             mtime = (worktree / relative).stat().st_mtime
         except OSError:
@@ -131,11 +162,16 @@ ATTACHMENT = re.compile(r"^github-issue-(\d+)\.md$")
 
 # Only unambiguous shapes. A bare number anywhere in a branch name is not a
 # ticket: fix/v2-parser is a parser, not ticket 2.
+#
+# The flag says whether the shape stands on its own. A leading number is also
+# how a date and a version number start — 2026-09-09-standup, 3-0-1-hotfix,
+# 20-percent-faster — so it is believed only when a board was given and has
+# that issue open. Without a board it is dropped rather than trusted.
 BRANCH_TICKET = [
-    re.compile(r"#(\d+)"),
-    re.compile(r"(?:^|[/_-])issues?[/_-]?(\d+)(?=$|[/_-])"),
-    re.compile(r"(?:^|[/_-])gh[/_-](\d+)(?=$|[/_-])"),
-    re.compile(r"^(\d+)-"),
+    (re.compile(r"#(\d+)"), True),
+    (re.compile(r"(?:^|[/_-])issues?[/_-]?(\d+)(?=$|[/_-])"), True),
+    (re.compile(r"(?:^|[/_-])gh[/_-](\d+)(?=$|[/_-])"), True),
+    (re.compile(r"^(\d+)-"), False),
 ]
 
 COMMIT_TICKET = re.compile(r"#(\d+)")
@@ -162,10 +198,20 @@ def ticket_for(
         return candidate, source, None
 
     if branch:
-        for pattern in BRANCH_TICKET:
+        for pattern, stands_alone in BRANCH_TICKET:
             found = pattern.search(branch)
-            if found:
-                return accept(int(found.group(1)), "branch")
+            if not found:
+                continue
+            candidate = int(found.group(1))
+            if not stands_alone:
+                # A date or a version that the board does not confirm was never
+                # a claim on a ticket, so it is dropped rather than recorded as
+                # a rejected candidate — nobody needs telling that 2026 is not
+                # an open issue.
+                if board_numbers is not None and candidate in board_numbers:
+                    return candidate, "branch", None
+                continue
+            return accept(candidate, "branch")
 
     log = git(["log", "--format=%s%n%b", f"origin/{base}..HEAD"], worktree)
     if log:
@@ -191,7 +237,14 @@ def collect(
             "taken_at": taken_at,
             "stall_hours": stall_hours,
             "reason": reason,
-            "counts": {"worktrees": 0, "in_flight": 0, "attributed": 0, "stalled": 0},
+            "counts": {
+                "worktrees": 0,
+                "in_flight": 0,
+                "attributed": 0,
+                "stalled": 0,
+                "prunable": 0,
+                "unreadable": 0,
+            },
             "worktrees": [],
         }
 
@@ -214,28 +267,69 @@ def collect(
     for record in parse_worktrees(listing):
         path = Path(record["path"])
         branch = record["branch"]
+        ticket, ticket_source, rejected = ticket_for(path, branch, base, board_numbers)
+        entry = {
+            "path": str(path),
+            "branch": branch,
+            "is_current": path.resolve() == here,
+            "kind": "workspace",
+            "in_flight": False,
+            "reason": None,
+            "locked": record["locked"],
+            "ticket": ticket,
+            "ticket_source": ticket_source,
+            "rejected_ticket": rejected,
+            "commits_ahead": None,
+            "unpushed": None,
+            "dirty": None,
+            "last_activity": None,
+            "idle_hours": None,
+            "stalled": False,
+        }
+
+        if record["prunable"]:
+            # The directory is gone and only git's note of it survives. Calling
+            # that work in flight takes its ticket off the frontier for good:
+            # with no directory there is no activity, so it can never age into
+            # a stall and clear itself.
+            entry["kind"] = "prunable"
+            entry["reason"] = f"the workspace directory is gone — {record['prunable']}"
+            worktrees.append(entry)
+            continue
+
+        status = dirty_paths(path)
         ahead_raw = git(["rev-list", "--count", f"origin/{base}..HEAD"], path)
-        ahead = int(ahead_raw) if ahead_raw and ahead_raw.isdigit() else 0
+        if status is None or ahead_raw is None or not ahead_raw.isdigit():
+            # A read that failed is its own answer. Coercing it to zero would
+            # make it indistinguishable from a clean tree, and telling those
+            # two apart is the whole reason this scan exists.
+            entry["kind"] = "unreadable"
+            entry["reason"] = (
+                "this workspace could not be read, so what it holds is unknown"
+                if status is None
+                else f"this workspace could not be compared against origin/{base}, "
+                "so what it has done is unknown"
+            )
+            worktrees.append(entry)
+            continue
+
+        dirty, _tracked, changed = status
+        ahead = int(ahead_raw)
         unpushed_raw = git(["rev-list", "--count", "HEAD", "--not", "--remotes"], path)
-        unpushed = int(unpushed_raw) if unpushed_raw and unpushed_raw.isdigit() else 0
-        dirty, tracked = dirty_paths(path)
-        activity = last_activity(path, tracked)
+        unpushed = int(unpushed_raw) if unpushed_raw and unpushed_raw.isdigit() else None
+        activity = last_activity(path, changed)
         idle_hours = (
             round((moment - activity).total_seconds() / 3600.0, 1) if activity else None
         )
 
-        is_checkout = branch == base and dirty == 0 and ahead == 0
-        ticket, ticket_source, rejected = ticket_for(path, branch, base, board_numbers)
-        worktrees.append(
+        # A clean tree with nothing ahead of the default branch is being looked
+        # at, not worked on. That includes a detached HEAD: someone bisecting,
+        # reading an old commit or inspecting a tag is not working a ticket.
+        is_checkout = dirty == 0 and ahead == 0 and branch in (base, None)
+        entry.update(
             {
-                "path": str(path),
-                "branch": branch,
-                "is_current": path.resolve() == here,
                 "kind": "checkout" if is_checkout else "workspace",
                 "in_flight": not is_checkout,
-                "ticket": ticket,
-                "ticket_source": ticket_source,
-                "rejected_ticket": rejected,
                 "commits_ahead": ahead,
                 "unpushed": unpushed,
                 "dirty": dirty,
@@ -246,6 +340,7 @@ def collect(
                 ),
             }
         )
+        worktrees.append(entry)
 
     in_flight = [w for w in worktrees if w["in_flight"]]
     return {
@@ -257,6 +352,8 @@ def collect(
             "in_flight": len(in_flight),
             "attributed": len([w for w in in_flight if w["ticket"] is not None]),
             "stalled": len([w for w in worktrees if w["stalled"]]),
+            "prunable": len([w for w in worktrees if w["kind"] == "prunable"]),
+            "unreadable": len([w for w in worktrees if w["kind"] == "unreadable"]),
         },
         "worktrees": worktrees,
     }
@@ -265,12 +362,18 @@ def collect(
 # ----------------------------------------------------------------- self-test
 
 
-def run(args: list[str], cwd: Path) -> None:
-    subprocess.run(args, cwd=cwd, check=True, capture_output=True)
+def run(args: list[str], cwd: Path, env: dict[str, str] | None = None) -> None:
+    subprocess.run(
+        args,
+        cwd=cwd,
+        check=True,
+        capture_output=True,
+        env={**os.environ, **env} if env else None,
+    )
 
 
 def build_fixture(base: Path) -> Path:
-    """A repository with a main checkout and two worktrees."""
+    """A repository with a main checkout and several worktrees."""
     origin = base / "origin.git"
     run(["git", "init", "--bare", "-b", "main", str(origin)], base)
 
@@ -315,8 +418,65 @@ def build_fixture(base: Path) -> Path:
     run(["git", "add", "-A"], named)
     run(["git", "commit", "-m", "cleanup"], named)
 
+    # A branch that starts with a number which is a date, not a ticket.
+    dated = base / "dated"
+    run(["git", "worktree", "add", "-b", "2026-09-09-cabinet-standup", str(dated)], main)
+    (dated / "f.txt").write_text("x\n", encoding="utf-8")
+    run(["git", "add", "-A"], dated)
+    run(["git", "commit", "-m", "standup work"], dated)
+
+    # A workspace whose only sign of life is a file git does not track yet,
+    # sitting on a branch whose newest commit is ten days old. This is what the
+    # first hour of any new workspace looks like.
+    stale_stamp = (now() - timedelta(days=10)).strftime("%Y-%m-%dT%H:%M:%SZ")
+    fresh = base / "fresh"
+    run(["git", "worktree", "add", "-b", "feat/untracked-only", str(fresh)], main)
+    (fresh / "d.txt").write_text("committed\n", encoding="utf-8")
+    run(["git", "add", "-A"], fresh)
+    run(
+        ["git", "commit", "-m", "an old commit"],
+        fresh,
+        {"GIT_AUTHOR_DATE": stale_stamp, "GIT_COMMITTER_DATE": stale_stamp},
+    )
+    (fresh / "scratch.txt").write_text("written just now\n", encoding="utf-8")
+
+    # A worktree deleted with rm rather than `git worktree remove`, which is
+    # how most of them die. Git keeps its own note of it and marks it prunable.
+    ghost = base / "ghost"
+    run(["git", "worktree", "add", "-b", "issue-9001-gone", str(ghost)], main)
+    (ghost / "e.txt").write_text("x\n", encoding="utf-8")
+    run(["git", "add", "-A"], ghost)
+    run(["git", "commit", "-m", "work that is about to vanish"], ghost)
+    shutil.rmtree(ghost)
+
+    # A detached HEAD sitting on the default tip: bisecting, or reading a tag.
+    run(["git", "worktree", "add", "--detach", str(base / "detached"), "origin/main"], main)
+
     # The main checkout itself is the clean-default-branch case.
     return main
+
+
+def build_unpushed_fixture(base: Path) -> Path:
+    """A clone whose default branch has never been pushed.
+
+    Nothing exists under `refs/remotes/origin`, so the comparison every record
+    depends on cannot run — while `git status` answers perfectly well and says
+    the tree is clean. That is the pair that has to stay distinguishable: a
+    read that failed, and a tree with nothing in it.
+    """
+    origin = base / "unpushed.git"
+    run(["git", "init", "--bare", "-b", "main", str(origin)], base)
+
+    local = base / "unpushed"
+    run(["git", "clone", str(origin), str(local)], base)
+    run(["git", "config", "user.email", "t@example.com"], local)
+    run(["git", "config", "user.name", "T"], local)
+    run(["git", "symbolic-ref", "HEAD", "refs/heads/main"], local)
+    (local / "README.md").write_text("x\n", encoding="utf-8")
+    run(["git", "add", "-A"], local)
+    run(["git", "commit", "-m", "init"], local)
+    run(["git", "remote", "set-url", "origin", "git@github.com:acme/widget.git"], local)
+    return local
 
 
 def self_test() -> int:
@@ -332,11 +492,12 @@ def self_test() -> int:
 
         result = collect("acme/widget", main, None, DEFAULT_STALL_HOURS, now())
         by_branch = {w["branch"]: w for w in result["worktrees"]}
+        by_name = {Path(w["path"]).name: w for w in result["worktrees"]}
 
-        expect(result["counts"]["worktrees"] == 4,
-               f"expected 4 worktrees, got {result['counts']['worktrees']}")
+        expect(result["counts"]["worktrees"] == 8,
+               f"expected 8 worktrees, got {result['counts']['worktrees']}")
         expect("feat/shared-writers" in by_branch,
-               f"branches found: {sorted(by_branch)}")
+               f"branches found: {sorted(str(b) for b in by_branch)}")
 
         busy = by_branch.get("feat/shared-writers", {})
         expect(busy.get("commits_ahead") == 1,
@@ -372,6 +533,50 @@ def self_test() -> int:
         expect(named.get("ticket") == 4242,
                f"issue-<n> in a branch name is a ticket, got {named.get('ticket')}")
 
+        # A workspace whose only activity is untracked. The clock has to read
+        # the untracked file, not the ten-day-old commit it branched from.
+        fresh = by_branch.get("feat/untracked-only", {})
+        expect(fresh.get("dirty") == 1,
+               f"expected 1 dirty entry, got {fresh.get('dirty')}")
+        expect(fresh.get("idle_hours") is not None and fresh["idle_hours"] < 1.0,
+               f"an untracked file written now is activity, got idle_hours "
+               f"{fresh.get('idle_hours')}")
+        expect(fresh.get("stalled") is False,
+               "a workspace touched seconds ago is not stalled")
+
+        # A worktree deleted with rm: git still lists it, and it must not be
+        # reported as somebody's work in flight.
+        ghost = by_name.get("ghost", {})
+        expect(ghost.get("kind") == "prunable",
+               f"a deleted worktree is prunable, got kind {ghost.get('kind')}")
+        expect(ghost.get("in_flight") is False,
+               "a worktree whose directory is gone is not work in flight")
+        expect(bool(ghost.get("reason")),
+               "a prunable worktree must carry the reason it is prunable")
+        expect(result["counts"]["prunable"] == 1,
+               f"expected 1 prunable worktree, got {result['counts'].get('prunable')}")
+
+        # A detached HEAD on the default tip, clean: someone reading, not working.
+        detached = by_name.get("detached", {})
+        expect(detached.get("branch") is None,
+               f"the detached fixture must have no branch, got {detached.get('branch')}")
+        expect(detached.get("kind") == "checkout",
+               f"a clean detached worktree is a checkout, got {detached.get('kind')}")
+        expect(detached.get("in_flight") is False,
+               "a clean detached worktree is not work in flight")
+
+        expect(result["counts"]["in_flight"] == 5,
+               f"expected 5 in flight, got {result['counts']['in_flight']}")
+
+        # A leading number with no board behind it is a date or a version as
+        # often as it is a ticket, so with no board it is not a ticket at all.
+        dated = by_branch.get("2026-09-09-cabinet-standup", {})
+        expect(dated.get("ticket") is None,
+               f"a date leading a branch name is not a ticket, got {dated.get('ticket')}")
+        expect(dated.get("rejected_ticket") is None,
+               f"a date is not a rejected ticket candidate either, got "
+               f"{dated.get('rejected_ticket')}")
+
         checked = collect("acme/widget", main, {179}, DEFAULT_STALL_HOURS, now())
         checked_by_branch = {w["branch"]: w for w in checked["worktrees"]}
         rejected = checked_by_branch.get("issue-4242-cleanup", {})
@@ -379,8 +584,18 @@ def self_test() -> int:
                "a branch-derived number absent from the board must be rejected")
         expect(rejected.get("rejected_ticket") == 4242,
                f"the rejected candidate must be recorded, got {rejected.get('rejected_ticket')}")
+        expect(checked_by_branch.get("2026-09-09-cabinet-standup", {}).get("ticket") is None,
+               "a board without that number does not rescue a leading number")
         expect(checked["counts"]["attributed"] == 1,
                f"expected 1 attributed worktree, got {checked['counts']['attributed']}")
+
+        confirmed = collect("acme/widget", main, {179, 2026}, DEFAULT_STALL_HOURS, now())
+        confirmed_by_branch = {w["branch"]: w for w in confirmed["worktrees"]}
+        leading = confirmed_by_branch.get("2026-09-09-cabinet-standup", {})
+        expect(leading.get("ticket") == 2026,
+               f"a board that has the number open accepts it, got {leading.get('ticket')}")
+        expect(leading.get("ticket_source") == "branch",
+               f"expected source branch, got {leading.get('ticket_source')}")
 
         stale = collect("acme/widget", main, None, 0.0, now())
         expect(all(w["stalled"] for w in stale["worktrees"] if w["in_flight"]),
@@ -396,6 +611,22 @@ def self_test() -> int:
         wrong = collect("acme/other", main, None, DEFAULT_STALL_HOURS, now())
         expect(wrong["counts"]["worktrees"] == 0,
                "a repository whose origin does not match must produce an empty result")
+
+        # A read that failed and a tree that is clean are different facts.
+        unpushed = build_unpushed_fixture(base)
+        blind = collect("acme/widget", unpushed, None, DEFAULT_STALL_HOURS, now())
+        record = blind["worktrees"][0] if blind["worktrees"] else {}
+        expect(record.get("kind") == "unreadable",
+               f"a worktree that could not be read is unreadable, got {record.get('kind')}")
+        expect(record.get("in_flight") is False,
+               "a worktree that could not be read is not reported as work in flight")
+        expect(record.get("dirty") is None and record.get("commits_ahead") is None,
+               f"a failed read must not become a zero, got dirty {record.get('dirty')} "
+               f"and {record.get('commits_ahead')} ahead")
+        expect(bool(record.get("reason")),
+               "a worktree that could not be read must carry its own reason")
+        expect(blind["counts"]["unreadable"] == 1,
+               f"expected 1 unreadable worktree, got {blind['counts'].get('unreadable')}")
 
     if problems:
         print("local-sessions self-test FAILED:\n")
@@ -419,9 +650,17 @@ def summary_line(result: dict) -> str:
             for w in named
         ]
         detail = f" ({'; '.join(parts)})"
+    # Neither of these belongs on the line when it is zero; both belong on it
+    # when it is not, because each is something the owner has to be told rather
+    # than left to read as a clean tree.
+    trailing = ""
+    if counts.get("prunable"):
+        trailing += f" · {counts['prunable']} gone"
+    if counts.get("unreadable"):
+        trailing += f" · {counts['unreadable']} unreadable"
     return (
         f"Local: {counts['worktrees']} worktrees · "
-        f"{counts['in_flight']} in flight{detail} · {counts['stalled']} stalled"
+        f"{counts['in_flight']} in flight{detail} · {counts['stalled']} stalled{trailing}"
     )
 
 
