@@ -119,7 +119,11 @@ Before designing, changing, or planning Cabinet, read
 [`docs/superpowers/specs/2026-09-09-cabinet-company-design.md`](docs/superpowers/specs/2026-09-09-cabinet-company-design.md).
 It records the owner's confirmed company vision and authority boundaries, the
 proposed first operational batch, and its current verification status. Preserve
-that direction across sessions. The constraints below describe the shipped
+that direction across sessions. Implementation follows
+[`docs/superpowers/plans/2026-09-09-cabinet-ai-company.md`](docs/superpowers/plans/2026-09-09-cabinet-ai-company.md)
+and its linked contracts, tasks and evidence ledger. Existing notebook routing
+and advisory roles do not satisfy that plan's operational acceptance criteria.
+The constraints below describe the shipped
 design; replace them only through an explicit design change with a concrete
 enforcement mechanism.
 

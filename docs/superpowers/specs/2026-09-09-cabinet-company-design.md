@@ -2,9 +2,17 @@
 
 Recorded: 2026-09-09. Source: the owner's design conversation in this worktree.
 
-Status: owner-confirmed product requirements; proposed technical direction.
+Status: owner-confirmed product requirements; implementation planning requested
+for a different agent. Implementation is not authorized in this planning session.
 This document does not claim that the new runtime exists or has been tested.
-The next implementation batch is described below for review.
+The executable breakdown is in the
+[implementation master plan](../plans/2026-09-09-cabinet-ai-company.md).
+
+The owner explicitly rejected treating today's Cabinet as sufficient. The first
+usable core must include active communication without owner relay, accountable
+execution and recovery across sessions. Preserve the whole AI-company direction;
+do not relabel the current advisory behavior as completion or silently reduce the
+requirements to make a milestone easier to finish.
 
 ## Resume here
 
@@ -252,6 +260,14 @@ from owner consent. Source: [Claude Code agent teams](https://code.claude.com/do
 Superset documents workspace and agent lifecycle controls. Source:
 [Superset CLI reference](https://github.com/superset-sh/superset/blob/main/apps/docs/content/docs/cli/cli-reference.mdx).
 
-Next: review this proposed runtime and implementation batch; resolve the action
-enforcement and transport details in the implementation plan; implement and run
-the acceptance checks. The requirements above remain the target across sessions.
+Planning refinement: the linked plan specifies a bounded standard-library MCP
+service and SQLite event journal/projections, while retaining human-readable
+company records. Native messaging handles active communication; Superset handles
+worker lifecycle. It requires live compatibility/isolation probes before claiming
+these technical assumptions work, and provides explicit blocked states when they
+do not. Those probes must preserve the required outcome rather than downgrade it.
+
+Next: another agent receives implementation authorization, reads the plan and
+evidence ledger, and executes the first unfinished task. The requirements above
+remain the target across sessions. Brand/marketing activation can wait; core
+communication, execution ownership and continuity cannot.
