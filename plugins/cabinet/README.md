@@ -227,8 +227,31 @@ charter with a source against every line, and asks only about what genuinely
 cannot be found. Usually four things: brand direction, your risk posture,
 whether the drafted stage is still current, and consent for the deny block.
 
-It also says what it could **not** find. An absent privacy notice, or a
-repository with no required checks, is a finding rather than a blank.
+It reads the places where decisions get recorded, which are not the places
+where work does: **issues you closed as *not planned*** — a decision not to do
+something, with the reasoning, and invisible to anything reading only the open
+board — **merged `docs:` pull requests**, and **the comments on your tickets**,
+where the bodies are specifications and the comments are you arguing with
+yourself.
+
+It also says what it could **not** find, and, just as importantly, **what it
+did not read**:
+
+```
+Read: 20 documents, 3 epics, 67 open tickets, 2 rejected decisions,
+19 recorded decisions, 36 comments. Skipped: 101 implementation plans.
+Unclassified and not read: 12 — say the word and I will.
+```
+
+A charter's failure mode is not being wrong. It is being silently incomplete —
+it reads as finished whether or not anything was missed. A count you can
+challenge is the difference, because you are the only one who knows that the
+gap analysis buried in `apps/relay/docs` mattered.
+
+An absent privacy notice, or a repository with no required checks, is a finding
+rather than a blank. So is `.cabinet/` turning out to be gitignored: hire says
+what that costs — no history, no other worktree, nothing to restore from — and
+records your answer, so no later run asks you again as though it were new.
 
 ## What Cabinet does not do
 
@@ -263,13 +286,18 @@ happens when a note and the live board disagree.
 - **A GitHub MCP server**, registered as `github`, with tools named
   `mcp__github__*`. Roles read the board through it and hold no shell of their
   own. If it is missing, roles say so and stop rather than guessing.
-- **`gh` and `jq`**, for the board snapshot. Because roles hold no shell, a
-  role left to enumerate a board of any size pays a round trip per page and
-  takes minutes. The commands do it instead, in one pass, with
-  `scripts/board-snapshot` — four read-only calls, written to a temporary file
-  that every role in the run reads. Nothing in that script can change the
-  board, and it never writes outside the temp directory. Without `gh` the
-  commands say so and the roles fall back to their own tools: correct, slow.
+- **`gh` and `jq`**, for the two scripts. Because roles hold no shell, a role
+  left to enumerate a board of any size pays a round trip per page and takes
+  minutes; the commands do it instead, in one pass.
+  `scripts/board-snapshot` takes the board for the daily and weekly commands.
+  `scripts/charter-sources` gathers, for `/cabinet:hire`, the places where
+  decisions get recorded rather than where work does — issues closed as *not
+  planned*, merged `docs:` pull requests, comments on open tickets, and an
+  inventory of the documentation split into what a charter should read, skip,
+  or be asked about. Both are read-only, write only to a temporary file, and
+  cannot change the board or spend anything. Without `gh` the commands say so
+  and fall back: correct, slow, and in hire's case a thinner draft, which it
+  tells you.
 - **GitHub as the tracker.** Other forges are not supported yet. Swapping one
   in means changing the tool grant at the top of each role file and the four
   calls in `scripts/board-snapshot`; nothing else in the plugin knows what a

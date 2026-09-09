@@ -32,22 +32,64 @@ Check whether `.cabinet/` already exists. If it does, this is a re-run: go to
 ## 2. Read everything that already exists
 
 Read, and note what each fact came from — every charter line will carry its
-source:
+source.
 
-- `README`, `AGENTS.md`, `CLAUDE.md`, any documentation directory, any
-  architecture decision records.
-- The open board via `mcp__github__list_issues`, and the bodies of anything
-  that looks like an epic, a meta-ticket, or a launch/preconditions document.
-  These carry stated intent in the owner's own words and are the richest
-  source in the repository.
-- The label vocabulary actually in use, whether assignees are used at all,
-  branch naming, and whether any check is required.
-- Recent history via `mcp__github__list_commits`, for cadence and conventions.
+**Start with the two scripts, because the expensive mistake here is a silent
+one.** A charter drafted only from the open board and the top-level
+documentation comes out confidently missing things, and nothing about it looks
+wrong; the owner finds out weeks later, by noticing.
+
+```
+"${CLAUDE_PLUGIN_ROOT}"/scripts/board-snapshot   <owner/repo>
+"${CLAUDE_PLUGIN_ROOT}"/scripts/charter-sources  <owner/repo>
+```
+
+`charter-sources` prints `sources=` and, when there is any, `discussion=`.
+Between them they carry the places where decisions actually get recorded, and
+which a first draft otherwise never sees:
+
+- **`rejected`** — issues closed as *not planned*. A ticket closed that way is
+  a decision **not** to do something, with the reasoning usually in the body.
+  It is the rarest and most charter-relevant thing on a board, and reading only
+  open issues makes it invisible.
+- **`recorded_decisions`** — merged `docs:` pull requests. Somebody deciding
+  something and writing it down on purpose. Pricing, naming, positioning and
+  posture changes land here first, often before any document they produced.
+- **`discussion`** — comments on open tickets. The bodies are specifications;
+  the comments are the owner arguing with themselves, in their own words.
+- **`inventory`** — every tracked markdown file, split into what to read, what
+  to skip, and what matched neither.
+- **`cabinet_ignored`** — whether anything you are about to write would ever be
+  committed. Step 4 depends on this.
+
+Then read, from the snapshot and the sources rather than a call at a time:
+
+- Everything in `inventory.read_these`. That is the documentation, the
+  contribution rules and the architecture decision records.
+- **Everything in `inventory.unclassified`, or say why not.** These matched
+  neither filter, which means nobody has decided whether they matter — and a
+  product requirements document or a gap analysis living somewhere unexpected
+  is exactly what falls in here. Name them to the owner if you skip them.
+- `epics` from the board snapshot, and any meta-ticket or launch/preconditions
+  document. These carry stated intent in the owner's own words and are the
+  richest single source in the repository.
+- `open_issues` for the label vocabulary actually in use, whether assignees are
+  used at all, and the branch names in `branches`.
+- Recent history via `mcp__github__list_commits`, for cadence and conventions,
+  and whether any check is required.
 - Whatever project memory the harness exposes, read fresh, treated as one more
   source and never as authority.
 
+You may skip `inventory.skip_these_unless_asked` — implementation plans and
+specs record how something was built, which the code already answers. Say how
+many you skipped. Skipping in silence is the habit that produced the problem.
+
 Also note what is **absent** — no privacy notice, no licence, no required
 checks. An absence is a finding and counsel and QA will want it.
+
+If a script reports `gh` missing or unauthenticated, say so in one line and
+fall back to the MCP tools. The draft will be thinner; say that too, rather
+than presenting it as though it were not.
 
 ## 3. Draft the charter and present it for correction
 
@@ -108,12 +150,32 @@ queue, `.cabinet/money.md` with empty recurring and open tables, and
 `.cabinet/proposals.md` with an empty list and a one-line header saying it holds
 what the roles suggested that nobody asked for.
 
-**Check that `.cabinet/` will actually be committed.** Run
-`git check-ignore -q .cabinet/company.md`; if it exits 0, the path is ignored
-and every judgement written here would be lost on a fresh clone. Say so
-plainly, name the `.gitignore` rule responsible, and ask whether to add a
-negation for `.cabinet/` or leave the memory local. Do not edit `.gitignore`
-without an answer.
+**Check that `.cabinet/` will actually be committed, and record the answer.**
+`charter-sources` already ran the check; read `cabinet_ignored` rather than
+re-running it.
+
+If it is ignored, say plainly what that means, because "not committed"
+undersells it: nothing written there has any history, no other worktree on this
+machine can see it, and a single `rm` destroys every judgement in it with
+nothing to restore from. Name the exact `.gitignore` rule the script found.
+Then ask whether to add a negation for `.cabinet/` or leave the memory local,
+and **do not edit `.gitignore` without an answer.**
+
+**Write the answer into the charter either way**, under *Purchase and
+irreversibility controls*, dated, in the same shape as the deny blocks:
+
+```markdown
+- **Memory location: local only**, 2026-09-09, owner's choice. `.cabinet/` is
+  ignored by `.gitignore:84`. Nothing in it is committed, versioned or
+  recoverable, and no other worktree sees it. Re-asking this as though it were
+  new wastes a decision the owner already made.
+```
+
+This is the step that has actually been failing. The check gets run, the owner
+answers, and the answer exists nowhere afterwards — so the next run cannot tell
+a deliberate choice from an oversight, and the owner is asked again or, worse,
+not asked at all. An unrecorded answer is an unenforced claim, and rule six
+applies to this command as much as to anything it inspects.
 
 ## 5. Hire the roles this stage needs
 
@@ -173,9 +235,23 @@ Decisions first, one screen:
 1. **Needs a decision** — anything that blocked setup. Omit if nothing did.
 2. The charter, as written, one line per field
 3. Roles hired, and which were deliberately not hired at this stage
-4. Deny blocks: which of the two were installed, declined, or not applicable
-5. What you could not determine — say it plainly rather than leaving it implicit
-6. Next: run `/cabinet:standup`
+4. Deny blocks: which of the two were installed, declined, or not applicable,
+   and where the memory lives — committed, or local only
+5. **What you read, and what you did not.** One line, with counts:
+
+   ```
+   Read: 20 documents, 3 epics, 67 open tickets, 2 rejected decisions,
+   19 recorded decisions, 36 comments. Skipped: 101 implementation plans.
+   Unclassified and not read: 12 — say the word and I will.
+   ```
+
+   This is the receipt, and it is the point of the whole step. The charter's
+   failure mode is not being wrong, it is being silently incomplete: it reads
+   as finished whether or not anything was missed. A count the owner can
+   challenge turns an invisible omission into a visible one, and they are the
+   only person who knows that the gap analysis in `apps/relay/docs` mattered.
+6. What you could not determine — say it plainly rather than leaving it implicit
+7. Next: run `/cabinet:standup`
 
 Then say, in one line, that the charter is expected to change as the company
 does, and that `/cabinet:charter` is how — so the owner does not treat what was
@@ -185,6 +261,20 @@ just written as permanent.
 
 `/cabinet:hire` on an existing install is a **diff**, never a rewrite. Re-read
 the sources, compare against the current charter, and report only what moved.
+
+Run both scripts again. On a re-run the diff has two halves, and they fail
+differently:
+
+- **What is new since the charter was written** — a rejected ticket, a `docs:`
+  pull request, a comment. Compare against the charter's date and report what
+  arrived after it.
+- **What was always there and never read.** This is the half that matters on
+  the first re-run after this command's sources were widened, and it does not
+  announce itself: a source the charter never cited looks identical to a source
+  it considered and rejected. Check `rejected`, `recorded_decisions` and
+  `inventory.unclassified` against the charter's citations, and report anything
+  it has never referred to, however old. An eight-week-old decision the charter
+  has never mentioned is a finding, not history.
 
 Never touch a role's notebook — those hold judgement and this command has no
 business writing them.
