@@ -15,16 +15,37 @@ why and get an accountable answer.
 
 Do not narrate the steps. Produce the brief.
 
+## Resolve the memory before anything else
+
+```
+"${CLAUDE_PLUGIN_ROOT}"/scripts/memory-path <owner/repo>
+```
+
+Take `owner/repo` from `git remote get-url origin`. The script prints
+`memory=<path>`; everything written below as `<memory>/...` is a file in that
+directory, and **every role you dispatch is given that path in its prompt** —
+roles hold no shell and cannot derive it, so a role not told the path cannot
+read its own notebook.
+
+If `exists=false`, this project has no Cabinet memory yet: say so, suggest
+`/cabinet:hire`, and stop rather than improvising a picture without it.
+
+If the output carries a `legacy_in_repo=` line, an old in-repo `.cabinet/` is
+still sitting in the worktree from before the memory moved out. Say so in one
+line and point at `/cabinet:hire`, which is the command that moves it. Do not
+move it yourself: that directory is judgement, and relocating it is the
+owner's call to make once, not a side effect of running a daily command.
+
 ## 1. Read the memory first
 
-- `.cabinet/company.md`. Missing: say so, suggest `/cabinet:hire`, and stop —
+- `<memory>/company.md`. Missing: say so, suggest `/cabinet:hire`, and stop —
   do not improvise a picture without it.
 - `~/.cabinet/founder.md` if present.
-- `.cabinet/decisions.md` — every open item, with how long it has been open.
-- `.cabinet/money.md` — open purchases and their lead times.
-- Every `.cabinet/<role>.md` notebook that exists, for open findings, active
+- `<memory>/decisions.md` — every open item, with how long it has been open.
+- `<memory>/money.md` — open purchases and their lead times.
+- Every `<memory>/<role>.md` notebook that exists, for open findings, active
   holds, and anything with a named condition that may now have been met.
-- `.cabinet/proposals.md` — standing proposals, and how long each has gone
+- `<memory>/proposals.md` — standing proposals, and how long each has gone
   without an answer.
 
 Reading memory before deriving anything is the point of this command. A brief
@@ -75,7 +96,7 @@ correctly but slowly, and the owner should know which kind of run this was.
 **Then dispatch `cabinet:delivery-lead`, giving it both paths in the prompt**,
 and use its output for the frontier, what is taken, what is blocked, and any
 ordering constraint it found. A role that is not told the paths cannot use
-them. If the delivery lead was not hired — no `.cabinet/delivery-lead.md` —
+them. If the delivery lead was not hired — no `<memory>/delivery-lead.md` —
 say so, build the brief from the notebooks alone, and note that no board state
 was derived this run.
 
@@ -103,7 +124,7 @@ heading, dated, naming the role that sent it. These never reach the owner: the
 receiving role decides on its next run whether it matters.
 
 `## FOR charter` is the exception in destination only — it is a proposed
-charter amendment, and it goes into `.cabinet/proposals.md` marked as such, so
+charter amendment, and it goes into `<memory>/proposals.md` marked as such, so
 the owner sees it at review rather than having a role edit the charter.
 
 If two roles independently raised the same thing, say so once in the brief.
@@ -112,7 +133,7 @@ worth a line.
 
 ## 6. Handle proposals without spending the owner's attention
 
-Append new `## PROPOSALS` items to `.cabinet/proposals.md`, dated, with the
+Append new `## PROPOSALS` items to `<memory>/proposals.md`, dated, with the
 role that made them and their stated cost of not doing them.
 
 A proposal reaches the brief **only** when its author named the cost of not
@@ -149,14 +170,14 @@ attention, say the count and offer the rest — never stretch the list.
 Use Write or Edit:
 
 - New items from the roles' `## DECISIONS` sections go into
-  `.cabinet/decisions.md`, numbered, dated, with the role that raised them, and
+  `<memory>/decisions.md`, numbered, dated, with the role that raised them, and
   with the role's **prediction** of what the owner will decide kept alongside.
   The prediction is what `/cabinet:decide` scores later, and it is how a role
   learns the way this owner thinks.
   Numbers only ever go up: never renumber an open item and never reuse the
   number of a closed one. The owner refers to these by number, and a reused
   number silently answers the wrong question.
-- Anything from a `## MONEY` section goes into `.cabinet/money.md` under open,
+- Anything from a `## MONEY` section goes into `<memory>/money.md` under open,
   unless it is already there; update the days-open count instead of
   duplicating.
 - Each role's `## NOTEBOOK` content is appended to that role's own file,

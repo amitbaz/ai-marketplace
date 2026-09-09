@@ -26,8 +26,51 @@ If there is no GitHub remote, say plainly that Cabinet's roles read the board
 through GitHub tools today and that a different forge is not yet supported.
 Do not improvise a substitute.
 
-Check whether `.cabinet/` already exists. If it does, this is a re-run: go to
+Then resolve where this project's memory goes, and create it:
+
+```
+"${CLAUDE_PLUGIN_ROOT}"/scripts/memory-path <owner/repo> --create
+```
+
+Everything written below as `<memory>/...` is a file in the directory it
+prints, and every role you dispatch is given that path — roles hold no shell
+and cannot derive it.
+
+If `exists=true` was already the case before this run, this is a re-run: go to
 *Re-running* below instead of interviewing from scratch.
+
+### If there is an old `.cabinet/` in the repository
+
+The output carries a `legacy_in_repo=` line when the worktree still holds a
+`.cabinet/` directory from when the memory lived in the repository. Offer to
+move it, and move nothing before the owner answers.
+
+Say why it moved, in one line, because it is about their working loop and not
+about tidiness: decisions get made in one session and acted on in another
+worktree, and memory inside the repository only crosses that gap through a
+commit and a push — a gitignored one never crosses at all.
+
+List what is there before touching it: each file, its size, and what it holds
+in a few words. This is judgement accumulated over weeks, and the owner should
+see it named rather than described as "your Cabinet files".
+
+On a yes:
+
+- Move every file across with `mv`, into the `<memory>` directory. Do not
+  merge, rewrite, renumber or reformat anything. Decision numbers especially:
+  the owner refers to them by number and a renumbering silently answers the
+  wrong question.
+- If a file of the same name already exists at the destination, **stop and ask**
+  rather than choosing. Two notebooks for one role is a situation the owner
+  needs to see, not one for this command to resolve.
+- Remove the now-empty `.cabinet/` from the worktree, and say that you did.
+- If a `.gitignore` rule was covering it, say that the rule is now dead and
+  offer to remove it — the memory is not there for it to ignore. Do not edit
+  `.gitignore` without an answer.
+- Record the move in the charter's amendment log, dated, naming both paths.
+
+On a no, leave everything alone and say plainly that Cabinet will read the new
+location and will not see the old one, so the two will drift apart.
 
 ## 2. Read everything that already exists
 
@@ -59,8 +102,6 @@ which a first draft otherwise never sees:
   the comments are the owner arguing with themselves, in their own words.
 - **`inventory`** — every tracked markdown file, split into what to read, what
   to skip, and what matched neither.
-- **`cabinet_ignored`** — whether anything you are about to write would ever be
-  committed. Step 4 depends on this.
 
 Then read, from the snapshot and the sources rather than a call at a time:
 
@@ -119,7 +160,7 @@ never compromise, how they want to be escalated to, and the money invariant as
 it applies to them. If this file already exists, read it and change nothing
 without asking: it was written for all their projects, not this one.
 
-**`.cabinet/company.md`** — about this project:
+**`<memory>/company.md`** — about this project:
 
 - What it is, in one line, to someone who would pay for it
 - **Stage**, and what would end it — this is the most load-bearing line in the
@@ -145,37 +186,24 @@ an **amendment log** — empty at first — and say in the file that superseded
 lines stay, marked superseded, rather than being overwritten. Amendments are
 made with `/cabinet:charter`; roles propose them and only the owner makes them.
 
-Then create the empty scaffolding: `.cabinet/decisions.md` with an empty open
-queue, `.cabinet/money.md` with empty recurring and open tables, and
-`.cabinet/proposals.md` with an empty list and a one-line header saying it holds
+Then create the empty scaffolding: `<memory>/decisions.md` with an empty open
+queue, `<memory>/money.md` with empty recurring and open tables, and
+`<memory>/proposals.md` with an empty list and a one-line header saying it holds
 what the roles suggested that nobody asked for.
 
-**Check that `.cabinet/` will actually be committed, and record the answer.**
-`charter-sources` already ran the check; read `cabinet_ignored` rather than
-re-running it.
+**Say what this memory is not.** One line, once, at setup, so the owner knows
+what they have rather than assuming the properties a repository would have
+given it:
 
-If it is ignored, say plainly what that means, because "not committed"
-undersells it: nothing written there has any history, no other worktree on this
-machine can see it, and a single `rm` destroys every judgement in it with
-nothing to restore from. Name the exact `.gitignore` rule the script found.
-Then ask whether to add a negation for `.cabinet/` or leave the memory local,
-and **do not edit `.gitignore` without an answer.**
+> Cabinet's memory for this project is at `<memory>`. It is outside every
+> worktree, so every session on this machine reads it with nothing to push —
+> and it is a plain directory: no history, no versioning, nothing to restore
+> from if it is deleted, and no other machine sees it.
 
-**Write the answer into the charter either way**, under *Purchase and
-irreversibility controls*, dated, in the same shape as the deny blocks:
-
-```markdown
-- **Memory location: local only**, 2026-09-09, owner's choice. `.cabinet/` is
-  ignored by `.gitignore:84`. Nothing in it is committed, versioned or
-  recoverable, and no other worktree sees it. Re-asking this as though it were
-  new wastes a decision the owner already made.
-```
-
-This is the step that has actually been failing. The check gets run, the owner
-answers, and the answer exists nowhere afterwards — so the next run cannot tell
-a deliberate choice from an oversight, and the owner is asked again or, worse,
-not asked at all. An unrecorded answer is an unenforced claim, and rule six
-applies to this command as much as to anything it inspects.
+That is a real limitation and it is stated rather than papered over. Do not
+offer to fix it here: what replaces those properties is an open design
+question, and inventing an answer during setup is how a decision gets made by
+accident.
 
 ## 5. Hire the roles this stage needs
 
@@ -186,7 +214,7 @@ all of them on, explain each in one line, and let the owner change it.
 A role is hired by having a notebook; firing one is deleting its file. Say
 that plainly — it is what makes this a company rather than a fixed menu.
 
-Create an empty notebook for each hired role, `.cabinet/<role>.md`, with a
+Create an empty notebook for each hired role, `<memory>/<role>.md`, with a
 one-line header naming the role and the date it was hired.
 
 ## 6. Offer the purchase deny block
@@ -236,7 +264,7 @@ Decisions first, one screen:
 2. The charter, as written, one line per field
 3. Roles hired, and which were deliberately not hired at this stage
 4. Deny blocks: which of the two were installed, declined, or not applicable,
-   and where the memory lives — committed, or local only
+   and where the memory lives, said as a path
 5. **What you read, and what you did not.** One line, with counts:
 
    ```

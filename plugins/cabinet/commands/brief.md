@@ -16,9 +16,30 @@ If a section here would restate the ticket, drop the section.
 
 `$ARGUMENTS` is the ticket number.
 
+## Resolve the memory before anything else
+
+```
+"${CLAUDE_PLUGIN_ROOT}"/scripts/memory-path <owner/repo>
+```
+
+Take `owner/repo` from `git remote get-url origin`. The script prints
+`memory=<path>`; everything written below as `<memory>/...` is a file in that
+directory, and **every role you dispatch is given that path in its prompt** —
+roles hold no shell and cannot derive it, so a role not told the path cannot
+read its own notebook.
+
+If `exists=false`, this project has no Cabinet memory yet: say so, suggest
+`/cabinet:hire`, and stop rather than improvising a picture without it.
+
+If the output carries a `legacy_in_repo=` line, an old in-repo `.cabinet/` is
+still sitting in the worktree from before the memory moved out. Say so in one
+line and point at `/cabinet:hire`, which is the command that moves it. Do not
+move it yourself: that directory is judgement, and relocating it is the
+owner's call to make once, not a side effect of running a daily command.
+
 ## 1. Read
 
-- `.cabinet/company.md` for what must never be compromised, the stage, and the
+- `<memory>/company.md` for what must never be compromised, the stage, and the
   conventions. `~/.cabinet/founder.md` if present.
 - The ticket itself.
 - Every notebook, for anything already recorded about this ticket or the area

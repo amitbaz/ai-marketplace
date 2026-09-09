@@ -8,14 +8,16 @@ cannot read in a text editor with the plugin uninstalled.
 ## Two layers, and why
 
 ```
-~/.cabinet/founder.md          about the person — not committed
-.cabinet/                      about this project — committed
-  company.md                  the charter, and its amendment log
-  decisions.md                the open queue and its history
-  money.md                    the ledger
-  proposals.md                what the roles suggested that nobody asked for
-  <role>.md                   one notebook per hired role, plus that role's
-                              inbound notes and calibration record
+~/.cabinet/founder.md                    about the person
+~/.cabinet/repos/<owner>-<repo>/         about one project
+  company.md                            the charter, and its amendment log
+  decisions.md                          the open queue and its history
+  money.md                              the ledger
+  proposals.md                          what the roles suggested that nobody
+                                        asked for
+  <role>.md                             one notebook per hired role, plus that
+                                        role's inbound notes and calibration
+                                        record
 ```
 
 `founder.md` holds what is true across every project the owner runs: how they
@@ -23,13 +25,36 @@ work, their risk posture, what they will never compromise, and that they are
 the only one who spends money. Written once. The second repository they set up
 asks almost nothing, because only the project half is new.
 
-`.cabinet/` holds this project. It is committed on purpose — judgement should
-survive a fresh clone, be diffable, and be readable by a person who does not
-have this plugin installed.
+`repos/<owner>-<repo>/` holds one project. Under `repos/` so it cannot collide
+with `founder.md` or anything else that lands at that root later.
 
-Note the location. An earlier design put these under `.claude/`, which many
-repositories ignore wholesale, so the memory would never have been committed
-at all. If your `.gitignore` covers `.cabinet/`, the plugin will tell you.
+**Neither is inside the repository, and that is the point.** Decisions get made
+in one session and acted on in a different worktree. Memory kept in the
+repository only crosses that gap through a commit and a push, so every decision
+cost a round trip before anything could act on it — and a `.cabinet/` that had
+been gitignored, which is what happened in practice, never crossed at all.
+Outside the worktree, every session on the machine reads the same files
+immediately, with nothing to push.
+
+**A role is told this path; it cannot find it.** Roles hold no shell, so they
+can neither expand `~` nor derive the slug, and they cannot read the charter to
+learn the location because the charter is the file at the end of the path. The
+dispatching command resolves it with `scripts/memory-path` and passes
+`memory=<path>` in the prompt, exactly as it passes `board=`.
+
+## What moving it gave up
+
+Stated rather than quietly dropped, because this document used to claim the
+opposite. Memory in the repository was **committed, diffable, readable without
+this plugin installed, and survived a fresh clone.** Outside it, none of those
+hold: `~/.cabinet/` is a plain directory with no history, nothing to restore
+from after a deletion, and no visibility from any other machine.
+
+For one person on one machine that costs nothing today, which is why the move
+was worth making. A teammate, or a second machine, starts blank. What should
+replace those four properties is an open design question that has been
+deliberately deferred rather than answered — so nothing here claims a
+durability that does not exist. Rule six applies to this file first.
 
 ## The files that are not memory
 
@@ -51,11 +76,11 @@ bytes and only ordering work reads them.
 
 `scripts/charter-sources` is for `/cabinet:hire`, and gathers the places where
 decisions actually get recorded rather than where work does: issues closed as
-*not planned*, merged `docs:` pull requests, comments on open tickets, an
-inventory of every tracked markdown file split into read / skip / neither, and
-whether `.cabinet/` is ignored by git. Hire drafted charters from the open
-board and the top-level documentation alone for as long as it existed, which
-came out confidently incomplete and looked finished either way.
+*not planned*, merged `docs:` pull requests, comments on open tickets, and an
+inventory of every tracked markdown file split into read, skip, and
+matched neither. Hire drafted charters from the open board and the top-level
+documentation alone for as long as it existed, which came out confidently
+incomplete and looked finished either way.
 
 All four are the opposite of a notebook and are treated as such. They are
 derivable state, so nothing in them is ever copied into one; they live outside

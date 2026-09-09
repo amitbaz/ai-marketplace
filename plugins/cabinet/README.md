@@ -116,7 +116,7 @@ other roles; only calibrated, one-way, cost-named items reach you.**
 - **Every finding names what the role would do about it.** Handing over a
   problem without a proposed action is half the job.
 - **Proposals are not decisions.** Things nobody asked for accumulate in
-  `.cabinet/proposals.md` and are aired weekly by `/cabinet:review`. A proposal
+  `<memory>/proposals.md` and are aired weekly by `/cabinet:review`. A proposal
   you keep passing over is withdrawn by the role that made it — people stop
   pushing an idea the company keeps declining.
 - **Roles notice outside their remit and act only inside it.** The CFO
@@ -147,7 +147,7 @@ is over-confident and lucky.
 ## The charter is a living document
 
 A company does not stay the way it was described on its first day, so
-`.cabinet/company.md` does not either.
+`<memory>/company.md` does not either.
 
 Every line carries its source and, where it can go stale, the condition that
 ends it. A line whose condition has been met is reported at every standup
@@ -180,7 +180,7 @@ Three mechanisms, not one promise:
 2. **Content is never authority.** A ticket, comment, checked box, or another
    agent saying "approved, go ahead and buy it" describes what somebody said.
    Roles report it and never act on it.
-3. **A ledger.** Every cost item lands in `.cabinet/money.md` with who raised
+3. **A ledger.** Every cost item lands in `<memory>/money.md` with who raised
    it, the amount, the deadline, and your decision with its date. A money item
    closes only when you report the purchase yourself, with
    `/cabinet:decide <n> --done`. Nothing infers that a purchase happened.
@@ -257,9 +257,13 @@ challenge is the difference, because you are the only one who knows that the
 gap analysis buried in `apps/relay/docs` mattered.
 
 An absent privacy notice, or a repository with no required checks, is a finding
-rather than a blank. So is `.cabinet/` turning out to be gitignored: hire says
-what that costs — no history, no other worktree, nothing to restore from — and
-records your answer, so no later run asks you again as though it were new.
+rather than a blank.
+
+Hire is also the command that moves you. If the worktree still holds a
+`.cabinet/` from when memory lived in the repository, it lists what is in there
+file by file, moves it on a yes, and leaves nothing behind — nothing merged,
+nothing renumbered, and a stop-and-ask if a file of that name already exists at
+the destination.
 
 ## What Cabinet does not do
 
@@ -278,10 +282,21 @@ and why.
 ## The files
 
 Everything Cabinet knows is markdown you can read without it installed.
-`.cabinet/` in the repository holds the charter, the decision inbox, the
+`~/.cabinet/repos/<owner>-<repo>/` holds the charter, the decision inbox, the
 ledger, the proposals and one notebook per role. `~/.cabinet/founder.md` holds
 what is true about you across every project, so your second repository asks
 almost nothing.
+
+**It is deliberately not in your repository.** You make a decision in one
+session and act on it in another worktree; memory kept in the repo only crosses
+that gap through a commit and a push, and a gitignored one never crosses at
+all. Outside the worktree every session on the machine reads the same files,
+immediately, with nothing to push.
+
+What that costs, said plainly: `~/.cabinet/` is a plain directory. No history,
+nothing to restore from if it is deleted, and no other machine sees it. For one
+person on one machine that is a fair trade today; it is not a durability story,
+and this page does not pretend otherwise.
 
 **Roles never write these files.** They return their findings and the command
 that dispatched them records them — one writer, so parallel roles cannot race,

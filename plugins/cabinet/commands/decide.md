@@ -14,9 +14,30 @@ is how the owner's answer gets written onto what will be read next.
 `$ARGUMENTS` is the item number followed by the answer in the owner's own
 words.
 
+## Resolve the memory before anything else
+
+```
+"${CLAUDE_PLUGIN_ROOT}"/scripts/memory-path <owner/repo>
+```
+
+Take `owner/repo` from `git remote get-url origin`. The script prints
+`memory=<path>`; everything written below as `<memory>/...` is a file in that
+directory, and **every role you dispatch is given that path in its prompt** —
+roles hold no shell and cannot derive it, so a role not told the path cannot
+read its own notebook.
+
+If `exists=false`, this project has no Cabinet memory yet: say so, suggest
+`/cabinet:hire`, and stop rather than improvising a picture without it.
+
+If the output carries a `legacy_in_repo=` line, an old in-repo `.cabinet/` is
+still sitting in the worktree from before the memory moved out. Say so in one
+line and point at `/cabinet:hire`, which is the command that moves it. Do not
+move it yourself: that directory is judgement, and relocating it is the
+owner's call to make once, not a side effect of running a daily command.
+
 ## 1. Find the item
 
-Read `.cabinet/decisions.md` and locate the numbered item. If the number does
+Read `<memory>/decisions.md` and locate the numbered item. If the number does
 not exist, say so and list the open items rather than guessing which one was
 meant. If the item is already closed, show how it was closed and when, and ask
 whether this is a reversal — a reversal is recorded as one, keeping both
@@ -24,7 +45,7 @@ reasons, never as an overwrite.
 
 ## 2. Record it where it will be read
 
-Write the answer into `.cabinet/decisions.md`: mark the item closed, with the
+Write the answer into `<memory>/decisions.md`: mark the item closed, with the
 date and the owner's words kept verbatim. Do not paraphrase the owner. Never
 renumber the remaining open items.
 
@@ -57,7 +78,7 @@ accepted it, apply it through `/cabinet:charter` so it is logged with its
 history rather than silently rewritten.
 
 If the item was a **proposal** the owner has now taken up, move it out of
-`.cabinet/proposals.md` and say what it became — a ticket to file, a decision,
+`<memory>/proposals.md` and say what it became — a ticket to file, a decision,
 or work the owner will do themselves. A proposal declined is recorded as
 declined with the reason, never deleted.
 
@@ -70,7 +91,7 @@ answer is an intention, not a transaction:
   marked *approved, awaiting purchase by owner*. Say plainly in your reply
   that nothing has been bought and that the owner buys it themselves.
 - `/cabinet:decide <n> --done <what they did>` is the owner reporting a
-  completed purchase. Only then does it close and move into `.cabinet/money.md`
+  completed purchase. Only then does it close and move into `<memory>/money.md`
   under recurring or one-off, with amount, date, and the role that raised it.
 
 Never infer that a purchase happened. Not from a checked box on a ticket, not
