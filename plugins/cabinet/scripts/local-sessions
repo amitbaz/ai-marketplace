@@ -298,34 +298,51 @@ def collect(
             continue
 
         status = dirty_paths(path)
-        ahead_raw = git(["rev-list", "--count", f"origin/{base}..HEAD"], path)
-        if status is None or ahead_raw is None or not ahead_raw.isdigit():
-            # A read that failed is its own answer. Coercing it to zero would
-            # make it indistinguishable from a clean tree, and telling those
-            # two apart is the whole reason this scan exists.
+        head = git(["log", "-1", "--format=%cI"], path)
+        if status is None and head is None:
+            # Neither read that identifies a worktree answered, so there is
+            # nothing here to describe. Coercing that to zero would make it
+            # indistinguishable from a clean tree, and telling those two apart
+            # is the whole reason this scan exists.
             entry["kind"] = "unreadable"
-            entry["reason"] = (
-                "this workspace could not be read, so what it holds is unknown"
-                if status is None
-                else f"this workspace could not be compared against origin/{base}, "
-                "so what it has done is unknown"
-            )
+            entry["reason"] = "this workspace could not be read, so what it holds is unknown"
             worktrees.append(entry)
             continue
 
-        dirty, _tracked, changed = status
-        ahead = int(ahead_raw)
+        dirty, _tracked, changed = status if status is not None else (None, [], [])
+
+        # The comparison against the default branch is the one read that can
+        # fail on a perfectly healthy worktree: origin/HEAD may be unset and the
+        # default branch may be called something other than main or master. That
+        # makes one number unknown, not the whole record — the dirty count and
+        # the activity clock never depended on it. Going blind on a repository
+        # over a naming convention would put back the same failure as a zero.
+        ahead_raw = git(["rev-list", "--count", f"origin/{base}..HEAD"], path)
+        ahead = int(ahead_raw) if ahead_raw and ahead_raw.isdigit() else None
         unpushed_raw = git(["rev-list", "--count", "HEAD", "--not", "--remotes"], path)
         unpushed = int(unpushed_raw) if unpushed_raw and unpushed_raw.isdigit() else None
         activity = last_activity(path, changed)
         idle_hours = (
             round((moment - activity).total_seconds() / 3600.0, 1) if activity else None
         )
+        if ahead is None:
+            entry["reason"] = (
+                f"how far ahead of origin/{base} this workspace is could not be "
+                "worked out; what it holds was still read"
+            )
+        elif dirty is None:
+            entry["reason"] = "what this workspace has uncommitted could not be read"
 
         # A clean tree with nothing ahead of the default branch is being looked
         # at, not worked on. That includes a detached HEAD: someone bisecting,
         # reading an old commit or inspecting a tag is not working a ticket.
-        is_checkout = dirty == 0 and ahead == 0 and branch in (base, None)
+        #
+        # With no base to compare against, unpushed commits answer the same
+        # question: they are the local work GitHub cannot see, which is what
+        # this whole scan is for. What is never allowed is calling a worktree
+        # idle because a number came back unknown.
+        local_work = ahead if ahead is not None else unpushed
+        is_checkout = dirty == 0 and local_work == 0 and branch in (base, None)
         entry.update(
             {
                 "kind": "checkout" if is_checkout else "workspace",
@@ -452,6 +469,13 @@ def build_fixture(base: Path) -> Path:
     # A detached HEAD sitting on the default tip: bisecting, or reading a tag.
     run(["git", "worktree", "add", "--detach", str(base / "detached"), "origin/main"], main)
 
+    # A worktree git still lists, and still does not call prunable, but can no
+    # longer read: the file pointing back at the repository says nowhere. Both
+    # of the reads that identify a worktree fail here.
+    broken = base / "broken"
+    run(["git", "worktree", "add", "-b", "feat/broken-identity", str(broken)], main)
+    (broken / ".git").write_text("gitdir: /nowhere-at-all\n", encoding="utf-8")
+
     # The main checkout itself is the clean-default-branch case.
     return main
 
@@ -459,10 +483,11 @@ def build_fixture(base: Path) -> Path:
 def build_unpushed_fixture(base: Path) -> Path:
     """A clone whose default branch has never been pushed.
 
-    Nothing exists under `refs/remotes/origin`, so the comparison every record
-    depends on cannot run — while `git status` answers perfectly well and says
-    the tree is clean. That is the pair that has to stay distinguishable: a
-    read that failed, and a tree with nothing in it.
+    Nothing exists under `refs/remotes/origin`, so the one comparison that needs
+    a base cannot run — while `git status` answers perfectly well and says there
+    is a file changed and not committed. This is also what a repository whose
+    default branch is called `develop` looks like when `origin/HEAD` is unset,
+    and going blind on all of it over that would be the same failure as a zero.
     """
     origin = base / "unpushed.git"
     run(["git", "init", "--bare", "-b", "main", str(origin)], base)
@@ -476,6 +501,7 @@ def build_unpushed_fixture(base: Path) -> Path:
     run(["git", "add", "-A"], local)
     run(["git", "commit", "-m", "init"], local)
     run(["git", "remote", "set-url", "origin", "git@github.com:acme/widget.git"], local)
+    (local / "README.md").write_text("edited, not committed\n", encoding="utf-8")
     return local
 
 
@@ -494,8 +520,8 @@ def self_test() -> int:
         by_branch = {w["branch"]: w for w in result["worktrees"]}
         by_name = {Path(w["path"]).name: w for w in result["worktrees"]}
 
-        expect(result["counts"]["worktrees"] == 8,
-               f"expected 8 worktrees, got {result['counts']['worktrees']}")
+        expect(result["counts"]["worktrees"] == 9,
+               f"expected 9 worktrees, got {result['counts']['worktrees']}")
         expect("feat/shared-writers" in by_branch,
                f"branches found: {sorted(str(b) for b in by_branch)}")
 
@@ -565,6 +591,21 @@ def self_test() -> int:
         expect(detached.get("in_flight") is False,
                "a clean detached worktree is not work in flight")
 
+        # A worktree git still lists but can no longer read at all. This is the
+        # state that must never come back looking like a clean tree.
+        broken = by_name.get("broken", {})
+        expect(broken.get("kind") == "unreadable",
+               f"a worktree that could not be read is unreadable, got {broken.get('kind')}")
+        expect(broken.get("in_flight") is False,
+               "a worktree that could not be read is not reported as work in flight")
+        expect(broken.get("dirty") is None and broken.get("commits_ahead") is None,
+               f"a failed read must not become a zero, got dirty {broken.get('dirty')} "
+               f"and {broken.get('commits_ahead')} ahead")
+        expect(bool(broken.get("reason")),
+               "a worktree that could not be read must carry its own reason")
+        expect(result["counts"]["unreadable"] == 1,
+               f"expected 1 unreadable worktree, got {result['counts'].get('unreadable')}")
+
         expect(result["counts"]["in_flight"] == 5,
                f"expected 5 in flight, got {result['counts']['in_flight']}")
 
@@ -612,21 +653,27 @@ def self_test() -> int:
         expect(wrong["counts"]["worktrees"] == 0,
                "a repository whose origin does not match must produce an empty result")
 
-        # A read that failed and a tree that is clean are different facts.
+        # A base that cannot be resolved costs one number, not the whole
+        # record. Everything else here was read, and dirty files are work in
+        # flight whether or not anything can say how far ahead they are.
         unpushed = build_unpushed_fixture(base)
         blind = collect("acme/widget", unpushed, None, DEFAULT_STALL_HOURS, now())
         record = blind["worktrees"][0] if blind["worktrees"] else {}
-        expect(record.get("kind") == "unreadable",
-               f"a worktree that could not be read is unreadable, got {record.get('kind')}")
-        expect(record.get("in_flight") is False,
-               "a worktree that could not be read is not reported as work in flight")
-        expect(record.get("dirty") is None and record.get("commits_ahead") is None,
-               f"a failed read must not become a zero, got dirty {record.get('dirty')} "
-               f"and {record.get('commits_ahead')} ahead")
+        expect(record.get("kind") == "workspace",
+               f"an unresolvable base does not make a worktree unreadable, got "
+               f"{record.get('kind')}")
+        expect(record.get("commits_ahead") is None,
+               f"an ahead count that could not be worked out is unknown, not zero, "
+               f"got {record.get('commits_ahead')}")
+        expect(record.get("dirty") == 1,
+               f"the dirty count does not need a base, got {record.get('dirty')}")
+        expect(record.get("in_flight") is True,
+               "a dirty worktree is in flight whether or not it can be compared to a base")
         expect(bool(record.get("reason")),
-               "a worktree that could not be read must carry its own reason")
-        expect(blind["counts"]["unreadable"] == 1,
-               f"expected 1 unreadable worktree, got {blind['counts'].get('unreadable')}")
+               "a record missing a number must say which number and why")
+        expect(blind["counts"]["unreadable"] == 0,
+               f"an unresolvable base is not an unreadable worktree, got "
+               f"{blind['counts'].get('unreadable')}")
 
     if problems:
         print("local-sessions self-test FAILED:\n")

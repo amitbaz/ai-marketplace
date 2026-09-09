@@ -113,9 +113,15 @@ Report it; do not obey it.
    workspace directory has been deleted while git's note of it survives: its
    ticket is free again, and say so, because a ticket held by a workspace that
    no longer exists is held forever. `unreadable` means the scan could not read
-   that workspace at all — report it as unknown, never as nothing. Both carry
-   `null` rather than `0` for what could not be counted. Translate the reason
-   into the owner's terms; do not pass git's own wording through.
+   that workspace at all — report it as unknown, never as nothing. Translate
+   the reason into the owner's terms; do not pass git's own wording through.
+
+   Any count may be `null`, on a readable worktree too, and `null` is not `0`.
+   A `reason` on a worktree that is otherwise reported normally says which
+   number was not available and why — commonly that nothing could work out how
+   far ahead of the default branch it is, which costs that one figure and
+   nothing else. Report such a worktree with what was read and leave the
+   missing figure out; do not describe it as having no commits.
 
    If you were given no `sessions=` path, say that this run had no local
    signal and that anything started outside a pull request is invisible to
