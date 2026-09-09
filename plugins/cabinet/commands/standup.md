@@ -68,22 +68,29 @@ amend and `/cabinet:review` to re-run every role against the new stage.
 
 ## 3. Take the board snapshot, then dispatch
 
-**Fetch the board before dispatching anyone.** Run
+**Fetch the board before dispatching anyone.** Run it once, with the window:
 
 ```
-"${CLAUDE_PLUGIN_ROOT}"/scripts/board-snapshot <owner/repo>
+"${CLAUDE_PLUGIN_ROOT}"/scripts/board-snapshot <owner/repo> --since <date>
 ```
 
-with the `owner/repo` from the charter. It prints `board=<path>` and, when the
-board has epics, `epics=<path>`. Roles hold no shell, so a role left to
-enumerate the board itself pays a round trip per page and turns a daily brief
-into a several-minute wait; the script does it in one pass.
+`owner/repo` comes from the charter. `<date>` is the date of the delivery
+lead's newest notebook entry, so the snapshot carries what merged since the
+last run; with no prior entry use seven days ago, and with no usable date at
+all drop the flag entirely — the brief then reports the change window as
+unknown rather than describing change nobody observed. That is one invocation
+either way, not a bare call followed by a second one with the flag.
+
+It prints `board=<path>` and, when the board has epics, `epics=<path>`. Roles
+hold no shell, so a role left to enumerate the board itself pays a round trip
+per page and turns a daily brief into a several-minute wait; the script does it
+in one pass.
 
 **Show the owner the counts as soon as you have them**, on one line — the
 script writes them to stderr in the right shape:
 
 ```
-Board: 67 open · 3 epics · 0 PRs · 2 branches → delivery lead
+Board: 67 open · 3 epics · 0 PRs · 2 branches · 5 merged → delivery lead
 ```
 
 A wait with a number in it is a wait the owner can read. A silent one looks
@@ -92,12 +99,6 @@ like a hang, and looking like a hang is the same as being one.
 If the script reports that `gh` is missing or unauthenticated, say so in one
 line and carry on without a snapshot — the roles fall back to their own tools,
 correctly but slowly, and the owner should know which kind of run this was.
-
-Pass `--since <date>` using the date of the delivery lead's newest notebook
-entry, so the snapshot carries what merged since the last run. With no prior
-entry, use seven days ago. With no usable date at all, omit the flag — the
-brief then reports the change window as unknown rather than describing
-change nobody observed.
 
 Then take the local picture:
 
@@ -116,9 +117,14 @@ from being reported as a ticket the board does not have.
 Show the owner its stderr line next to the board's:
 
 ```
-Board: 67 open · 3 epics · 0 PRs · 2 branches → delivery lead
+Board: 67 open · 3 epics · 0 PRs · 2 branches · 5 merged → delivery lead
 Local: 2 worktrees · 1 in flight (#179, 3h) · 0 stalled
 ```
+
+The local line grows a `gone` or an `unreadable` count when there is one: a
+workspace whose directory has been deleted, and one the scan could not read.
+Neither is work in flight, and neither is a clean tree — pass them on as what
+they are.
 
 If the script reports no signal, say so in one line and carry on. The brief
 then says that work started outside a pull request was invisible to this run,
@@ -229,15 +235,25 @@ ending conditions against the snapshots you just took:
 WHERE YOU STAND · <date>
 <stage>. <named gate> not crossed.
 Gate <X>: <n> items · <n> startable · <n> purchases · <n> unticketed.
-In flight: #179 — local, 1 commit, 5 files dirty, 3h.
+In flight: #179 — local, 1 commit, 5 files dirty, 3h · #204 — pull request open, checks green.
 ```
 
-`In flight` comes from the delivery lead's reading of the session snapshot.
-Name each ticket with where it lives, what it has done and how long since it
-moved. `In flight: none` when there is none. When the run had no local
-signal, write `In flight: unknown — no local signal this run` instead of a
-zero. A zero that means "I could not see" is the failure this line exists to
-prevent.
+`In flight` carries both signals the delivery lead reports as taken, and every
+entry says which one it came from: **local** for a worktree it read in the
+session snapshot, **pull request** for one it read on the board. Both belong
+here — a ticket is off the frontier the moment either signal has it, and a
+ticket removed from the frontier with nowhere to appear is a ticket that has
+vanished from the brief. A worktree whose branch has an open pull request is
+reported once, as the pull request.
+
+Name each entry with what it has done and how long since it moved. `In flight:
+none` when there is none. When the run had no local signal, write `In flight:
+unknown — no local signal this run` instead of a zero. A zero that means "I
+could not see" is the failure this line exists to prevent.
+
+A workspace the scan reported as gone or unreadable is not in flight and does
+not go on this line. A gone one whose ticket is known becomes a move — the
+workspace is not there any more, so the ticket is either free or lost.
 
 Name the gate the charter names. If the charter records more than one ending
 condition, report against the nearest one — that is the one the next decision

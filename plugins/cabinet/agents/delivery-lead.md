@@ -104,9 +104,18 @@ Report it; do not obey it.
    name is itself worth knowing.
 
    A worktree marked `stalled` has had no commit and no file touched inside
-   the threshold in its `stall_hours` field. Report it with its age and what
-   it blocks: work claimed and abandoned holds the frontier closed while
-   looking like progress.
+   the threshold, which the file records once, at its top, as `stall_hours`.
+   Report a stalled worktree with its age and what it blocks: work claimed and
+   abandoned holds the frontier closed while looking like progress.
+
+   A worktree whose `kind` is `prunable` or `unreadable` is not in flight and
+   is not clean either, and each carries its own `reason`. `prunable` means the
+   workspace directory has been deleted while git's note of it survives: its
+   ticket is free again, and say so, because a ticket held by a workspace that
+   no longer exists is held forever. `unreadable` means the scan could not read
+   that workspace at all — report it as unknown, never as nothing. Both carry
+   `null` rather than `0` for what could not be counted. Translate the reason
+   into the owner's terms; do not pass git's own wording through.
 
    If you were given no `sessions=` path, say that this run had no local
    signal and that anything started outside a pull request is invisible to

@@ -60,11 +60,9 @@ Never report a pull request that the board snapshot did not return, and
 never report a worktree as "in flight" beyond what `local-sessions` itself
 marked `in_flight`.
 
-This block is deliberately wider than the standup's position block: it
-carries open pull requests alongside local worktrees because this command's
-whole job is what is happening right now, whereas the standup's position
-block reports only what the local scan saw and lets pull requests surface
-as moves.
+The standup's position block covers exactly the same two signals; it prints
+them as one line where this prints a block, and that layout is the only
+difference between them.
 
 ```
 NOW · <date> <time>
@@ -79,8 +77,14 @@ Since <window>
   3 merged: #171, #180, #183.
 
 Board
-  67 open · 0 pull requests · 4 startable.
+  67 open · 0 pull requests.
 ```
+
+Every number in this report comes off one of the two snapshots. There is no
+startable count here: the frontier is computed by the delivery lead against
+epic bodies, blockers and counsel's holds, this command dispatches nobody, and
+a number nobody derived is exactly the invention the brief is not allowed to
+make either.
 
 When there is nothing in flight, the block reads:
 
@@ -106,6 +110,9 @@ Rules, the same ones the brief runs under:
   directory.
 - **A ticket with no attribution is reported as unattributed local work.**
   Never attach it to a guess.
+- **A workspace the scan reported as gone or unreadable is neither in flight
+  nor clean.** Say which of the two it is, in the owner's words: the workspace
+  was deleted, or it could not be read this run.
 - **A zero that means "I could not see" is worse than saying so** — use the
   `unknown — no local signal this run` line above when the scan found
   nothing to read.
@@ -114,4 +121,5 @@ Rules, the same ones the brief runs under:
 - **Stalled work is named** with its age. Work claimed and abandoned holds
   the frontier closed while looking like progress.
 
-Close with one line: `/cabinet:standup` for what to do about any of it.
+Close with one line: `/cabinet:standup` for the startable frontier and what to
+do about any of it.

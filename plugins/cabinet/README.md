@@ -32,13 +32,14 @@ is to raise it early, unprompted. That is what this is.
 ```
 
 ```
-Board: 67 open · 3 epics · 2 PRs · 4 branches → delivery lead
+Board: 67 open · 3 epics · 2 PRs · 4 branches · 5 merged → delivery lead
+Local: 3 worktrees · 1 in flight (#179, 3h) · 0 stalled
 
 WHERE YOU STAND · Tue 09-09
 Stage: pre-launch, single user, no revenue. Gate A (a second account) not
 crossed.
 Gate A: 6 items · 2 startable · 1 purchase · 0 unticketed.
-In flight: #179 — local, 1 commit, 5 files dirty, 3h.
+In flight: #179 — local, 1 commit, 5 files dirty, 3h · #204 — pull request open.
 
 YOUR MOVES · 4        (all delivery lead — shallow run)
 
