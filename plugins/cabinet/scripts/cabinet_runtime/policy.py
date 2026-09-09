@@ -124,6 +124,10 @@ class Policy:
                 "REPO_MISMATCH",
                 "%s revision %d belongs to %s" % (batch_id, revision,
                                                   stored["body"]["repo"]))
+        # Two layers agree today: superseding a revision also revokes its
+        # grant, so either check alone catches that case. The state check is
+        # the deliberate second layer, guarding against a future writer that
+        # retires a batch without going through the grants table.
         if stored["state"] == "superseded":
             raise CabinetError(
                 "REVISION_SUPERSEDED",

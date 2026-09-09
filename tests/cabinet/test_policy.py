@@ -252,6 +252,20 @@ class BatchAuthority(PolicyCase):
         item["revision"] = 2
         self.refuse(item, "BATCH_NOT_APPROVED")
 
+    def test_a_withdrawn_grant_is_refused_while_the_batch_is_current(self):
+        """Pins the revoked-grant check on its own.
+
+        Superseding a revision revokes its grant and retires the batch at the
+        same time, so that path exercises both layers together. Withdrawing
+        the grant leaves the batch current, which leaves only this check.
+        """
+
+        outcome = self.approve()
+        self.store.revoke_grant(outcome["grant"]["grant_id"],
+                                "the owner withdrew approval")
+        self.assertEqual(self.store.get_batch("B001", 1)["state"], "approved")
+        self.refuse(action(), "REVISION_SUPERSEDED")
+
     def test_unknown_batch_is_refused(self):
         item = action()
         item["batch_id"] = "B999"

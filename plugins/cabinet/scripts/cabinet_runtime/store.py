@@ -1025,6 +1025,23 @@ class Store:
                  "response": response, "decided": decided})
         return event
 
+    def revoke_grant(self, grant_id, reason):
+        """Withdraw a live grant. Internal; never an MCP tool.
+
+        Proposing a newer revision revokes the old one automatically. This is
+        the same operation for the cases that are not a new revision, such as
+        the owner withdrawing an approval for a batch that is still current.
+        """
+
+        with self._transaction() as conn:
+            row = conn.execute("SELECT * FROM grants WHERE grant_id = ?",
+                               (grant_id,)).fetchone()
+            if row is None:
+                raise CabinetError("BATCH_NOT_APPROVED", "no grant %s" % grant_id)
+            if row["revoked_seq"] is None:
+                self._revoke_grant_locked(conn, grant_id, reason)
+        return self.get_grant(grant_id)
+
     def get_grant(self, grant_id):
         conn = self._require_open()
         row = conn.execute("SELECT * FROM grants WHERE grant_id = ?",
