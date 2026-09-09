@@ -199,6 +199,172 @@ def action_identity(envelope):
     return {key: envelope[key] for key in ACTION_FIELDS if key != "action_id"}
 
 
+# --- action authority -------------------------------------------------------
+#
+# Three closed sets decide what an action kind may do. Membership is the whole
+# decision: a kind outside every set has no executor. Adding an operation here
+# is the only way to make it runnable, which is what keeps the set reviewable.
+
+# Board maintenance on the configured repository. Covered by the setup grant.
+SETUP_BOARD_OPERATIONS = (
+    "github.create_issue", "github.update_issue", "github.set_labels",
+    "github.set_assignees", "github.set_parent", "github.remove_parent",
+    "github.add_blocker", "github.remove_blocker", "github.set_state",
+)
+
+# Board operations that write prose a reader sees as the company speaking.
+# On a public repository these stop being automatic.
+PUBLIC_PROSE_OPERATIONS = ("github.create_issue", "github.update_issue")
+
+# Local execution of an approved batch. Covered by that batch's grant.
+BATCH_EXECUTION_OPERATIONS = (
+    "workspace.create", "workspace.reserve", "worker.launch",
+    "git.capture", "git.commit_candidate", "git.integrate_candidate",
+    "check.collect",
+)
+
+# Named operations that have no executor at any approval level.
+FORBIDDEN_OPERATIONS = (
+    "finance.purchase", "finance.pay", "finance.refund",
+    "pricing.set", "pricing.publish",
+    "billing.subscribe", "billing.upgrade",
+    "account.upgrade", "account.subscribe",
+    "publish.post", "publish.page", "social.announce",
+    "github.add_comment", "github.create_repository", "github.create_branch",
+    "github.dispatch_workflow", "github.graphql", "github.create_release",
+    "git.push", "git.force_push", "git.merge_deployed",
+    "release.create", "release.publish",
+    "deploy.start", "deploy.rollback",
+    "http.get", "http.post", "http.request",
+    "shell.run", "shell.exec",
+)
+
+# Whole areas with no executor, whatever the operation is called.
+FORBIDDEN_AREAS = (
+    "finance", "pricing", "billing", "payment", "purchase", "subscription",
+    "publish", "publication", "social", "release", "deploy", "deployment",
+    "http", "https", "url", "web", "shell", "exec", "graphql", "sql",
+)
+
+# Operation words with no executor, whatever area names them. This catches an
+# operation invented after this release under an otherwise allowed area.
+FORBIDDEN_OPERATION_WORDS = (
+    "purchase", "pay", "refund", "invoice", "subscribe", "upgrade", "buy",
+    "publish", "announce", "comment", "post", "push", "merge", "release",
+    "deploy", "dispatch", "graphql", "fetch", "run", "exec", "spawn", "eval",
+)
+
+
+def action_authority(kind):
+    """Classify an action kind as setup, batch, forbidden or unknown.
+
+    The allowed sets are consulted first, so an explicitly named operation
+    keeps its executor even when a forbidden word appears inside its name.
+    """
+
+    if not isinstance(kind, str):
+        return "unknown"
+    if kind in SETUP_BOARD_OPERATIONS:
+        return "setup"
+    if kind in BATCH_EXECUTION_OPERATIONS:
+        return "batch"
+    if kind in FORBIDDEN_OPERATIONS:
+        return "forbidden"
+    area, _, operation = kind.partition(".")
+    if area in FORBIDDEN_AREAS:
+        return "forbidden"
+    for word in FORBIDDEN_OPERATION_WORDS:
+        if operation == word or operation.startswith(word + "_"):
+            return "forbidden"
+    return "unknown"
+
+
+# --- setup scope ------------------------------------------------------------
+
+SETUP_SCOPE_FIELDS = ("repo", "visibility", "board_operations",
+                      "check_profiles", "capacity")
+CHECK_PROFILE_FIELDS = ("profile_id", "argv", "env")
+VISIBILITIES = ("private", "public")
+SETUP_CAPACITY_FIELDS = ("implementation_workers",)
+
+
+def validate_setup_scope(scope):
+    """Return a validated copy of a setup grant's scope, or raise CabinetError."""
+
+    _check_fields(scope, SETUP_SCOPE_FIELDS, "setup")
+    parse_repo(scope["repo"])
+    if scope["visibility"] not in VISIBILITIES:
+        raise CabinetError("FIELD_INVALID", "setup.visibility must be one of %s"
+                           % (VISIBILITIES,))
+
+    operations = scope["board_operations"]
+    if not isinstance(operations, list) or not operations:
+        raise CabinetError("FIELD_INVALID",
+                           "setup.board_operations must be a non-empty list")
+    seen = set()
+    for index, item in enumerate(operations):
+        _text(item, "setup.board_operations[%d]" % index)
+        if item not in SETUP_BOARD_OPERATIONS:
+            raise CabinetError(
+                "FIELD_INVALID",
+                "setup.board_operations[%d] is %r, which is not a board "
+                "operation the owner can delegate" % (index, item))
+        if item in seen:
+            raise CabinetError("FIELD_INVALID",
+                               "setup.board_operations repeats %r" % item)
+        seen.add(item)
+
+    profiles = scope["check_profiles"]
+    if not isinstance(profiles, list):
+        raise CabinetError("FIELD_INVALID", "setup.check_profiles must be a list")
+    profile_ids = set()
+    for index, item in enumerate(profiles):
+        label = "setup.check_profiles[%d]" % index
+        _check_fields(item, CHECK_PROFILE_FIELDS, label)
+        _text(item["profile_id"], "%s.profile_id" % label)
+        if not isinstance(item["argv"], list) or not item["argv"]:
+            raise CabinetError("FIELD_INVALID",
+                               "%s.argv must be a non-empty list" % label)
+        for position, word in enumerate(item["argv"]):
+            _text(word, "%s.argv[%d]" % (label, position), allow_empty=True)
+        _require_mapping(item["env"], "%s.env" % label)
+        for name, value in item["env"].items():
+            _text(name, "%s.env key" % label)
+            _text(value, "%s.env[%s]" % (label, name), allow_empty=True)
+        if item["profile_id"] in profile_ids:
+            raise CabinetError("FIELD_INVALID",
+                               "setup.check_profiles repeats %r" % item["profile_id"])
+        profile_ids.add(item["profile_id"])
+
+    _check_fields(scope["capacity"], SETUP_CAPACITY_FIELDS, "setup.capacity")
+    workers = scope["capacity"]["implementation_workers"]
+    if isinstance(workers, bool) or not isinstance(workers, int) or workers < 0:
+        raise CabinetError(
+            "FIELD_INVALID",
+            "setup.capacity.implementation_workers must be a whole number")
+    return json.loads(canonical_json(scope))
+
+
+# --- owner responses --------------------------------------------------------
+
+def is_owner_acceptance(response):
+    """True only for the client response shape that means yes.
+
+    The check is positive and exact. A response carrying `approved`, a string
+    `"true"`, the number 1, or an owner-sounding message is not an acceptance,
+    because none of them is the boolean the dialog asked for.
+    """
+
+    if not isinstance(response, dict):
+        return False
+    if response.get("action") != "accept":
+        return False
+    content = response.get("content")
+    if not isinstance(content, dict):
+        return False
+    return content.get("approve") is True
+
+
 # --- state machines ---------------------------------------------------------
 
 BATCH_TRANSITIONS = {

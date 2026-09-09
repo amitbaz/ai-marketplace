@@ -39,9 +39,11 @@ from .contracts import (
     canonical_json,
     check_transition,
     digest,
+    is_owner_acceptance,
     parse_repo,
     validate_action_envelope,
     validate_batch_body,
+    validate_setup_scope,
 )
 from .errors import CabinetError
 
@@ -52,6 +54,10 @@ IDENTITY_NAME = "identity.json"
 BACKUPS_DIRECTORY = "backups"
 PRIVATE_FILE_MODE = 0o600
 PRIVATE_DIR_MODE = 0o700
+
+# Batch states in which an owner answer still applies to the same agreement.
+# Any other state means the batch moved while the dialog was open.
+APPROVABLE_BATCH_STATES = ("proposed", "approved")
 
 SCHEMA = """
 CREATE TABLE events (
@@ -682,7 +688,48 @@ class Store:
                 "state, created_seq, updated_seq) VALUES (?, ?, ?, ?, ?, ?, ?)",
                 (batch_id, revision, canonical_json(body), frozen, "proposed",
                  event["seq"], event["seq"]))
+            self._supersede_earlier_revisions(conn, batch_id, revision)
         return self.get_batch(batch_id, revision)
+
+    def _supersede_earlier_revisions(self, conn, batch_id, revision):
+        """Retire every earlier revision of a batch and revoke its grants.
+
+        A newer revision is a different agreement. Leaving the old revision's
+        grant live would let work approved against retired wording keep running.
+        """
+
+        rows = conn.execute(
+            "SELECT * FROM batches WHERE batch_id = ? AND revision < ? "
+            "AND state != 'superseded' ORDER BY revision",
+            (batch_id, revision)).fetchall()
+        for row in rows:
+            check_transition(BATCH_TRANSITIONS, row["state"], "superseded",
+                             "batch %s" % batch_id)
+            event = self._append_event_locked(
+                conn, "batch.state_changed", batch_id, row["revision"],
+                {"from": row["state"], "to": "superseded",
+                 "reason": "revision %d was proposed" % revision})
+            conn.execute(
+                "UPDATE batches SET state = 'superseded', updated_seq = ? "
+                "WHERE batch_id = ? AND revision = ?",
+                (event["seq"], batch_id, row["revision"]))
+            self._revoke_grants_for(conn, batch_id, row["revision"],
+                                    "revision %d was proposed" % revision)
+
+    def _revoke_grants_for(self, conn, batch_id, revision, reason):
+        live = conn.execute(
+            "SELECT grant_id FROM grants WHERE batch_id = ? AND revision = ? "
+            "AND revoked_seq IS NULL", (batch_id, revision)).fetchall()
+        for row in live:
+            self._revoke_grant_locked(conn, row["grant_id"], reason)
+
+    def _revoke_grant_locked(self, conn, grant_id, reason):
+        event = self._append_event_locked(
+            conn, "approval.revoked", grant_id, None,
+            {"grant_id": grant_id, "reason": reason})
+        conn.execute("UPDATE grants SET revoked_seq = ? WHERE grant_id = ?",
+                     (event["seq"], grant_id))
+        return event
 
     def get_batch(self, batch_id, revision=None):
         conn = self._require_open()
@@ -750,6 +797,283 @@ class Store:
                 "body": json.loads(row["body_json"]), "digest": row["digest"],
                 "state": row["state"], "created_seq": row["created_seq"],
                 "updated_seq": row["updated_seq"]}
+
+    # --- grants -------------------------------------------------------------
+    #
+    # These are internal. None of them is exposed as an MCP tool, and none of
+    # them takes a caller's assertion that the owner said yes: the only input
+    # that creates a grant is a client elicitation response, checked by
+    # `is_owner_acceptance`, against a request this process recorded first.
+
+    def record_approval_request(self, pending_request_id, kind, batch_id=None,
+                                revision=None, scope=None):
+        """Record what is being asked, and the state it is being asked about.
+
+        The recorded digest, lease and pause state are the comparison used when
+        the response arrives. Capturing them before the dialog opens is what
+        makes a change during the wait detectable rather than silently accepted.
+        """
+
+        if kind not in ("batch", "setup"):
+            raise CabinetError("FIELD_INVALID",
+                               "approval request kind %r is not batch or setup" % kind)
+        if kind == "batch":
+            stored = self.get_batch(batch_id, revision)
+            request = {"kind": "batch", "batch_id": stored["batch_id"],
+                       "revision": stored["revision"], "digest": stored["digest"],
+                       "state": stored["state"], "scope": None}
+        else:
+            checked = validate_setup_scope(scope or {})
+            if self._identity is None or self._identity["repo"] != checked["repo"]:
+                raise CabinetError(
+                    "REPO_MISMATCH",
+                    "setup names %s; this company is %s"
+                    % (checked["repo"],
+                       self._identity["repo"] if self._identity else "unbound"))
+            request = {"kind": "setup", "batch_id": None, "revision": None,
+                       "digest": digest(checked), "state": None,
+                       "scope": checked}
+
+        with self._transaction() as conn:
+            lease = self._lease_row(conn)
+            if lease is None:
+                raise CabinetError("LEASE_REQUIRED",
+                                   "no lead holds the company lease")
+            self._check_not_paused(conn)
+            if conn.execute("SELECT 1 FROM events WHERE entity_id = ? AND "
+                            "kind = 'approval.requested' LIMIT 1",
+                            (pending_request_id,)).fetchone() is not None:
+                raise CabinetError("APPROVAL_REQUEST_USED",
+                                   "request %s was already opened" % pending_request_id)
+            request["lease"] = {"session_id": lease["session_id"],
+                                "generation": lease["generation"]}
+            request["pending_request_id"] = pending_request_id
+            self._append_event_locked(conn, "approval.requested",
+                                      pending_request_id, revision, request)
+        return request
+
+    def save_grant(self, pending_request_id, response):
+        """Turn one client response to a batch request into a grant, or nothing.
+
+        Returns the grant when the response is an acceptance, otherwise None.
+        Raises when the batch, lease or pause state moved while the dialog was
+        open, because the owner then answered a question about something else.
+        """
+
+        return self._save_grant(pending_request_id, response, "batch")
+
+    def save_setup_grant(self, pending_request_id, response):
+        """Turn one client response to a setup request into a setup grant."""
+
+        return self._save_grant(pending_request_id, response, "setup")
+
+    def _save_grant(self, pending_request_id, response, expected_kind):
+        with self._transaction(fence=False) as conn:
+            request = self._pending_request(conn, pending_request_id)
+            if request["kind"] != expected_kind:
+                raise CabinetError(
+                    "FIELD_INVALID",
+                    "request %s is a %s request, not %s"
+                    % (pending_request_id, request["kind"], expected_kind))
+            self._recheck_request(conn, request)
+            if not is_owner_acceptance(response):
+                self._append_event_locked(
+                    conn, "approval.declined", pending_request_id,
+                    request["revision"],
+                    {"pending_request_id": pending_request_id,
+                     "kind": request["kind"], "response": response})
+                return None
+            if expected_kind == "batch":
+                return self._grant_batch(conn, request, response)
+            return self._grant_setup(conn, request, response)
+
+    def _pending_request(self, conn, pending_request_id):
+        row = conn.execute(
+            "SELECT payload_json FROM events WHERE entity_id = ? AND "
+            "kind = 'approval.requested' ORDER BY seq DESC LIMIT 1",
+            (pending_request_id,)).fetchone()
+        if row is None:
+            raise CabinetError("APPROVAL_REQUEST_UNKNOWN",
+                               "no pending approval request %s" % pending_request_id)
+        answered = conn.execute(
+            "SELECT 1 FROM events WHERE entity_id = ? AND kind IN "
+            "('approval.granted', 'approval.declined') LIMIT 1",
+            (pending_request_id,)).fetchone()
+        if answered is not None:
+            raise CabinetError("APPROVAL_REQUEST_USED",
+                               "request %s was already answered" % pending_request_id)
+        return json.loads(row["payload_json"])
+
+    def _recheck_request(self, conn, request):
+        lease = self._lease_row(conn)
+        recorded = request["lease"]
+        if lease is None or lease["session_id"] != recorded["session_id"] \
+                or lease["generation"] != recorded["generation"]:
+            raise CabinetError(
+                "LEASE_CHANGED",
+                "the lease moved on from generation %s while the dialog was open"
+                % recorded["generation"])
+        if self._session_id != lease["session_id"] \
+                or self._generation != lease["generation"]:
+            raise CabinetError(
+                "LEASE_CHANGED",
+                "this caller no longer holds generation %d" % lease["generation"])
+        if lease["paused"]:
+            raise CabinetError("PAUSED", "the company is paused: %s"
+                               % (lease["paused_reason"] or "no reason recorded"))
+        if request["kind"] == "setup":
+            if self._identity is None \
+                    or self._identity["repo"] != request["scope"]["repo"]:
+                raise CabinetError("REPO_MISMATCH",
+                                   "setup names %s" % request["scope"]["repo"])
+            return
+        row = conn.execute(
+            "SELECT * FROM batches WHERE batch_id = ? AND revision = ?",
+            (request["batch_id"], request["revision"])).fetchone()
+        if row is None or row["digest"] != request["digest"]:
+            raise CabinetError(
+                "SCOPE_CHANGED",
+                "%s revision %s no longer reads as it did when the question "
+                "was asked" % (request["batch_id"], request["revision"]))
+        if row["state"] not in APPROVABLE_BATCH_STATES:
+            raise CabinetError(
+                "SCOPE_CHANGED",
+                "%s revision %s moved to %s while the dialog was open"
+                % (request["batch_id"], request["revision"], row["state"]))
+
+    def _grant_batch(self, conn, request, response):
+        batch_id = request["batch_id"]
+        revision = request["revision"]
+        frozen = request["digest"]
+        existing = conn.execute(
+            "SELECT * FROM grants WHERE batch_id = ? AND revision = ? AND digest = ?",
+            (batch_id, revision, frozen)).fetchone()
+        if existing is not None:
+            if existing["revoked_seq"] is not None:
+                raise CabinetError(
+                    "REVISION_SUPERSEDED",
+                    "the grant for %s revision %d was revoked" % (batch_id, revision))
+            self._append_event_locked(
+                conn, "approval.granted", request["pending_request_id"], revision,
+                {"grant_id": existing["grant_id"], "batch_id": batch_id,
+                 "revision": revision, "digest": frozen, "repeat": True,
+                 "response": response})
+            return self._grant_row(existing)
+
+        grant_id = "G%s" % uuid.uuid4().hex[:12]
+        scope = {"repo": self._identity["repo"], "batch_id": batch_id,
+                 "revision": revision}
+        event = self._append_event_locked(
+            conn, "approval.granted", request["pending_request_id"], revision,
+            {"grant_id": grant_id, "batch_id": batch_id, "revision": revision,
+             "digest": frozen, "repeat": False, "response": response})
+        conn.execute(
+            "INSERT INTO grants (grant_id, batch_id, revision, digest, scope_json, "
+            "owner_response_json, approved_seq, revoked_seq) "
+            "VALUES (?, ?, ?, ?, ?, ?, ?, NULL)",
+            (grant_id, batch_id, revision, frozen, canonical_json(scope),
+             canonical_json(response), event["seq"]))
+        current = conn.execute(
+            "SELECT state FROM batches WHERE batch_id = ? AND revision = ?",
+            (batch_id, revision)).fetchone()["state"]
+        if current == "proposed":
+            moved = self._append_event_locked(
+                conn, "batch.state_changed", batch_id, revision,
+                {"from": current, "to": "approved", "reason": "owner approval"})
+            conn.execute(
+                "UPDATE batches SET state = 'approved', updated_seq = ? "
+                "WHERE batch_id = ? AND revision = ?",
+                (moved["seq"], batch_id, revision))
+        return self._grant_row(conn.execute(
+            "SELECT * FROM grants WHERE grant_id = ?", (grant_id,)).fetchone())
+
+    def _grant_setup(self, conn, request, response):
+        scope = request["scope"]
+        for row in conn.execute(
+                "SELECT grant_id, scope_json FROM grants WHERE batch_id IS NULL "
+                "AND revoked_seq IS NULL").fetchall():
+            if json.loads(row["scope_json"]).get("repo") == scope["repo"]:
+                self._revoke_grant_locked(conn, row["grant_id"],
+                                          "a newer setup grant replaced it")
+        grant_id = "G%s" % uuid.uuid4().hex[:12]
+        frozen = request["digest"]
+        event = self._append_event_locked(
+            conn, "setup.granted", request["pending_request_id"], None,
+            {"grant_id": grant_id, "repo": scope["repo"], "digest": frozen,
+             "response": response})
+        conn.execute(
+            "INSERT INTO grants (grant_id, batch_id, revision, digest, scope_json, "
+            "owner_response_json, approved_seq, revoked_seq) "
+            "VALUES (?, NULL, NULL, ?, ?, ?, ?, NULL)",
+            (grant_id, frozen, canonical_json(scope), canonical_json(response),
+             event["seq"]))
+        return self._grant_row(conn.execute(
+            "SELECT * FROM grants WHERE grant_id = ?", (grant_id,)).fetchone())
+
+    def record_owner_decision(self, subject, question, response, detail=None):
+        """Record an owner decision that grants no authority to act.
+
+        Charter approval and company-direction amendments travel this way. The
+        response is stored verbatim; nothing here writes to the grants table.
+        """
+
+        decided = is_owner_acceptance(response)
+        with self._transaction() as conn:
+            event = self._append_event_locked(
+                conn, "owner.decision", subject, None,
+                {"subject": subject, "question": question, "detail": detail,
+                 "response": response, "decided": decided})
+        return event
+
+    def get_grant(self, grant_id):
+        conn = self._require_open()
+        row = conn.execute("SELECT * FROM grants WHERE grant_id = ?",
+                           (grant_id,)).fetchone()
+        if row is None:
+            raise CabinetError("BATCH_NOT_APPROVED", "no grant %s" % grant_id)
+        return self._grant_row(row)
+
+    def get_grants(self):
+        """Every grant ever recorded, oldest first, revoked ones included."""
+
+        conn = self._require_open()
+        return [self._grant_row(row) for row in conn.execute(
+            "SELECT * FROM grants ORDER BY approved_seq")]
+
+    def batch_grant(self, batch_id, revision, digest_value):
+        """The grant for exactly this batch revision and digest, or None."""
+
+        conn = self._require_open()
+        row = conn.execute(
+            "SELECT * FROM grants WHERE batch_id = ? AND revision = ? AND digest = ?",
+            (batch_id, revision, digest_value)).fetchone()
+        return self._grant_row(row) if row is not None else None
+
+    def has_grant_for_batch(self, batch_id):
+        conn = self._require_open()
+        return conn.execute("SELECT 1 FROM grants WHERE batch_id = ? LIMIT 1",
+                            (batch_id,)).fetchone() is not None
+
+    def active_setup_grant(self, repo):
+        """The live setup grant for a repository, or None."""
+
+        conn = self._require_open()
+        for row in conn.execute(
+                "SELECT * FROM grants WHERE batch_id IS NULL AND "
+                "revoked_seq IS NULL ORDER BY approved_seq DESC"):
+            if json.loads(row["scope_json"]).get("repo") == repo:
+                return self._grant_row(row)
+        return None
+
+    @staticmethod
+    def _grant_row(row):
+        return {"grant_id": row["grant_id"], "batch_id": row["batch_id"],
+                "revision": row["revision"], "digest": row["digest"],
+                "kind": "batch" if row["batch_id"] else "setup",
+                "scope": json.loads(row["scope_json"]),
+                "owner_response": json.loads(row["owner_response_json"]),
+                "approved_seq": row["approved_seq"],
+                "revoked_seq": row["revoked_seq"]}
 
     # --- actions ------------------------------------------------------------
 

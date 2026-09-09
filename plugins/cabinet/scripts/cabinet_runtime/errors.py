@@ -32,6 +32,20 @@ ERROR_CODES = {
     "LEASE_REQUIRED": "The operation needs an acquired lease.",
     "LEASE_FENCED": "The caller's fencing generation is no longer current.",
     "PAUSED": "The company is paused; new actions are fenced.",
+    # Approval
+    "APPROVAL_REQUEST_UNKNOWN": "No pending approval request has that identifier.",
+    "APPROVAL_REQUEST_USED": "That pending approval request was already answered.",
+    "SCOPE_CHANGED": "The batch changed while the approval dialog was open.",
+    "LEASE_CHANGED": "The company lease changed while the dialog was open.",
+    # Action authority
+    "BATCH_NOT_APPROVED": "No live owner grant covers that batch revision.",
+    "REVISION_SUPERSEDED": "That batch revision's grant was revoked by a newer one.",
+    "OPERATION_FORBIDDEN": "That operation has no executor at any approval level.",
+    "UNKNOWN_OPERATION": "That operation is not a named Cabinet operation.",
+    "SETUP_NOT_APPROVED": "No setup grant covers this repository's board.",
+    "OPERATION_NOT_AUTHORIZED": "The setup grant does not list that operation.",
+    "PUBLIC_PROSE_FORBIDDEN": "Public repository prose is not automatic.",
+    "REPO_MISMATCH": "The action names a repository other than this company's.",
     # Backup and restore
     "BACKUP_DESTINATION_EXISTS": "The backup destination already exists.",
     "RESTORE_DESTINATION_EXISTS": "The restore destination already exists.",

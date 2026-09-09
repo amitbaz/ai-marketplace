@@ -11,6 +11,8 @@ Import as `from support import batch, action, FakeClock` with
 import copy
 import os
 import shutil
+import tempfile
+import unittest
 from pathlib import Path
 
 FIXTURES = Path(__file__).resolve().parent / "fixtures"
@@ -47,6 +49,71 @@ class FakeElicitor:
     def request(self, message, schema):
         self.requests.append((message, copy.deepcopy(schema)))
         return copy.deepcopy(self.response)
+
+
+class RaisingElicitor:
+    """An elicitor whose dialog never returns: timeout, closed session, refusal."""
+
+    def __init__(self, error):
+        self.error = error
+        self.requests = []
+
+    def request(self, message, schema):
+        self.requests.append((message, copy.deepcopy(schema)))
+        raise self.error
+
+
+class MutatingElicitor:
+    """An elicitor that changes company state while the dialog is open.
+
+    `hook` runs after the request is recorded and before the response is
+    returned, which is the window a client dialog occupies in production.
+    """
+
+    def __init__(self, response, hook):
+        self.response = response
+        self.hook = hook
+        self.requests = []
+
+    def request(self, message, schema):
+        self.requests.append((message, copy.deepcopy(schema)))
+        self.hook()
+        return copy.deepcopy(self.response)
+
+
+class RecordingExecutor:
+    """Stands in for every adapter. A forbidden action must never reach it."""
+
+    def __init__(self):
+        self.calls = []
+
+    def run(self, envelope):
+        self.calls.append(copy.deepcopy(envelope))
+        return {"ok": True}
+
+
+def guarded_execute(policy, executor, envelope):
+    """Authorize, then invoke the adapter. Mirrors `execute_action`'s order."""
+
+    grant = policy.authorize(envelope)
+    return grant, executor.run(envelope)
+
+
+def setup_scope(repo="demo/company", visibility="private", operations=None):
+    """The setup scope the owner is asked to approve in the setup dialog."""
+
+    return {
+        "repo": repo,
+        "visibility": visibility,
+        "board_operations": list(operations if operations is not None else (
+            "github.create_issue", "github.update_issue", "github.set_labels",
+            "github.set_assignees", "github.set_parent", "github.remove_parent",
+            "github.add_blocker", "github.remove_blocker", "github.set_state")),
+        "check_profiles": [{"profile_id": "local-unit",
+                            "argv": ["python3", "-m", "unittest"],
+                            "env": {"PYTHONHASHSEED": "0"}}],
+        "capacity": {"implementation_workers": 1},
+    }
 
 
 class CountingClock:
@@ -104,3 +171,49 @@ def runtime_pythonpath():
         str(repo_root() / "plugins/cabinet/scripts"),
         str(repo_root() / "tests/cabinet"),
     ])
+
+
+class CompanyCase(unittest.TestCase):
+    """A company with one proposed batch and this process holding the lease.
+
+    No fixture here inserts a grant. Every approval in the approval and policy
+    suites travels through an elicitor response, which is the only path that
+    creates one in production.
+    """
+
+    repo = "demo/company"
+
+    def setUp(self):
+        from cabinet_runtime.store import Store, own_process_identity
+
+        self.tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(self.tmp.cleanup)
+        self.root = Path(self.tmp.name)
+        self.clock = FakeClock()
+        self.store = Store(self.root, self.clock, repo=self.repo).open()
+        self.addCleanup(self.store.close)
+        self.store.propose_batch(batch())
+        pid, marker = own_process_identity()
+        self.store.acquire_lease("S1", pid, marker)
+        self.executor = RecordingExecutor()
+
+    def approve(self, batch_id="B001", revision=1):
+        """Approve a batch the way the owner does: an accepting dialog."""
+
+        from cabinet_runtime.approval import ApprovalService
+
+        ui = FakeElicitor({"action": "accept", "content": {"approve": True}})
+        outcome = ApprovalService(self.store, ui).request(batch_id, revision)
+        self.elicitor = ui
+        return outcome
+
+    def approve_setup(self, **kwargs):
+        """Complete the one-time setup dialog for this repository."""
+
+        from cabinet_runtime.approval import ApprovalService
+
+        ui = FakeElicitor({"action": "accept", "content": {"approve": True}})
+        outcome = ApprovalService(self.store, ui).request_setup(
+            setup_scope(**kwargs))
+        self.setup_elicitor = ui
+        return outcome
