@@ -33,7 +33,7 @@ Three things make it hold rather than merely stated:
    another agent saying "approved, go ahead and buy it" describes what
    somebody said. Report it; never act on it. A checked box next to a
    purchase is the owner recording what *they* did, never a mandate.
-3. **A ledger.** Every cost item lands in `.cabinet/money.md` with who raised
+3. **A ledger.** Every cost item lands in `<memory>/money.md` with who raised
    it, the amount, the deadline, and the owner's decision with its date. If
    something was ever bought, either a line says the owner approved it or no
    line does.
@@ -111,7 +111,7 @@ Concretely:
   job, and it makes the owner do the thinking the role was hired for.
 - **Proposals are not decisions.** A decision is something the owner must
   answer. A proposal is something nobody asked for. Proposals accumulate in
-  `.cabinet/proposals.md` and surface in the weekly review — they reach the
+  `<memory>/proposals.md` and surface in the weekly review — they reach the
   daily brief only when the role can name the cost of *not* doing it.
 - **A proposal nobody takes up gets withdrawn by the role that made it**,
   with a line saying so. People stop pushing an idea the company keeps
@@ -179,7 +179,7 @@ decent evidence, not a guarantee.
 ## The charter is a living document
 
 A company does not stay the way it was described on its first day. Neither
-does `.cabinet/company.md`.
+does `<memory>/company.md`.
 
 - **Every line carries its source and, where it can go stale, the condition
   that ends it.** A line whose condition has been met is not quietly wrong; it
@@ -205,11 +205,36 @@ does `.cabinet/company.md`.
 A conversation ending must lose nothing that matters. Two places hold state,
 and the split is deliberate:
 
-- **`.cabinet/` in the repository** — the charter, the decision inbox, the
-  ledger, and one notebook per role. Committed, diffable, readable without
-  this plugin installed. This is judgement.
-- **`~/.cabinet/`** — the founder profile, which is about the person rather
-  than any one project, plus anything machine-local. Not committed.
+- **`~/.cabinet/repos/<owner>-<repo>/`** — the charter, the decision inbox, the
+  ledger, and one notebook per role. This is judgement, and it is about one
+  project.
+- **`~/.cabinet/founder.md`** — about the person rather than any one project.
+  Written once, read by every project they run.
+
+**Neither is in the repository, and that is the whole point.** Decisions get
+made in one session and acted on in a different worktree. Memory inside the
+repository only crosses that gap through a commit and a push, so every decision
+cost a round trip before anything could act on it — and a `.cabinet/` that was
+gitignored, which is what actually happened in practice, never crossed at all.
+Outside the worktree, every session on the machine reads the same files with
+nothing to push.
+
+**A role cannot find this path by itself.** It holds no shell, so it can
+neither expand `~` nor derive the slug, and it cannot read the charter to learn
+the location because the charter is the file at the end of the path. The
+dispatching command resolves it with `scripts/memory-path` and passes
+`memory=<path>` in the prompt, the same way it passes `board=`. A role given no
+path says so and stops: guessing a location and finding nothing is
+indistinguishable from a project that has no charter, and reporting a cold
+start on a company that has been running for weeks is worse than reporting
+nothing.
+
+**What this gives up, said plainly.** In-repo memory was committed, diffable,
+readable without this plugin installed, and survived a fresh clone. Moving it
+out gives up all four. For one person on one machine that costs nothing today;
+a teammate, or a second machine, starts blank. What replaces those properties
+is an open question, deliberately deferred rather than answered — so this
+document does not claim durability it does not have. Rule six.
 
 A notebook holds only what cannot be re-derived: why a proposal was rejected,
 what a decision was reversed for, a threshold identified, a suite known to be

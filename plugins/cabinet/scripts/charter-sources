@@ -23,7 +23,6 @@
 #               should read, what it should skip, and what matched neither —
 #               so hire can say what it skipped instead of leaving the
 #               omission silent.
-#   ignored     Whether .cabinet/ is ignored by git, and the rule responsible.
 #
 # Bounded on purpose. This is not "read the whole repository": on a repository
 # with 133 tracked markdown files, 73 closed issues and 88 merged pull
@@ -125,23 +124,6 @@ else
     inventory='{"total":0,"note":"not inside a git working tree; no inventory taken"}'
 fi
 
-# Whether the memory this command is about to write would ever be committed.
-# Hire is required to ask about this; until now nothing made the answer survive
-# into the charter, so it was asked once and then lost.
-if git rev-parse --show-toplevel >/dev/null 2>&1; then
-    if rule="$(git check-ignore -v .cabinet/company.md 2>/dev/null)"; then
-        ignored="$(jq -n --arg r "$rule" '{
-            ignored: true,
-            rule: $r,
-            means: "Nothing written to .cabinet/ will ever be committed. It is local to this machine, has no history, and is not recoverable if deleted. Tell the owner, and record their answer in the charter."
-        }')"
-    else
-        ignored='{"ignored": false, "means": "The .cabinet/ directory will be committed normally."}'
-    fi
-else
-    ignored='{"ignored": null, "means": "Not inside a git working tree; could not check."}'
-fi
-
 jq -n \
     --arg repo "$REPO" \
     --arg taken_at "$STARTED" \
@@ -149,7 +131,6 @@ jq -n \
     --argjson recorded "$recorded" \
     --argjson discussion "$discussion" \
     --argjson inventory "$inventory" \
-    --argjson ignored "$ignored" \
     '{
         repo: $repo,
         taken_at: $taken_at,
@@ -162,8 +143,7 @@ jq -n \
         },
         rejected: $rejected,
         recorded_decisions: $recorded,
-        inventory: $inventory,
-        cabinet_ignored: $ignored
+        inventory: $inventory
     }' > "$OUT"
 
 jq -n \
@@ -173,11 +153,6 @@ jq -n \
     '{repo: $repo, taken_at: $taken_at, discussion: $discussion}' > "$DISCUSSION_OUT"
 
 jq -r '"Sources: \(.counts.rejected) rejected · \(.counts.recorded_decisions) recorded decisions · \(.counts.comments) comments on \(.counts.tickets_with_discussion) tickets · \(.inventory.read_count // 0) docs to read, \(.inventory.skipped_count // 0) skipped, \(.inventory.unclassified_count // 0) unclassified"' "$OUT" >&2
-
-if [ "$(jq -r '.cabinet_ignored.ignored' "$OUT")" = "true" ]; then
-    echo "WARNING: .cabinet/ is gitignored — $(jq -r '.cabinet_ignored.rule' "$OUT")" >&2
-    echo "  Nothing written there is committed, has history, or survives deletion." >&2
-fi
 
 echo "sources=$OUT"
 if [ "$(jq -r '.counts.comments' "$OUT")" != "0" ]; then

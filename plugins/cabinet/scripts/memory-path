@@ -1,0 +1,70 @@
+#!/usr/bin/env bash
+#
+# Resolve where this project's Cabinet memory lives, for the commands to pass
+# to the roles.
+#
+# The memory used to live in `.cabinet/` inside the repository. It does not any
+# more, and the reason is the working loop rather than tidiness: decisions get
+# made in one session and acted on in another worktree, and an in-repo memory
+# only crosses that gap through a commit and a push. Every decision cost a
+# round trip, and a directory that was gitignored — which is what actually
+# happened — never crossed at all.
+#
+# So the memory sits outside every worktree, at
+#
+#     ~/.cabinet/repos/<owner>-<repo>/
+#
+# where every session on this machine reads the same files with nothing to
+# push. Under `repos/` so it cannot collide with `founder.md`, which is about
+# the person rather than any project and stays at the root.
+#
+# A role cannot work this path out for itself. It holds no shell, so it can
+# neither expand `~` nor derive the slug, and it cannot read the charter to
+# find out because the charter is the thing at the end of the path. The
+# dispatching command resolves it here and passes `memory=` in the prompt, the
+# same way it passes `board=`.
+#
+# Usage:   memory-path <owner/repo> [--create]
+# Prints:  memory=<absolute path>
+#          exists=true|false
+#          legacy_in_repo=<path>      only when an old in-repo .cabinet/ is
+#                                     still there, so hire can offer to move it
+#
+# Read-only unless --create is passed, and even then it only makes a directory.
+
+set -euo pipefail
+
+REPO="${1:-}"
+CREATE="${2:-}"
+
+if [ -z "$REPO" ]; then
+    echo "usage: memory-path <owner/repo> [--create]" >&2
+    exit 64
+fi
+
+case "$REPO" in
+    */*) ;;
+    *) echo "memory-path: expected owner/repo, got '$REPO'" >&2; exit 64 ;;
+esac
+
+ROOT="${HOME}/.cabinet/repos"
+MEM="${ROOT}/${REPO//\//-}"
+
+if [ "$CREATE" = "--create" ]; then
+    mkdir -p "$MEM"
+fi
+
+echo "memory=$MEM"
+
+if [ -d "$MEM" ]; then
+    echo "exists=true"
+else
+    echo "exists=false"
+fi
+
+# An in-repo .cabinet/ from before the move. Reported rather than touched:
+# moving somebody's judgement is hire's decision to offer and the owner's to
+# make, never a side effect of asking where the memory lives.
+if worktree="$(git rev-parse --show-toplevel 2>/dev/null)" && [ -d "$worktree/.cabinet" ]; then
+    echo "legacy_in_repo=$worktree/.cabinet"
+fi

@@ -16,10 +16,31 @@ findings at a time, instead of once in a panic. Running it weekly is the
 difference between discovering a precondition early and discovering it late,
 and the late ones are the expensive ones.
 
+## Resolve the memory before anything else
+
+```
+"${CLAUDE_PLUGIN_ROOT}"/scripts/memory-path <owner/repo>
+```
+
+Take `owner/repo` from `git remote get-url origin`. The script prints
+`memory=<path>`; everything written below as `<memory>/...` is a file in that
+directory, and **every role you dispatch is given that path in its prompt** —
+roles hold no shell and cannot derive it, so a role not told the path cannot
+read its own notebook.
+
+If `exists=false`, this project has no Cabinet memory yet: say so, suggest
+`/cabinet:hire`, and stop rather than improvising a picture without it.
+
+If the output carries a `legacy_in_repo=` line, an old in-repo `.cabinet/` is
+still sitting in the worktree from before the memory moved out. Say so in one
+line and point at `/cabinet:hire`, which is the command that moves it. Do not
+move it yourself: that directory is judgement, and relocating it is the
+owner's call to make once, not a side effect of running a daily command.
+
 ## 1. Read the memory first
 
-`.cabinet/company.md`, `~/.cabinet/founder.md`, `.cabinet/decisions.md`,
-`.cabinet/money.md`, `.cabinet/proposals.md`, and every notebook. Missing
+`<memory>/company.md`, `~/.cabinet/founder.md`, `<memory>/decisions.md`,
+`<memory>/money.md`, `<memory>/proposals.md`, and every notebook. Missing
 charter: say so, suggest `/cabinet:hire`, and stop.
 
 ## 2. Take one board snapshot for the whole meeting
@@ -91,7 +112,7 @@ correction to how it works, not an apology.
 
 ## 5. Proposals — the once-a-week airing
 
-Read `.cabinet/proposals.md` in full. This is the only command that does.
+Read `<memory>/proposals.md` in full. This is the only command that does.
 
 Surface the two or three worth the owner's attention, ranked by the cost of
 not doing them. For the rest, name the count.
@@ -115,12 +136,12 @@ re-decide them; name them and put them in front of the owner.
 ## 7. Write back
 
 Append each role's `## NOTEBOOK` content to its own file, newest first, dated.
-Add `## DECISIONS` items to `.cabinet/decisions.md`, numbered, dated,
+Add `## DECISIONS` items to `<memory>/decisions.md`, numbered, dated,
 attributed, with each role's prediction of the owner's answer kept alongside
 it. Numbers only ever go up: never renumber an open item, never reuse a closed
-one's number. Add `## MONEY` items to `.cabinet/money.md` under open, updating
+one's number. Add `## MONEY` items to `<memory>/money.md` under open, updating
 days-open rather than duplicating anything already there. Add `## PROPOSALS`
-items to `.cabinet/proposals.md`, and route `## FOR <role>` sections into the
+items to `<memory>/proposals.md`, and route `## FOR <role>` sections into the
 receiving roles' notebooks as inbound.
 
 ## 8. Report

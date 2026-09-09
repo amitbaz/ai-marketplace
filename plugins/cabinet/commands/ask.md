@@ -15,6 +15,27 @@ say which one you picked and why in one line, and continue. If two roles both
 own part of it, ask both and present both answers side by side rather than
 merging them into one voice: the owner should be able to tell who said what.
 
+## Resolve the memory before anything else
+
+```
+"${CLAUDE_PLUGIN_ROOT}"/scripts/memory-path <owner/repo>
+```
+
+Take `owner/repo` from `git remote get-url origin`. The script prints
+`memory=<path>`; everything written below as `<memory>/...` is a file in that
+directory, and **every role you dispatch is given that path in its prompt** —
+roles hold no shell and cannot derive it, so a role not told the path cannot
+read its own notebook.
+
+If `exists=false`, this project has no Cabinet memory yet: say so, suggest
+`/cabinet:hire`, and stop rather than improvising a picture without it.
+
+If the output carries a `legacy_in_repo=` line, an old in-repo `.cabinet/` is
+still sitting in the worktree from before the memory moved out. Say so in one
+line and point at `/cabinet:hire`, which is the command that moves it. Do not
+move it yourself: that directory is judgement, and relocating it is the
+owner's call to make once, not a side effect of running a daily command.
+
 ## 1. Snapshot the board, unless the question is narrower than the board
 
 Most questions worth asking a role are about the board — what to start next,
@@ -40,7 +61,7 @@ Dispatch the role with the owner's question verbatim. Do not rewrite it, and
 do not add your own framing — a role's answer is worth less when it is
 answering a question the owner did not ask.
 
-If the role has not been hired — no `.cabinet/<role>.md` exists — say so, and
+If the role has not been hired — no `<memory>/<role>.md` exists — say so, and
 offer `/cabinet:hire <role>`. Do not answer on the role's behalf: an
 unaccountable answer with a role's name on it is worse than no answer.
 
@@ -51,11 +72,11 @@ This matters most for brand: a proposal considered and rejected is only useful
 later if the reasoning and the reopening condition were written down when they
 were fresh.
 
-Add `## DECISIONS` items to `.cabinet/decisions.md` and `## MONEY` items to
-`.cabinet/money.md`, both attributed to the role.
+Add `## DECISIONS` items to `<memory>/decisions.md` and `## MONEY` items to
+`<memory>/money.md`, both attributed to the role.
 
 Route the rest of the role's sections too: `## PROPOSALS` into
-`.cabinet/proposals.md`, and each `## FOR <role>` into that role's notebook as
+`<memory>/proposals.md`, and each `## FOR <role>` into that role's notebook as
 inbound. Keep the role's prediction of the owner's answer alongside any
 decision item — that is what `/cabinet:decide` scores later.
 
