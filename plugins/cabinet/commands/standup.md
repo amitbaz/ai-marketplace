@@ -45,18 +45,48 @@ ended — a second account, first revenue, a launch — say so at the top, name
 the notebook entries that the change reopens, and suggest `/cabinet:charter` to
 amend and `/cabinet:review` to re-run every role against the new stage.
 
-## 3. Re-derive the board
+## 3. Take the board snapshot, then dispatch
 
-Dispatch `cabinet:delivery-lead` and use its output for the frontier, what is
-taken, what is blocked, and any ordering constraint it found. If the delivery
-lead was not hired — no `.cabinet/delivery-lead.md` — say so, build the brief
-from the notebooks alone, and note that no board state was derived this run.
+**Fetch the board before dispatching anyone.** Run
+
+```
+"${CLAUDE_PLUGIN_ROOT}"/scripts/board-snapshot <owner/repo>
+```
+
+with the `owner/repo` from the charter. It prints `board=<path>` and, when the
+board has epics, `epics=<path>`. Roles hold no shell, so a role left to
+enumerate the board itself pays a round trip per page and turns a daily brief
+into a several-minute wait; the script does it in one pass.
+
+**Show the owner the counts as soon as you have them**, on one line — the
+script writes them to stderr in the right shape:
+
+```
+Board: 67 open · 3 epics · 0 PRs · 2 branches → delivery lead
+```
+
+A wait with a number in it is a wait the owner can read. A silent one looks
+like a hang, and looking like a hang is the same as being one.
+
+If the script reports that `gh` is missing or unauthenticated, say so in one
+line and carry on without a snapshot — the roles fall back to their own tools,
+correctly but slowly, and the owner should know which kind of run this was.
+
+**Then dispatch `cabinet:delivery-lead`, giving it both paths in the prompt**,
+and use its output for the frontier, what is taken, what is blocked, and any
+ordering constraint it found. A role that is not told the paths cannot use
+them. If the delivery lead was not hired — no `.cabinet/delivery-lead.md` —
+say so, build the brief from the notebooks alone, and note that no board state
+was derived this run.
 
 With `--deep`, dispatch every hired role in parallel instead, each running its
-own standing question. Otherwise dispatch only the delivery lead: the other
-roles' standing questions run weekly in `/cabinet:review`, and their open items
-are already in their notebooks. Say which mode you ran in, so the owner knows
-whether counsel and the CFO looked at today's board or last week's.
+own standing question, **all against the one snapshot you already took**. Give
+the epics path only to the delivery lead and the architect; the others do not
+read epic bodies and should not pay for them. Otherwise dispatch only the
+delivery lead: the other roles' standing questions run weekly in
+`/cabinet:review`, and their open items are already in their notebooks. Say
+which mode you ran in, so the owner knows whether counsel and the CFO looked at
+today's board or last week's.
 
 ## 4. Apply counsel's holds
 
@@ -135,6 +165,32 @@ Use Write or Edit:
 
 ## 9. The brief
 
+**Position first, then decisions.** A brief that opens with a decision queue
+makes the owner rebuild the company's position out of five unrelated items
+before they can judge any of them. Open with where the company stands, in four
+lines at most, all of it derived from the charter's stage and ending conditions
+against the snapshot you just took:
+
+```
+WHERE THE COMPANY STANDS · <date>
+Stage: <stage>. <Named gate> not crossed.
+To <gate>: <n> open items, <n> not started, <n> held.
+In flight: <n>. Longest untouched: <ticket> (<n>d) — <what it blocks>.
+```
+
+Name the gate the charter names. If the charter records more than one ending
+condition, report against the nearest one — that is the one the next decision
+is about. If the charter records no gate, say what the stage is and that
+nothing defines its end, because that absence is itself worth an amendment.
+
+Where the "to gate" count comes from: the charter's *what is absent* section
+and whatever launch or preconditions epic it cites. If neither exists, say the
+count cannot be derived rather than inventing one. A made-up number here is the
+worst possible failure of this block, because it is the line the owner will
+steer by.
+
+Then the decisions:
+
 ```
 CHIEF OF STAFF · <date> · <n> items
 
@@ -143,6 +199,12 @@ CHIEF OF STAFF · <date> · <n> items
 
  Handled without you: <n> items. Ask for detail on any of these.
 ```
+
+**Every line in both blocks is written for the owner, not for an engineer** —
+a capability and what it costs, never the mechanism. No file path, function or
+line number appears anywhere in the brief. If a role handed you one, translate
+it; if you cannot translate it, that role has not finished its thinking, and
+say so instead of passing the mechanism through.
 
 Then, briefly, only if it has content:
 

@@ -31,6 +31,26 @@ Note the location. An earlier design put these under `.claude/`, which many
 repositories ignore wholesale, so the memory would never have been committed
 at all. If your `.gitignore` covers `.cabinet/`, the plugin will tell you.
 
+## The one file that is not memory
+
+```
+$TMPDIR/cabinet-board-<owner>-<repo>.json    the board, as of a moment
+$TMPDIR/cabinet-epics-<owner>-<repo>.json    the epic bodies, same moment
+```
+
+A role holds no shell — that is what makes the money invariant structural — so
+a role asking the board a question pays a network round trip per page of
+tickets, and another for every body it reads. The command that dispatched it
+does have a shell, so it fetches the whole board once, with
+`scripts/board-snapshot`, and hands every role in the run the same file.
+
+This is the opposite of a notebook and is treated as such. It is derivable
+state, so it is never copied into one; it lives outside the repository so it
+cannot be committed by accident; it carries a `taken_at` because it describes
+one moment and not the present; and deleting it costs nothing, because the next
+run takes another. Epic bodies are split into their own file because they are
+usually most of the bytes and only ordering work reads them.
+
 ## What belongs in a notebook
 
 Judgements and reasoning that cannot be re-derived. Not facts a live query

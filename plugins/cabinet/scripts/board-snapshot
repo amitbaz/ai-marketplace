@@ -1,0 +1,123 @@
+#!/usr/bin/env bash
+#
+# Fetch the whole board in one pass and write it where a role can read it.
+#
+# A Cabinet role holds no shell, by design: its tool grant is what makes the
+# money invariant structural rather than a promise. The cost of that is that a
+# role asking the board a question pays one network round trip per ticket. On a
+# board of any size that is minutes, and the role has no way to make it faster.
+#
+# The command that dispatches the role does have a shell. This script is how it
+# uses it: four read-only calls, one snapshot file, handed to every role in the
+# run. Roles read the file instead of enumerating the board themselves.
+#
+# Usage:   board-snapshot <owner/repo>
+# Prints:  two `key=path` lines on stdout, and a one-line count summary on
+#          stderr so the dispatching command can show the owner what it got.
+#
+#            board=/…/cabinet-board-owner-repo.json
+#            epics=/…/cabinet-epics-owner-repo.json
+#
+# The split is deliberate. Epic bodies are usually most of the bytes and only
+# ordering work reads them, so a role that does not hunt ordering is handed the
+# board without paying for prose it will not use. The `epics=` line is omitted
+# when the board has no epics.
+#
+# Read-only. Every call here is a GET; nothing in this file can change the
+# board, spend anything, or write outside the temp directory.
+
+set -euo pipefail
+
+REPO="${1:-}"
+if [ -z "$REPO" ]; then
+    echo "usage: board-snapshot <owner/repo>" >&2
+    exit 64
+fi
+
+if ! command -v gh >/dev/null 2>&1; then
+    echo "board-snapshot: the gh CLI is not installed; no snapshot taken" >&2
+    exit 69
+fi
+
+if ! gh auth status >/dev/null 2>&1; then
+    echo "board-snapshot: gh is not authenticated; no snapshot taken" >&2
+    exit 77
+fi
+
+# The repo name comes from the charter, and a charter can go stale. Fail on
+# that here, with the reason, rather than four calls deep in a GraphQL error.
+if ! gh repo view "$REPO" --json name >/dev/null 2>&1; then
+    echo "board-snapshot: cannot see '$REPO' — it does not exist, was renamed," >&2
+    echo "  or this account cannot read it. The charter records owner/repo;" >&2
+    echo "  check that line before anything else." >&2
+    exit 78
+fi
+
+SLUG="${REPO//\//-}"
+OUT="${TMPDIR:-/tmp}/cabinet-board-${SLUG}.json"
+EPICS_OUT="${TMPDIR:-/tmp}/cabinet-epics-${SLUG}.json"
+STARTED="$(date -u +%Y-%m-%dT%H:%M:%SZ)"
+
+# Open issues with their labels. This is the board.
+issues="$(gh issue list --repo "$REPO" --state open --limit 500 \
+    --json number,title,labels,createdAt,updatedAt,url \
+    --jq '[.[] | {number, title, url, createdAt, updatedAt,
+                  labels: [.labels[].name]}]')"
+
+# Open pull requests, with the check rollup flattened to a verdict. The full
+# rollup is several hundred lines of check metadata that no role reads.
+prs="$(gh pr list --repo "$REPO" --state open --limit 200 \
+    --json number,title,headRefName,isDraft,createdAt,updatedAt,statusCheckRollup,url \
+    --jq '[.[] | {number, title, url, headRefName, isDraft, createdAt, updatedAt,
+                  checks: ([.statusCheckRollup // [] | .[] |
+                            (.conclusion // .state // "PENDING")] | group_by(.) |
+                           map({(.[0]): length}) | add // {})}]')"
+
+# Branches, for working out what has been started without a pull request yet.
+branches="$(gh api "repos/$REPO/branches" --paginate --jq '[.[].name]')"
+
+# Epic bodies. Ordering constraints live in the prose of these, and fetching
+# them one at a time is most of what made a role slow.
+epics="$(gh issue list --repo "$REPO" --label epic --state open --limit 50 \
+    --json number,title,body,url \
+    --jq '[.[] | {number, title, url, body}]' 2>/dev/null || echo '[]')"
+
+# Assemble. jq -n keeps each result as parsed JSON rather than a string.
+jq -n \
+    --arg repo "$REPO" \
+    --arg taken_at "$STARTED" \
+    --argjson issues "$issues" \
+    --argjson prs "$prs" \
+    --argjson branches "$branches" \
+    --argjson epics "$epics" \
+    '{
+        repo: $repo,
+        taken_at: $taken_at,
+        note: "A snapshot of one moment, taken by the command that dispatched you. Read it instead of enumerating the board. Nothing here is carried forward into a notebook.",
+        counts: {
+            open_issues: ($issues | length),
+            open_prs: ($prs | length),
+            branches: ($branches | length),
+            epics: ($epics | length)
+        },
+        epics_index: [$epics[] | {number, title, url}],
+        open_issues: $issues,
+        open_prs: $prs,
+        branches: $branches
+    }' > "$OUT"
+
+# Epic bodies live in their own file so a role that is not hunting ordering
+# never reads them. The board file carries the index, so every role still knows
+# they exist and can ask for the one it needs.
+jq -n \
+    --arg repo "$REPO" \
+    --arg taken_at "$STARTED" \
+    --argjson epics "$epics" \
+    '{repo: $repo, taken_at: $taken_at, epics: $epics}' > "$EPICS_OUT"
+
+jq -r '"Board: \(.counts.open_issues) open · \(.counts.epics) epics · \(.counts.open_prs) PRs · \(.counts.branches) branches"' "$OUT" >&2
+
+echo "board=$OUT"
+if [ "$(jq -r '.counts.epics' "$OUT")" != "0" ]; then
+    echo "epics=$EPICS_OUT"
+fi

@@ -32,6 +32,14 @@ is to raise it early, unprompted. That is what this is.
 ```
 
 ```
+Board: 67 open · 3 epics · 2 PRs · 4 branches → delivery lead
+
+WHERE THE COMPANY STANDS · Tue 09-09
+Stage: pre-launch, single user, no revenue. Gate A (a second account) not
+crossed.
+To Gate A: 6 open items, 3 not started, 1 held by counsel.
+In flight: 2. Longest untouched: #114 (12d) — blocks every licensed source.
+
 CHIEF OF STAFF · Tue 09-09 · 4 items
 
  1. COUNSEL — I am holding #98 out of the startable frontier. It gates the
@@ -51,8 +59,16 @@ CHIEF OF STAFF · Tue 09-09 · 4 items
  Handled without you: 3 items. Ask for detail on any of these.
 ```
 
+Position first, then decisions. A brief that is only a decision queue makes you
+rebuild where the company stands out of five unrelated items before you can
+judge any of them.
+
 Every item names the role that raised it, so you can ask that role why and get
-an accountable answer.
+an accountable answer. And every item is written for the person running the
+company: a capability and what it costs, never the mechanism that implements
+it. No file path, function or line number reaches you. The mechanism is not
+lost — it is in the role's notebook, and the role will give it to you the
+moment you ask for detail.
 
 ## The roles
 
@@ -245,12 +261,19 @@ happens when a note and the live board disagree.
 ## Requirements
 
 - **A GitHub MCP server**, registered as `github`, with tools named
-  `mcp__github__*`. Roles read the board through it and hold no shell, so
-  there is nothing to install and no script to trust. If it is missing, roles
-  say so and stop rather than guessing.
+  `mcp__github__*`. Roles read the board through it and hold no shell of their
+  own. If it is missing, roles say so and stop rather than guessing.
+- **`gh` and `jq`**, for the board snapshot. Because roles hold no shell, a
+  role left to enumerate a board of any size pays a round trip per page and
+  takes minutes. The commands do it instead, in one pass, with
+  `scripts/board-snapshot` — four read-only calls, written to a temporary file
+  that every role in the run reads. Nothing in that script can change the
+  board, and it never writes outside the temp directory. Without `gh` the
+  commands say so and the roles fall back to their own tools: correct, slow.
 - **GitHub as the tracker.** Other forges are not supported yet. Swapping one
-  in means changing the tool grant at the top of each role file; nothing else
-  in the plugin knows what a tracker is.
+  in means changing the tool grant at the top of each role file and the four
+  calls in `scripts/board-snapshot`; nothing else in the plugin knows what a
+  tracker is.
 
 ## Platform support
 
