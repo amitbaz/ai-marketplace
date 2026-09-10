@@ -17,9 +17,9 @@
 ## Blockers and Next Actions
 
 ### Blocker 1: Superset Live Gate — Owner Authentication
-**Status:** BLOCKED awaiting owner login  
-**Detail:** `superset auth whoami` exits 1 (not logged in). The probe() method cannot authenticate against Superset until the owner runs `superset auth login` in the local environment.  
-**Next action:** Owner must authenticate the local Superset installation at `~/.superset/bin/superset` before the Superset live gate can be tested. Once authenticated, re-run probe and reconciliation tests.
+**Status:** Authentication CLOSED (task L1, 2026-09-10); a new gate opened underneath it — no project exists
+**Detail:** `superset auth whoami --json` now succeeds: `{"userId":"a716a90d-...","email":"amitbaz2@gmail.com","organizationId":"84756378-...","authSource":"oauth"}`. `SupersetAdapter.probe()` run live against this: `{'provider': 'superset', 'cli': 'superset', 'version': '1.27.0', 'installed': True, 'authenticated': True, 'usable': True, 'reason': 'ready', ...}`. **However `superset projects list --json` returns `[]`** — this host has no Superset project to create a workspace in. Per the L1 dispatch brief's explicit instruction ("if a project must be created, that is an owner action — ask by recording BLOCKED, do not create"), no project was created.
+**Next action:** Owner creates (or points at) one Superset project for this synthetic test, or authorizes an implementer to run `superset projects create`/`setup`. Once a project id exists, re-run: create one workspace + terminal through the real adapter, launch a `--model haiku` worker, observe registration with a real chief, an Engineering→worker message and reply, close the terminal, `claude rm`.
 
 ### Blocker 2: Chief --bg Launch Defect — Missing Plugin Agent Definition
 **Status:** CLOSED (task L1, 2026-09-10) — root-caused and guarded, not fixable at the argv level
