@@ -284,3 +284,73 @@ this host (`superset projects setup --project <id> --import
 /Users/amitbaz/.superset/projects/cabinet-fixture` or equivalent) or
 registering the host to the cloud (`superset start --org …`). Per the L1
 dispatch, neither was run; both are recorded as BLOCKED, not attempted.
+
+## Addendum 2026-09-10 — Superset A.3 completed: project adopted, workspace + terminal live (task L1)
+
+Continuation of the previous addendum. The owner ran `superset projects
+setup --local --project 34da8ba1-4f8a-4650-8cd8-4d92a4309697 --path
+/Users/amitbaz/.superset/projects/cabinet-fixture --repo-url
+https://github.com/amitbaz/cabinet-fixture.git --name cabinet-fixture`.
+`superset projects list --json` now returns that project (id, repo, path).
+
+`probe()` live: `usable: True`, unchanged.
+`audit_setup_isolation()` live, after the earlier `projects get`→`list`
+fix: `{'contained': True, 'reason': 'no setup command is configured on
+this project', 'setup_commands': [], ...}` — correct, since the project
+carries no `setupCommand`.
+
+**Bootstrap needed and approved by the dispatcher:** `amitbaz/cabinet-fixture`
+had zero commits (`gh api repos/amitbaz/cabinet-fixture` → `size: 0`,
+`branches` → `[]`), so `workspaces create --base-branch main` failed with
+`fatal: not a valid object name: 'HEAD'` — no ref to branch from. One
+minimal commit was pushed to `main` from the host's clone at
+`/Users/amitbaz/.superset/projects/cabinet-fixture`: a `README.md` stating
+this is a Cabinet test fixture, to be deleted after A4. **Bootstrap commit
+SHA: `5b87fc7`** (root commit, pushed to `origin/main`).
+
+**Workspace created**, live, via `SupersetAdapter.create_workspace`:
+`workspace_id 649bcfc4-54b7-4fc3-addf-77522371017c`, name
+`cabinet-l1a3-probe`, branch `cabinet/l1a3-probe`, base `main`.
+
+**Adapter defect found and fixed along the way:** the create response's
+own JSON (`{"workspace": {"id": ..., "name": ..., "branch": ...},
+"terminals": [], "agents": [], ...}`) carries no `path`/`worktreePath` and
+no base sha — unlike `workspaces list`, whose rows do carry
+`worktreePath`. `create_workspace` returned `path: None`, which would have
+made the very next call (`create_terminal`, via `_path_of`) raise
+`WORKSPACE_NOT_CREATED`. Fixed: `create_workspace` now falls back to one
+`workspaces list` lookup by id when the create response has no path.
+Commit `7d8f676`; unit test
+`tests/cabinet/test_superset.py::SupersetArgvTest.test_a_create_response_with_no_path_is_filled_in_from_list`.
+Resolved path, confirmed live:
+`/Users/amitbaz/.superset/worktrees/34da8ba1-4f8a-4650-8cd8-4d92a4309697/cabinet/l1a3-probe`.
+
+**Terminal created and observed from outside.** First attempt used the
+worker's normal interactive launch argv (no `-p`) and hit Claude Code's
+one-time workspace-trust TUI prompt ("Quick safety check... ❯ No, exit /
+Yes, I trust this folder"), which blocks on a keypress; `superset
+terminals send` with raw arrow-key or digit text did not visibly move the
+selection (the read-back kept showing the same screen), so rather than
+fight PTY key-injection further, the launch was changed to add `-p`
+(print/non-interactive mode), which Claude Code's own `--help` documents
+as skipping the trust dialog entirely. Re-created cleanly:
+`terminal_id 560c338e-010e-4362-94a2-1132f27148b7`. `superset terminals
+read --workspace ... --terminal ... --json` (a call from outside the
+worker's own process) showed the worker's final line: `READY` — the exact
+word the prompt asked for, confirming the worker ran end to end inside the
+real sandboxed, restricted profile in the real Superset-managed worktree.
+Terminal closed afterward: `superset terminals close` → `{"status":
+"disposed"}`. The worktree itself was kept, per instruction — not removed.
+
+**Engineering→worker message/reply: not_run.** The worker used above was a
+one-shot `-p` run that exited after printing `READY`; observing a live
+message exchange would need a second worker kept running interactively
+(not `-p`, so back to the trust-dialog problem above) plus a real chief
+session — more than the "one short session" the dispatch allowed for this
+step. Recorded as `not_run` rather than simulated.
+
+**Cleanup:** no stray `claude` sessions (`claude agents --json` showed the
+same 2 unrelated sessions before and after every step in this addendum);
+`superset terminals list --workspace ... --json` shows `{"sessions": []}`
+after closing. The workspace and its worktree were left in place, as
+instructed.
