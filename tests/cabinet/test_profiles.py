@@ -1304,3 +1304,27 @@ class PackagedFilesTest(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class ModelPassthroughTest(ProfileCase):
+    """`--model` is a flow-test convenience: validated, derived from the
+    profile, and therefore covered by the argv re-derivation check."""
+
+    def test_a_model_named_in_the_workspace_reaches_the_argv(self):
+        profile = self.chief(model="haiku")
+        argv = list(profiles.plain(profile)["argv"])
+        self.assertEqual(argv[argv.index("--model") + 1], "haiku")
+        profiles.verify_profile(profile)
+
+    def test_no_model_means_no_model_flag(self):
+        self.assertNotIn("--model", profiles.plain(self.chief())["argv"])
+
+    def test_a_model_with_shell_characters_is_refused(self):
+        with self.assertRaises(CabinetError) as caught:
+            self.chief(model="haiku; rm -rf /")
+        self.assertEqual(caught.exception.code, "PROFILE_PATH_UNSAFE")
+
+    def test_a_model_added_only_to_the_argv_is_refused(self):
+        mutated = profiles.plain(self.chief())
+        mutated["argv"] = list(mutated["argv"]) + ["--model", "opus"]
+        self.refuse(mutated, "PROFILE_ARGV_MISMATCH")

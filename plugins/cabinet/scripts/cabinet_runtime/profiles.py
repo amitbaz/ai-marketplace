@@ -135,10 +135,10 @@ _ARGV_WORD = re.compile(r"^[^;|&<>$`\"'\\\n\r\x00]*$")
 
 ALLOWED_WORKSPACE = {
     "chief": ("assignment", "path", "claude_path", "plugin_root", "mcp_config",
-              "settings_path", "session_id", "peer_registry"),
+              "settings_path", "session_id", "peer_registry", "model"),
     "staff": ("plugin_root",),
     "worker": ("assignment", "path", "claude_path", "plugin_root",
-               "chief_name", "peer_registry"),
+               "chief_name", "peer_registry", "model"),
 }
 REQUIRED_WORKSPACE = {
     "chief": ("assignment", "claude_path", "plugin_root", "mcp_config",
@@ -403,6 +403,10 @@ def _validate_workspace(kind, workspace):
                                           "workspace.chief_name")
     if "session_id" in workspace:
         checked["session_id"] = safe_session_id(workspace["session_id"])
+    if "model" in workspace:
+        # A model name is passed to `--model` verbatim, so it is held to the
+        # same character class as a slug: no spaces, no shell metacharacters.
+        checked["model"] = safe_slug(workspace["model"], "workspace.model")
     return checked
 
 
@@ -498,6 +502,8 @@ def build_argv(profile):
     for directory in body.get("add_dirs") or ():
         argv += ["--add-dir", directory]
     argv += ["--tools", tools_flag(body)]
+    if body.get("model"):
+        argv += ["--model", body["model"]]
     if kind == "chief":
         argv += ["--session-id", body["session_id"], "--name",
                  body["session_name"]]
@@ -577,6 +583,7 @@ def build_profile(role, workspace, public_context, check_profiles=(),
         "mcp_config": space.get("mcp_config"),
         "settings_path": space.get("settings_path"),
         "session_id": space.get("session_id"),
+        "model": space.get("model"),
         "check_profiles": checks,
         "sandbox": sandbox,
         "settings": settings,

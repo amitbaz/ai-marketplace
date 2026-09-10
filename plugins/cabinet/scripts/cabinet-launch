@@ -61,6 +61,8 @@ def parse_arguments(argv):
     parser.add_argument("--claude", help="path to the Claude executable")
     parser.add_argument("--plugin-root", help="path to the installed plugin")
     parser.add_argument("--session-id", help="session UUID for the chief")
+    parser.add_argument("--model", help="model name passed to `claude --model`"
+                        " (for flow tests; production keeps the user default)")
     parser.add_argument("--include-service-tools", action="store_true",
                         default=INCLUDE_SERVICE_TOOLS_IN_TOOLS_FLAG,
                         help="also name the Cabinet tools in --tools")
@@ -224,7 +226,8 @@ def build_launch(options, environ, cwd):
         {"assignment": options.assignment, "claude_path": claude_path,
          "plugin_root": plugin_root, "mcp_config": paths["mcp_config"],
          "settings_path": paths["settings_path"], "session_id": session_id,
-         "peer_registry": peer_registry},
+         "peer_registry": peer_registry,
+         **({"model": options.model} if options.model else {})},
         str(views), home=home,
         include_service_tools_in_tools_flag=options.include_service_tools)
     profiles.verify_profile(profile)
