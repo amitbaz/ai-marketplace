@@ -51,6 +51,17 @@ if [ -z "$REPO" ]; then
     exit 64
 fi
 
+# The standard-library reader, where it is available: fully paginated, and it
+# says when a page did not arrive. The jq path below stays for a machine
+# without python3, so this adds no install-time requirement.
+RUNTIME_DIR="$(cd "$(dirname "$0")" && pwd)"
+if command -v gh >/dev/null 2>&1 && command -v python3 >/dev/null 2>&1 \
+    && PYTHONPATH="$RUNTIME_DIR" python3 -c 'import cabinet_runtime.boardcli' \
+        >/dev/null 2>&1; then
+    exec env PYTHONPATH="$RUNTIME_DIR" python3 -m cabinet_runtime.boardcli \
+        charter-sources "$REPO"
+fi
+
 for tool in gh jq; do
     if ! command -v "$tool" >/dev/null 2>&1; then
         echo "charter-sources: $tool is not installed; no sources gathered" >&2

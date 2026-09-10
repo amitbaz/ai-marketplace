@@ -5,3 +5,6 @@ skills-lock.json
 
 # Harvested Claude Code subagent transcripts (see plugins/groundwork/README.md)
 .groundwork/
+
+# Python bytecode from the repository-only checks under tests/
+__pycache__/

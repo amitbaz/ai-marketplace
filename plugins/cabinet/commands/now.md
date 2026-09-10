@@ -5,6 +5,9 @@ argument-hint: ""
 
 # /cabinet:now
 
+Load `Skill(skill: "cabinet:coordination-rules")` first — this command reports
+to the owner, so the briefing rule applies to every line it prints.
+
 The standup is a run: it dispatches roles, ranks what reaches you, and writes
 to the notebooks. This is not that. It answers one question — what is true
 right now — and costs seconds.

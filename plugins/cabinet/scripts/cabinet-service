@@ -1,0 +1,714 @@
+#!/usr/bin/env python3
+"""Cabinet's stdio MCP entrypoint.
+
+Two ways in, and they are not the same connection:
+
+* **Ordinary.** The plugin's own `.mcp.json` starts this file with no
+  launcher variables. It resolves the repository from `git remote get-url
+  origin` in the working directory, opens that company, and serves the
+  read-only operations. Nothing it exposes can change company state.
+
+* **Restricted.** `cabinet-launch` writes a private launch record and a
+  per-launch capability, hands their paths to this process through the
+  generated MCP configuration, and starts the chief. This file reads the
+  capability from its private file, compares its digest with the record, and
+  only then builds a service that may write. The capability itself never
+  reaches the service object, a tool result, an export or the repository.
+
+Nothing here interprets what an operation means; that is `service.py`. This
+file resolves identity, verifies the launch, and connects streams.
+"""
+
+import hashlib
+import json
+import os
+import stat
+import sys
+import time
+from datetime import datetime, timezone
+from pathlib import Path
+
+sys.path.insert(0, str(Path(__file__).resolve().parent))
+
+from cabinet_runtime import contracts, processes, profiles   # noqa: E402
+from cabinet_runtime.errors import CabinetError              # noqa: E402
+from cabinet_runtime.git import GitAdapter, git_run           # noqa: E402
+from cabinet_runtime.github import GithubAdapter, gh_run      # noqa: E402
+from cabinet_runtime.profiles import build_profile           # noqa: E402
+from cabinet_runtime.rpc import RpcServer, StdioElicitor     # noqa: E402
+from cabinet_runtime import service as service_module         # noqa: E402
+from cabinet_runtime.service import (CabinetService,            # noqa: E402
+                                     chief_address_for)
+from cabinet_runtime.superset import (PROVIDER_ENVIRONMENT,   # noqa: E402
+                                      LocalWorktreeProvider, SupersetAdapter)
+from cabinet_runtime.store import Store, process_start_marker  # noqa: E402
+
+ENV_LAUNCH_FILE = "CABINET_LAUNCH_FILE"
+ENV_CAPABILITY_FILE = "CABINET_CAPABILITY_FILE"
+ENV_HOME = "CABINET_HOME"
+ENV_REPO = "CABINET_REPO"
+
+#: Fields the launch record on disk must carry.
+LAUNCH_RECORD_FIELDS = ("kind", "launch_id", "company_dir", "repo", "role",
+                        "profile_path", "profile_body_path", "profile_digest",
+                        "session_id", "host_pid", "host_process_start",
+                        "lease_generation", "capability_sha256")
+
+#: Fields a record may carry. A record written without them is a foreground
+#: launch, which is the checked case, so their absence never widens anything.
+OPTIONAL_RECORD_FIELDS = ("background", "written_epoch", "record_sha256")
+
+#: The part of a launch record that is bound to the capability. Editing any of
+#: it after the launcher wrote it invalidates `record_sha256`, which is what
+#: stops a foreground record being turned into a background one by flipping a
+#: single boolean. `lease_generation` is deliberately outside it, because
+#: `renew_launch` rewrites that field by design after the lease is taken.
+BOUND_RECORD_FIELDS = ("kind", "launch_id", "company_dir", "repo", "role",
+                       "profile_path", "profile_body_path", "profile_digest",
+                       "session_id", "host_pid", "host_process_start",
+                       "background", "written_epoch")
+
+
+def record_binding(record, capability):
+    """The digest that ties a launch record's own claims to its capability.
+
+    `capability_sha256` proves the file beside the record is the capability
+    this launch minted. It says nothing about the rest of the record, so a
+    field such as `background` — which decides *which* host check runs — could
+    be edited afterwards with no other change.
+
+    This covers both together. Recomputing it needs the capability, so editing
+    the record now means reading a second owner-only file as well as this one.
+
+    Be precise about what that is worth: both files are 0600 and owned by the
+    same user, so an attacker who already has that user can still read the
+    capability and recompute this digest. What it removes is the one-field
+    edit, not the same-uid threat. The parent-process check is the binding that
+    survives that threat, and it is exactly the one a detached launch cannot
+    have.
+    """
+
+    material = {field: record.get(field) for field in BOUND_RECORD_FIELDS}
+    return sha256_of(contracts.canonical_json(
+        {"capability": capability, "record": material}))
+
+#: Fields handed to the service: facts about the launch and nothing else. The
+#: capability digest, the host identity and the bound generation stay here,
+#: because they are this file's checks to make and the service has no use for
+#: them beyond the answer.
+LAUNCH_CONTEXT_FIELDS = ("kind", "launch_id", "company_dir", "repo", "role",
+                         "profile_path", "profile_digest", "session_id",
+                         "background")
+
+#: How long a background launch record stays usable, in seconds. A detached
+#: session has no parent to bind to, so the binding is the capability plus the
+#: length of time a launch takes to start. See `check_background_host`.
+BACKGROUND_LAUNCH_WINDOW_SECONDS = 120
+
+MAX_PRIVATE_BYTES = 64 * 1024
+GIT_TIMEOUT = 10
+
+
+def utc_now():
+    return datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
+
+
+def sha256_of(text):
+    return hashlib.sha256(text.encode("utf-8")).hexdigest()
+
+
+def log(text):
+    sys.stderr.write("cabinet-service: %s\n" % text)
+    sys.stderr.flush()
+
+
+# --- private files ----------------------------------------------------------
+
+def read_private(path, label):
+    """Read a small owner-only file, refusing anything a peer could have set."""
+
+    candidate = Path(path)
+    if not candidate.is_absolute():
+        raise CabinetError("UNSAFE_PATH", "%s must be absolute: %s"
+                           % (label, path))
+    if candidate.is_symlink():
+        raise CabinetError("UNSAFE_PATH", "%s is a symlink: %s" % (label, path))
+    try:
+        info = candidate.lstat()
+    except OSError as problem:
+        raise CabinetError("UNSAFE_PATH", "%s is unreadable: %s"
+                           % (label, problem))
+    if not stat.S_ISREG(info.st_mode):
+        raise CabinetError("UNSAFE_PATH", "%s is not a regular file" % label)
+    if stat.S_IMODE(info.st_mode) & 0o077:
+        raise CabinetError("UNSAFE_PATH",
+                           "%s is readable beyond its owner (mode %o)"
+                           % (label, stat.S_IMODE(info.st_mode)))
+    if info.st_size > MAX_PRIVATE_BYTES:
+        raise CabinetError("UNSAFE_PATH", "%s is larger than %d bytes"
+                           % (label, MAX_PRIVATE_BYTES))
+    return candidate.read_text(encoding="utf-8")
+
+
+def verify_launch(environ):
+    """Return the verified launch context, or None for an ordinary session."""
+
+    record = verified_record(environ)
+    return launch_context(record) if record is not None else None
+
+
+def launch_context(record):
+    """The facts a verified record hands to the service, and nothing else."""
+
+    return {field: record[field] for field in LAUNCH_CONTEXT_FIELDS
+            if field in record}
+
+
+def verified_record(environ):
+    """Return the whole verified launch record, or None for an ordinary session.
+
+    A half-supplied context is an error rather than a downgrade: a launch that
+    lost its capability must not quietly become a read-only session that looks
+    like the chief.
+    """
+
+    launch_file = environ.get(ENV_LAUNCH_FILE)
+    capability_file = environ.get(ENV_CAPABILITY_FILE)
+    if not launch_file and not capability_file:
+        return None
+    if not launch_file or not capability_file:
+        raise CabinetError("LAUNCH_CONTEXT_INVALID",
+                           "%s and %s must be supplied together"
+                           % (ENV_LAUNCH_FILE, ENV_CAPABILITY_FILE))
+    try:
+        record = json.loads(read_private(launch_file, "the launch record"))
+    except ValueError as problem:
+        raise CabinetError("LAUNCH_CONTEXT_INVALID",
+                           "the launch record is not JSON: %s" % problem)
+    if not isinstance(record, dict):
+        raise CabinetError("LAUNCH_CONTEXT_INVALID",
+                           "the launch record must be an object")
+    unknown = [field for field in record
+               if field not in LAUNCH_RECORD_FIELDS + OPTIONAL_RECORD_FIELDS]
+    if unknown:
+        raise CabinetError("LAUNCH_CONTEXT_INVALID",
+                           "the launch record has unknown %s"
+                           % ", ".join(sorted(unknown)))
+    missing = [field for field in LAUNCH_RECORD_FIELDS if field not in record]
+    if missing:
+        raise CabinetError("LAUNCH_CONTEXT_INVALID",
+                           "the launch record is missing %s"
+                           % ", ".join(missing))
+    capability = read_private(capability_file, "the launch capability").strip()
+    if not capability or sha256_of(capability) != record["capability_sha256"]:
+        raise CabinetError("CAPABILITY_INVALID",
+                           "the capability does not match its launch record")
+    bound = record.get("record_sha256")
+    if not bound:
+        raise CabinetError(
+            "LAUNCH_RECORD_TAMPERED",
+            "this launch record carries no binding digest, so its own claims "
+            "— including whether it is a detached launch — are unverifiable")
+    if bound != record_binding(record, capability):
+        raise CabinetError(
+            "LAUNCH_RECORD_TAMPERED",
+            "this launch record was changed after it was written; its claims "
+            "no longer match the capability they were bound to")
+    company = Path(record["company_dir"])
+    if not company.is_absolute() or not company.is_dir():
+        raise CabinetError("LAUNCH_CONTEXT_INVALID",
+                           "the launch record names no company directory")
+    private = (company / "runtime" / "profiles").resolve()
+    for label, path in (("capability", capability_file),
+                        ("launch record", launch_file),
+                        ("profile", record["profile_body_path"]),
+                        ("settings", record["profile_path"])):
+        if Path(path).resolve().parent != private:
+            raise CabinetError(
+                "LAUNCH_CONTEXT_INVALID",
+                "the %s file does not live under this company's private "
+                "runtime directory" % label)
+    check_profile(record)
+    check_host(record)
+    return record
+
+
+def check_profile(record):
+    """Require the profile on disk to be the one the record was written for.
+
+    The digest in the record used to be carried and never compared, which made
+    it read as verified when it was not. Three things are checked here: the
+    profile still passes `verify_profile`, its digest is the recorded one, and
+    the settings file the session is actually launched with is the settings
+    that profile describes. A profile edited after the record was written, or
+    a settings file swapped underneath it, fails all the same.
+    """
+
+    try:
+        body = json.loads(read_private(record["profile_body_path"],
+                                       "the launch profile"))
+    except ValueError as problem:
+        raise CabinetError("LAUNCH_PROFILE_MISMATCH",
+                           "the launch profile is not JSON: %s" % problem)
+    if not isinstance(body, dict):
+        raise CabinetError("LAUNCH_PROFILE_MISMATCH",
+                           "the launch profile must be an object")
+    profiles.verify_profile(body)
+    if profiles.digest_of(body) != record["profile_digest"]:
+        raise CabinetError("LAUNCH_PROFILE_MISMATCH",
+                           "the profile on disk is not the one this launch "
+                           "record was written for")
+    if body.get("role") != record["role"] or \
+            body.get("session_id") != record["session_id"]:
+        raise CabinetError("LAUNCH_PROFILE_MISMATCH",
+                           "the profile names another role or session")
+    try:
+        written = json.loads(read_private(record["profile_path"],
+                                          "the launch settings"))
+    except ValueError as problem:
+        raise CabinetError("LAUNCH_PROFILE_MISMATCH",
+                           "the launch settings are not JSON: %s" % problem)
+    if contracts.canonical_json(written) != \
+            contracts.canonical_json(body.get("settings")):
+        raise CabinetError("LAUNCH_PROFILE_MISMATCH",
+                           "the settings this session launched with are not "
+                           "the settings the verified profile describes")
+    return body
+
+
+def check_host(record):
+    """Require this process to be a child of the process that launched Claude.
+
+    `cabinet-launch` replaces its own image with Claude through `os.execve`,
+    which keeps the identifier and the start time, so the process that spawned
+    this server is the process that wrote the record. Without this, two
+    environment variables pointing at two readable files are the whole of the
+    check, and a stale export in a shell profile would silently promote every
+    ordinary session on the machine to a writing one.
+
+    A background launch is the one case where that ancestry does not exist,
+    and it gets a different check rather than a waived one.
+    """
+
+    if record.get("background"):
+        return check_background_host(record)
+    parent = os.getppid()
+    if parent != record["host_pid"]:
+        raise CabinetError(
+            "LAUNCH_HOST_MISMATCH",
+            "this server was started by process %d, not by the launched "
+            "session %s" % (parent, record["host_pid"]))
+    recorded = record["host_process_start"]
+    if recorded:
+        observed = process_start_marker(parent)
+        if not observed:
+            raise CabinetError(
+                "LAUNCH_HOST_MISMATCH",
+                "this platform did not report a start time for process %d, so "
+                "the launch cannot be bound to it" % parent)
+        if observed != recorded:
+            raise CabinetError(
+                "LAUNCH_HOST_MISMATCH",
+                "process %d is not the process that wrote this launch record"
+                % parent)
+
+
+def check_background_host(record):
+    """Bind a detached launch to time, because it has no parent to bind to.
+
+    `claude --bg` starts the session in a process that is deliberately not a
+    descendant of the launcher: the launcher's own process exits and the
+    service is reparented. Measured on 2.1.267 — the recorded pid was gone and
+    the server's parent was an unrelated `claude bg-spare` process. The
+    ancestry check therefore cannot hold here, and asserting it anyway would be
+    exactly the unenforced claim rule six forbids.
+
+    What still holds is the per-launch capability, verified before this point,
+    and a short window. The record is usable only for about as long as a launch
+    takes to start, so a record left behind in a shell profile and picked up an
+    hour later is refused rather than honoured. This is a weaker binding than
+    the foreground one, it is weaker on purpose, and it is recorded as such in
+    `docs/cabinet/acceptance/o2-native-exchange.md`.
+    """
+
+    written = record.get("written_epoch")
+    if not isinstance(written, (int, float)):
+        raise CabinetError(
+            "LAUNCH_HOST_MISMATCH",
+            "a background launch record states when it was written; this one "
+            "does not, so nothing binds it to this process")
+    age = time.time() - float(written)
+    if age < -5 or age > BACKGROUND_LAUNCH_WINDOW_SECONDS:
+        raise CabinetError(
+            "LAUNCH_HOST_MISMATCH",
+            "this background launch record is %.0f seconds old; it is usable "
+            "for %d seconds after it is written, because a detached session "
+            "has no parent process to bind to"
+            % (age, BACKGROUND_LAUNCH_WINDOW_SECONDS))
+
+
+def check_generation(record, store):
+    """Refuse a launch record another lead has since overtaken.
+
+    A record is bound to a generation the first time its session takes the
+    lead, and `renew_launch` writes that back. A later start under the same
+    record must find the same generation still current: if another lead has
+    taken the company, this record is spent, and the capability does not renew
+    itself. `None` means this launch has not led yet, which the host check
+    already covers.
+    """
+
+    bound = record.get("lease_generation")
+    if bound is None:
+        return
+    lease = store.get_lease()
+    current = lease["generation"] if lease else 0
+    if current != bound:
+        raise CabinetError(
+            "LAUNCH_GENERATION_STALE",
+            "this launch was bound to generation %s and the company is now at "
+            "generation %s" % (bound, current))
+
+
+def renew_launch(launch_file, generation):
+    """Bind the launch record to the generation its session just acquired."""
+
+    record = json.loads(read_private(launch_file, "the launch record"))
+    record["lease_generation"] = generation
+    descriptor = os.open(str(launch_file),
+                         os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600)
+    with os.fdopen(descriptor, "w", encoding="utf-8") as stream:
+        stream.write(json.dumps(record, indent=2, sort_keys=True))
+    os.chmod(str(launch_file), 0o600)
+    return record
+
+
+# --- ordinary identity ------------------------------------------------------
+
+def repo_from_origin(url):
+    """Return `owner/name` for a GitHub remote URL, or None."""
+
+    text = (url or "").strip()
+    if not text:
+        return None
+    if text.endswith(".git"):
+        text = text[:-len(".git")]
+    if "://" in text:
+        text = text.split("://", 1)[1]
+        text = text.split("/", 1)[1] if "/" in text else ""
+    elif ":" in text and not text.startswith("/"):
+        text = text.split(":", 1)[1]
+    else:
+        return None
+    parts = [part for part in text.split("/") if part]
+    if len(parts) != 2:
+        return None
+    return "/".join(parts)
+
+
+def repo_from_git(cwd, environ):
+    """Read the origin remote of the working directory, or return None."""
+
+    try:
+        result = processes.run_argv(
+            ["git", "remote", "get-url", "origin"], cwd=cwd,
+            env=processes.build_env(("PATH", "HOME"), environ=environ),
+            timeout=GIT_TIMEOUT)
+    except CabinetError as problem:
+        log("no repository identity: %s" % problem.message)
+        return None
+    if result["returncode"] != 0:
+        return None
+    return repo_from_origin(result["stdout"])
+
+
+def company_directory(repo, environ):
+    """The company directory for a repository, using the legacy slug."""
+
+    root = environ.get(ENV_HOME)
+    base = Path(root) if root else Path(environ.get("HOME", "~")).expanduser() \
+        / ".cabinet"
+    return Path(base) / "repos" / repo.replace("/", "-")
+
+
+# --- adapters that later tasks replace --------------------------------------
+
+class PendingAdapter:
+    """Stands where a real adapter will be, and refuses by name.
+
+    The injection point is real so `service.py` never has to grow a special
+    case later; every call refuses with the task that owns it.
+    """
+
+    def __init__(self, name, task):
+        self._name = name
+        self._task = task
+
+    def __getattr__(self, operation):
+        if operation.startswith("_"):
+            raise AttributeError(operation)
+
+        def refuse(*_args, **_kwargs):
+            raise CabinetError("NOT_IMPLEMENTED_YET",
+                               "the %s adapter's %s lands in task %s"
+                               % (self._name, operation, self._task))
+
+        return refuse
+
+
+# --- entry ------------------------------------------------------------------
+
+def build_service(environ, cwd, launch=None):
+    """Open the company this connection belongs to and wrap it in a service.
+
+    A launch context that fails verification does not stop the server: it
+    becomes an ordinary read-only connection whose `doctor` says why. Failing
+    to start would leave the operator with a session that does nothing and no
+    way to ask it what went wrong, and a read-only connection is the same
+    refusal `RESTRICTED_SESSION_REQUIRED` gives anyway. The company it then
+    opens is the one the working directory names, never the one the rejected
+    record named.
+    """
+
+    record = None
+    refusal = None
+    if launch is None:
+        try:
+            record = verified_record(environ)
+        except CabinetError as problem:
+            log("%s: %s" % (problem.code, problem.message))
+            refusal = problem
+        if record is not None:
+            launch = launch_context(record)
+    if launch is not None:
+        repo = launch["repo"]
+        company = Path(launch["company_dir"])
+    else:
+        repo = environ.get(ENV_REPO) or repo_from_git(cwd, environ)
+        if not repo:
+            raise CabinetError(
+                "REPO_INVALID",
+                "no repository identity: run this from a checkout with an "
+                "origin remote, or set %s" % ENV_REPO)
+        company = company_directory(repo, environ)
+        if not (company / "runtime" / "cabinet.sqlite3").exists():
+            # A connection that may only read does not bring a company into
+            # existence. This path is reached by every ordinary session in
+            # every checkout on the machine, and by a *refused* restricted
+            # launch — which is how it created an empty company under the
+            # owner's real ~/.cabinet during the O2 live run. Diagnosis is
+            # still available; storage is not created to provide it.
+            return absent_company_service(repo, company, refusal), None, None
+    store = Store(company, utc_now, repo=repo).open()
+    renewer = None
+    if record is not None:
+        try:
+            check_generation(record, store)
+        except CabinetError as problem:
+            log("%s: %s" % (problem.code, problem.message))
+            refusal = problem
+            launch = None
+        else:
+            launch_file = environ[ENV_LAUNCH_FILE]
+            renewer = lambda generation: renew_launch(launch_file, generation)
+    elicitor = StdioElicitor()
+    board = build_board_adapter(store)
+    providers = build_workspace_providers(store, record, environ)
+    service = CabinetService(
+        store, board, providers.get("superset"),
+        utc_now, elicitor, build_profile, launch=launch,
+        launch_refusal=refusal.to_dict()["error"] if refusal else None,
+        launch_renewer=renewer, board_reader=board,
+        providers=providers,
+        worker_toolchain=build_worker_toolchain(record, store))
+    return service, elicitor, store
+
+
+def build_workspace_providers(store, record, environ):
+    """Every isolated-workspace mechanism this host can offer, by name.
+
+    Both are constructed whether or not the setup grant names them: which one
+    runs is the grant's decision, and a provider that was never built could
+    not report *why* it is unusable. The Superset adapter answers "not logged
+    in" rather than being silently absent.
+    """
+
+    hooks = store.runtime_dir / "githooks"
+    hooks.mkdir(parents=True, exist_ok=True)
+    os.chmod(str(hooks), 0o700)
+    root = repository_root(environ)
+    git = GitAdapter(git_run(cwd=root), root, str(hooks)) if root else None
+    claude_path = None
+    if record is not None:
+        try:
+            body = json.loads(read_private(record["profile_body_path"],
+                                           "the launch profile"))
+            claude_path = body.get("claude_path")
+        except (CabinetError, ValueError, KeyError):
+            claude_path = None
+    providers = {"superset": SupersetAdapter(
+        provider_run(root or "/"), project_id=(store.identity or {}).get("repo"),
+        host_id=environ.get("SUPERSET_HOST"),
+        superset_path=environ.get("CABINET_SUPERSET", "superset"), git=git)}
+    if root and claude_path:
+        providers["local"] = LocalWorktreeProvider(
+            provider_run(root), root, str(store.root / "workspaces"),
+            claude_path=claude_path, git=git)
+    return providers
+
+
+def build_worker_toolchain(record, store):
+    """The binary, plugin directory and chief address a worker inherits.
+
+    Read from the chief's own verified launch profile, which the entrypoint
+    has already matched against the launch record's digest. Nothing here comes
+    from a tool argument.
+    """
+
+    if record is None:
+        return None
+    try:
+        body = json.loads(read_private(record["profile_body_path"],
+                                       "the launch profile"))
+    except (CabinetError, ValueError, KeyError) as problem:
+        # Fail closed, but say so. Returning None silently makes a later
+        # worker launch refuse with RESTRICTED_SESSION_REQUIRED, which points
+        # at the connection rather than at the profile that could not be read.
+        log("worker toolchain unavailable: %s" % problem)
+        return None
+    return {"claude_path": body.get("claude_path"),
+            "plugin_root": body.get("plugin_root"),
+            "public_context": body.get("public_context"),
+            "chief_name": body.get("session_name"),
+            "chief_address": chief_address_for("worker",
+                                              body.get("session_name")),
+            "peer_registry": str(store.peer_registry_path)}
+
+
+def repository_root(environ):
+    """The checkout isolated worktrees are taken from, or None."""
+
+    root = environ.get("CABINET_REPO_ROOT")
+    if root and os.path.isdir(os.path.join(root, ".git")):
+        return root
+    if root and os.path.exists(os.path.join(root, ".git")):
+        return root
+    return None
+
+
+def provider_run(cwd):
+    """A bounded runner for a provider CLI: no shell, allowlisted environment."""
+
+    env = processes.build_env(PROVIDER_ENVIRONMENT)
+
+    def run(argv, cwd=cwd, timeout=300):
+        return processes.run_argv(argv, cwd, env, timeout, redact_output=False)
+
+    return run
+
+
+def build_board_adapter(store):
+    """The real board adapter, or the refusing stand-in when there is no repo.
+
+    The adapter is bound to the company's own repository at construction, so
+    the repository an action operates on never comes from the action.
+    """
+
+    identity = store.identity
+    if not identity or not identity.get("repo"):
+        return PendingAdapter("GitHub", "O3")
+    return GithubAdapter(gh_run(), identity["repo"])
+
+
+class AbsentCompanyService:
+    """The surface a session gets when no company exists to open.
+
+    It answers the one question worth asking — what is missing and what would
+    create it — and refuses everything else by a stable code. It holds no
+    store, creates no directory, and has no writing path at all, so there is
+    nothing here that could become a company by being called.
+    """
+
+    def __init__(self, repo, company, refusal=None):
+        self.repo = repo
+        self.company = str(company)
+        self.refusal = refusal
+        self.launch = None
+
+    def tool_names(self):
+        return list(service_module.TOOL_NAMES)
+
+    def has_tool(self, name):
+        return name in service_module.TOOL_NAMES
+
+    def tools(self):
+        return [definition for definition in _read_only_definitions()
+                if definition["name"] == "cabinet_doctor"]
+
+    def call(self, name, arguments):
+        if not self.has_tool(name):
+            raise CabinetError("TOOL_UNKNOWN", "no Cabinet tool named %s" % name)
+        if name != "cabinet_doctor":
+            raise CabinetError(
+                "COMPANY_NOT_FOUND",
+                "no company state exists for %s at %s. Start one with "
+                "`cabinet-launch --repo %s` and the setup dialog; this "
+                "connection creates nothing."
+                % (self.repo, self.company, self.repo))
+        checks = [{"check": "store", "status": "absent",
+                   "detail": "no company state for %s at %s"
+                             % (self.repo, self.company)},
+                  {"check": "identity", "status": "unbound",
+                   "detail": self.repo},
+                  {"check": "launch", "status": "refused" if self.refusal
+                   else "ordinary",
+                   "detail": "%s: %s" % (self.refusal.code, self.refusal.message)
+                   if self.refusal else
+                   "reads only; mutation needs a verified launch"},
+                  {"check": "next", "status": "ok",
+                   "detail": "run `cabinet-launch --repo %s`, or /cabinet:hire "
+                             "in an ordinary session, to create this company"
+                             % self.repo}]
+        return {"ok": False, "generated": utc_now(), "checks": checks}
+
+
+def _read_only_definitions():
+    """The read tool definitions, borrowed from the real service's table."""
+
+    return [{"name": name,
+             "description": service_module.TOOL_SPECS[name[len("cabinet_"):]][2],
+             "inputSchema": service_module.TOOL_SPECS[name[len("cabinet_"):]][1],
+             "annotations": {"readOnlyHint": True, "openWorldHint": False}}
+            for name in service_module.READ_TOOLS]
+
+
+def absent_company_service(repo, company, refusal=None):
+    return AbsentCompanyService(repo, company, refusal)
+
+
+def main(argv=None, environ=None, cwd=None):
+    argv = list(sys.argv[1:] if argv is None else argv)
+    environ = dict(os.environ if environ is None else environ)
+    cwd = cwd or os.getcwd()
+    try:
+        service, elicitor, store = build_service(environ, cwd)
+    except CabinetError as problem:
+        log("%s: %s" % (problem.code, problem.message))
+        return 1
+    try:
+        if "--doctor" in argv:
+            report = service.doctor() if hasattr(service, "doctor") \
+                else service.call("cabinet_doctor", {})
+            json.dump(report, sys.stdout, indent=2, sort_keys=True)
+            sys.stdout.write("\n")
+            return 0
+        RpcServer(sys.stdin.buffer, sys.stdout.buffer, service, elicitor,
+                  log=log).serve()
+        return 0
+    finally:
+        if store is not None:
+            store.close()
+
+
+if __name__ == "__main__":
+    sys.exit(main())

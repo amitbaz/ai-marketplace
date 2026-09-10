@@ -1,0 +1,261 @@
+#!/usr/bin/env python3
+"""PreToolUse check for Cabinet's Agent dispatch and SendMessage recipients.
+
+Claude Code runs this before the `Agent` and `SendMessage` tools. It answers
+one mechanical question each time and nothing else:
+
+* `Agent` — is the requested `subagent_type` one of the packaged staff types,
+  and is the caller the chief? A child agent of an unknown type would come up
+  with its own default tool set, which is how a session without a shell
+  acquires one.
+* `SendMessage` — is the recipient a registered company peer? `ListAgents`
+  reports every session on the machine, and an unrelated one is not a place
+  for company data.
+
+The check is inert unless `CABINET_PROFILE_KIND` is set, which only a Cabinet
+launch profile does, so an ordinary session on this machine is unaffected. A
+denial exits 2 with the reason on stderr and also prints the JSON deny form, so
+a harness that reads neither one still gets a refusal rather than a pass.
+
+Environment:
+    CABINET_PROFILE_KIND   chief | staff | worker; unset means do nothing.
+    CABINET_CHIEF_NAME     the session name a worker may register with.
+    CABINET_PEER_REGISTRY  path to JSON: {"peers": ["name", ...]}.
+
+Self-check:
+    python3 cabinet-hook --self-test
+"""
+
+import json
+import os
+import sys
+
+# Kept as literals so the check does not depend on an importable package at
+# hook time. tests/cabinet/test_profiles.py asserts they match the registry in
+# cabinet_runtime/profiles.py.
+STAFF_AGENT_TYPES = (
+    "chief-of-staff", "product", "delivery-lead", "engineering", "qa",
+    "architect", "design", "marketing", "brand", "cfo", "counsel",
+)
+WORKER_TYPES = ("implementer", "test-runner")
+
+PROFILE_KINDS = ("chief", "staff", "worker")
+
+# Tool inputs that would hand a child more authority than its parent holds.
+BYPASS_KEYS = ("mode", "permission_mode", "permissionMode",
+               "dangerouslySkipPermissions", "settings", "tools",
+               "allowedTools", "disallowedTools", "mcp_config", "mcpServers")
+
+# Where a child runs is part of what contains it. A dispatch that moves a role
+# out of this machine is refused here rather than assumed harmless; a later
+# task that wants one revisits this line deliberately.
+PLACEMENT_KEYS = ("isolation",)
+
+ALLOW = "allow"
+DENY = "deny"
+NOOP = "noop"
+
+
+def registered_types():
+    return tuple("cabinet:%s" % name for name in STAFF_AGENT_TYPES) + \
+        STAFF_AGENT_TYPES
+
+
+def decide(event, env):
+    """Return (decision, reason) for one hook event."""
+
+    kind = env.get("CABINET_PROFILE_KIND")
+    if kind not in PROFILE_KINDS:
+        return NOOP, ""
+    if not isinstance(event, dict):
+        return NOOP, ""
+    if event.get("hook_event_name") != "PreToolUse":
+        return NOOP, ""
+    tool = event.get("tool_name")
+    if tool not in ("Agent", "SendMessage"):
+        return NOOP, ""
+    tool_input = event.get("tool_input")
+    if not isinstance(tool_input, dict):
+        return DENY, ("%s was called with no readable input, so nothing about "
+                      "it can be checked." % tool)
+    if tool == "Agent":
+        return _decide_agent(kind, tool_input)
+    return _decide_message(kind, tool_input, env)
+
+
+def _decide_agent(kind, tool_input):
+    for key in BYPASS_KEYS:
+        if key in tool_input:
+            return DENY, ("Agent input sets %r. A child session does not "
+                          "receive permissions or tools its parent did not "
+                          "have." % key)
+    for key in PLACEMENT_KEYS:
+        if key in tool_input:
+            return DENY, ("Agent input sets %r. A company role runs where the "
+                          "profile put it." % key)
+    if kind != "chief":
+        return DENY, ("Only the chief dispatches company roles; this session "
+                      "is %s." % kind)
+    wanted = tool_input.get("subagent_type")
+    if not isinstance(wanted, str) or not wanted:
+        return DENY, "Agent needs a subagent_type from the packaged registry."
+    bare = wanted.split(":", 1)[1] if wanted.startswith("cabinet:") else wanted
+    if bare in WORKER_TYPES:
+        return DENY, ("%r runs as its own isolated session with its own "
+                      "profile; it is never dispatched as a child of this one."
+                      % bare)
+    if wanted not in registered_types():
+        return DENY, ("%r is not a packaged Cabinet role. Registered: %s."
+                      % (wanted, ", ".join(STAFF_AGENT_TYPES)))
+    return ALLOW, ""
+
+
+def _decide_message(kind, tool_input, env):
+    recipient = tool_input.get("to")
+    if not isinstance(recipient, str) or not recipient:
+        return DENY, "SendMessage needs a named recipient."
+    chief = env.get("CABINET_CHIEF_NAME")
+    if chief and recipient == chief:
+        return ALLOW, ""
+    if kind == "worker":
+        return DENY, ("A worker reports to its own chief%s, not to %r."
+                      % (" (%s)" % chief if chief else "", recipient))
+    registry = env.get("CABINET_PEER_REGISTRY")
+    if registry:
+        peers, error = _load_peers(registry)
+        if error:
+            return DENY, ("The company peer registry at %s could not be read "
+                          "(%s), so no recipient can be confirmed."
+                          % (registry, error))
+    else:
+        peers = set(STAFF_AGENT_TYPES)
+    if recipient in peers:
+        return ALLOW, ""
+    return DENY, ("%r is not a registered company peer. ListAgents reports "
+                  "every session on this machine; company messages go only to "
+                  "registered ones." % recipient)
+
+
+def _load_peers(path):
+    try:
+        with open(path, "r", encoding="utf-8") as handle:
+            body = json.load(handle)
+    except (OSError, ValueError) as problem:
+        return set(), type(problem).__name__
+    if not isinstance(body, dict):
+        return set(), "not an object"
+    names = body.get("peers")
+    if not isinstance(names, list):
+        return set(), "no peers list"
+    peers = set(name for name in names if isinstance(name, str))
+    chief = body.get("chief")
+    if isinstance(chief, str):
+        peers.add(chief)
+    return peers, ""
+
+
+def safe_decide(event, env):
+    """Run `decide`, turning any unexpected failure into a denial.
+
+    An exception would otherwise leave the process at a non-zero exit that is
+    read as a hook error rather than a refusal, and the tool would proceed. A
+    check that cannot run has not established anything, so it refuses.
+    """
+
+    try:
+        return decide(event, env)
+    except Exception as problem:  # noqa: BLE001 - a refusal is the safe outcome
+        if env.get("CABINET_PROFILE_KIND") not in PROFILE_KINDS:
+            return NOOP, ""
+        return DENY, ("The Cabinet dispatch check could not run (%s: %s), so "
+                      "nothing about this call has been confirmed."
+                      % (type(problem).__name__, problem))
+
+
+def emit_deny(reason, tool):
+    body = {"hookSpecificOutput": {"hookEventName": "PreToolUse",
+                                   "permissionDecision": "deny",
+                                   "permissionDecisionReason": reason}}
+    sys.stdout.write(json.dumps(body))
+    sys.stdout.write("\n")
+    sys.stderr.write("cabinet: %s denied. %s\n" % (tool, reason))
+    return 2
+
+
+def main(argv):
+    if "--self-test" in argv:
+        return self_test()
+    try:
+        raw = sys.stdin.read()
+    except (OSError, ValueError) as problem:
+        sys.stderr.write("cabinet-hook: no event on stdin (%s)\n" % problem)
+        return 0
+    try:
+        event = json.loads(raw)
+    except ValueError:
+        sys.stderr.write("cabinet-hook: event on stdin was not JSON; "
+                         "no decision made\n")
+        return 0
+    decision, reason = safe_decide(event, os.environ)
+    if decision == DENY:
+        tool = event.get("tool_name") if isinstance(event, dict) else "tool"
+        return emit_deny(reason, tool)
+    return 0
+
+
+CASES = (
+    ("unknown type denied", DENY,
+     {"hook_event_name": "PreToolUse", "tool_name": "Agent",
+      "tool_input": {"subagent_type": "general-purpose"}},
+     {"CABINET_PROFILE_KIND": "chief"}),
+    ("packaged staff type allowed", ALLOW,
+     {"hook_event_name": "PreToolUse", "tool_name": "Agent",
+      "tool_input": {"subagent_type": "cabinet:qa"}},
+     {"CABINET_PROFILE_KIND": "chief"}),
+    ("permission bypass denied", DENY,
+     {"hook_event_name": "PreToolUse", "tool_name": "Agent",
+      "tool_input": {"subagent_type": "qa", "mode": "bypassPermissions"}},
+     {"CABINET_PROFILE_KIND": "chief"}),
+    ("unrelated recipient denied", DENY,
+     {"hook_event_name": "PreToolUse", "tool_name": "SendMessage",
+      "tool_input": {"to": "someone-elses-session", "message": "m"}},
+     {"CABINET_PROFILE_KIND": "chief"}),
+    ("registered peer allowed", ALLOW,
+     {"hook_event_name": "PreToolUse", "tool_name": "SendMessage",
+      "tool_input": {"to": "qa", "message": "m"}},
+     {"CABINET_PROFILE_KIND": "chief"}),
+    ("worker registers with its chief", ALLOW,
+     {"hook_event_name": "PreToolUse", "tool_name": "SendMessage",
+      "tool_input": {"to": "cabinet-chief-x", "message": "m"}},
+     {"CABINET_PROFILE_KIND": "worker", "CABINET_CHIEF_NAME": "cabinet-chief-x"}),
+    ("unset profile is inert", NOOP,
+     {"hook_event_name": "PreToolUse", "tool_name": "Agent",
+      "tool_input": {"subagent_type": "general-purpose"}},
+     {}),
+    ("unrelated tool is inert", NOOP,
+     {"hook_event_name": "PreToolUse", "tool_name": "Read",
+      "tool_input": {"file_path": "/tmp/x"}},
+     {"CABINET_PROFILE_KIND": "chief"}),
+    ("malformed event is inert", NOOP, "not an event",
+     {"CABINET_PROFILE_KIND": "chief"}),
+)
+
+
+def self_test():
+    failures = []
+    for name, expected, event, env in CASES:
+        decision, reason = decide(event, env)
+        if decision != expected:
+            failures.append("%s: expected %s, got %s (%s)"
+                            % (name, expected, decision, reason))
+        elif expected == DENY and not reason:
+            failures.append("%s: a denial must carry a reason" % name)
+    for line in failures:
+        sys.stderr.write("FAIL %s\n" % line)
+    sys.stdout.write("cabinet-hook self-test: %d cases, %d failures\n"
+                     % (len(CASES), len(failures)))
+    return 1 if failures else 0
+
+
+if __name__ == "__main__":
+    sys.exit(main(sys.argv[1:]))

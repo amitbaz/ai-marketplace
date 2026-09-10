@@ -5,6 +5,9 @@ argument-hint: "[command or role name for detail on one]"
 
 # /cabinet:help
 
+Load `Skill(skill: "cabinet:coordination-rules")` first — it is the workflow
+this card describes, and the source of truth for what each role may do.
+
 A reference card that knows where you are. Read state, print, dispatch
 nothing — this command must stay cheap enough to run without thinking about
 it. Never call a role, never query the board.
@@ -62,7 +65,10 @@ you, and stop after the commands table. Nothing else applies yet.
 | Command | When |
 | --- | --- |
 | `/cabinet:hire` | Once per repository, and when the stage changes |
+| `/cabinet:company` | Open the company. Diagnoses here; hands you the command that starts the chief |
+| `/cabinet:batch` | Prepare or present the proposed batch. Approval happens in the chief |
 | `/cabinet:standup` | Start of a working session. One brief, five items |
+| `/cabinet:now` | What is in flight right now. Costs seconds, dispatches nobody |
 | `/cabinet:decide <n> <answer>` | When you have an answer |
 | `/cabinet:brief <#>` | Before starting a ticket — paste into that session |
 | `/cabinet:check <#>` | Before a merge |
@@ -75,12 +81,16 @@ you, and stop after the commands table. Nothing else applies yet.
 
 | Role | Standing question |
 | --- | --- |
+| `product` | What is the smallest thing that would tell us whether this is worth building? |
+| `engineering` | What in this plan has not been checked against the actual code? |
+| `qa` | What is green for the wrong reason? |
 | `delivery-lead` | What is ordered wrong? |
 | `architect` | What did we build that contradicts what we decided? |
-| `qa` | What is green for the wrong reason? |
-| `counsel` | What binds us now that did not bind us last month? |
-| `cfo` | What is about to cost money, and what has a lead time? |
+| `design` | What does a person have to already know for this to work? |
 | `brand` | Does what we shipped still sound like us? |
+| `marketing` | Who is this for, and what would make them try it? |
+| `cfo` | What is about to cost money, and what has a lead time? |
+| `counsel` | What binds us now that did not bind us last month? |
 
 Say in one line that a role is hired by having a notebook and fired by
 deleting it, and that `/cabinet:hire <role>` adds one.

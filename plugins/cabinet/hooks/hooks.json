@@ -1,0 +1,17 @@
+{
+  "description": "Cabinet dispatch and messaging checks. Both are inert unless CABINET_PROFILE_KIND is set by a Cabinet launch profile, so an ordinary session on this machine is unaffected. When set, the Agent check accepts only the packaged company roles and the SendMessage check accepts only registered company peers.",
+  "hooks": {
+    "PreToolUse": [
+      {
+        "matcher": "Agent|SendMessage",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "python3 \"${CLAUDE_PLUGIN_ROOT}/scripts/cabinet-hook\"",
+            "timeout": 10
+          }
+        ]
+      }
+    ]
+  }
+}

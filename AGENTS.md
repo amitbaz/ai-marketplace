@@ -115,22 +115,47 @@ Frontmatter and manifest JSON are the fragile parts — a malformed YAML block o
 
 ## Cabinet — design intent
 
-Cabinet gives one person the executive team they cannot afford to hire: six
-roles with their own remits, notebooks, and a standing question each. Its
-rules live in `plugins/cabinet/skills/coordination-rules/SKILL.md`.
+Before designing, changing, or planning Cabinet, read
+[`docs/superpowers/specs/2026-09-09-cabinet-company-design.md`](docs/superpowers/specs/2026-09-09-cabinet-company-design.md).
+It records the owner's confirmed company vision and authority boundaries, the
+proposed first operational batch, and its current verification status. Preserve
+that direction across sessions. Implementation follows
+[`docs/superpowers/plans/2026-09-09-cabinet-ai-company.md`](docs/superpowers/plans/2026-09-09-cabinet-ai-company.md)
+and its linked contracts, tasks and evidence ledger. Existing notebook routing
+and advisory roles do not satisfy that plan's operational acceptance criteria.
+The constraints below describe the shipped
+design; replace them only through an explicit design change with a concrete
+enforcement mechanism.
+
+Cabinet gives one person the operating company they cannot afford to hire: a
+chief of staff, four core staff roles who own responsibilities and talk to
+each other directly, on-demand specialists, and two isolated worker types. Its
+workflow lives in `plugins/cabinet/skills/coordination-rules/SKILL.md` with
+five reference files beside it. `python3 scripts/check-cabinet.py` is the
+mechanism that keeps every role's `tools:` line equal to the registry in
+`cabinet_runtime.profiles`.
 
 Four constraints are load-bearing. Do not "simplify" them without
 understanding why:
 
 - **The money invariant.** No role may spend, commit to a cost, or change
-  pricing. It is enforced by enumerated tool grants — every role's `tools:`
-  line is an allowlist with no shell, no billing or deployment tools, and no
-  write access. Never switch a role to a denylist or add `Bash`: an allowlist
-  excludes tomorrow's tools by default, which is the property that makes the
-  guarantee survive. The README states plainly where the guarantee stops
-  (other agents on the machine), and that sentence must not be softened.
-- **Roles never write files.** Each returns `## NOTEBOOK`, `## DECISIONS` and
-  `## MONEY` sections, and the dispatching command records them. One writer
+  pricing. It is enforced by enumerated tool grants — every advisory role's
+  `tools:` line is an allowlist with no shell, no billing or deployment tools,
+  and no write access. Never switch a role to a denylist or add `Bash` to one:
+  an allowlist excludes tomorrow's tools by default, which is the property that
+  makes the guarantee survive. The two implementation worker types are the
+  named exception and stay one: `implementer` holds `Write`/`Edit` and
+  `test-runner` holds `Bash`, each granted separately in
+  `cabinet_runtime.profiles`, each confined to one assigned workspace by a
+  verified launch profile, and the test runner's shell only under a mandatory
+  sandbox with no unsandboxed retry. Neither is a role that advises the owner
+  or reaches anything billable. `python3 scripts/check-cabinet.py` fails if any
+  of those tool lines drifts from the registry. The README states plainly where
+  the guarantee stops (other agents on the machine), and that sentence must not
+  be softened.
+- **Roles never write files.** Each returns `## NOTEBOOK`, `## DECISIONS`,
+  `## HANDOFFS`, `## VERDICT` (QA only), `## PROPOSALS` and `## MONEY`
+  sections, and the chief of staff records them. One writer
   means parallel roles cannot race on appends, and it means no role needs a
   write grant carved out of an otherwise read-only allowlist.
 - **State lives in `.cabinet/`, not `.claude/`.** Many repositories ignore
@@ -139,10 +164,13 @@ understanding why:
   almost no setup.
 - **Initiative is capped by design.** Roles propose improvements and notice
   outside their remit, but proposals go to `.cabinet/proposals.md` and
-  cross-role observations go to the other role's notebook — never to the
-  owner. Only an item whose author named the cost of delay reaches the daily
-  brief. Removing that gate recreates the volume problem the plugin exists to
-  fix.
+  cross-role observations go to the role that owns them — never to the owner.
+  An observation that needs an answer becomes an actionable handoff addressed
+  to that role, recorded before it is sent and open until the recipient
+  acknowledges it; only a non-actionable one goes to their notebook to be read
+  on the next run. Either way, only an item whose author named the cost of
+  delay reaches the daily brief. Removing that gate recreates the volume
+  problem the plugin exists to fix.
 - **The charter is amended, never overwritten.** Superseded lines stay, dated,
   with an amendment log. Roles propose amendments; only the owner makes them,
   because every role reads `company.md` before forming an opinion and a role
@@ -151,10 +179,14 @@ understanding why:
   results and blocking edges are re-derived every run. A stale copy of a
   derivable fact is worse than no copy.
 
-- **Only one-way doors reach the owner.** A decision the owner cannot walk
-  back goes to them; anything a role can reverse itself is that role's own
-  call, made and reported. Escalating a reversible decision is a defect, not
-  caution — it spends the attention the one-channel rule exists to protect.
+- **One-way doors reach the owner, and so does every batch.** A decision the
+  owner cannot walk back goes to them; anything a role can reverse itself is
+  that role's own call, made and reported. Escalating a reversible decision is
+  a defect, not caution — it spends the attention the one-channel rule exists
+  to protect. The single explicit exception is owner batch approval, which is
+  mandatory even when the implementation would be reversible: it is an
+  authority boundary, not a risk filter, and the reversibility test must never
+  be used to skip it.
 
 ### Alternatives considered and rejected
 
@@ -241,10 +273,19 @@ why a rule is shaped the way it is:
   with `cbrock84/headcount`, which states it well: a split by topic has no
   checkable boundary, so two agents split by topic end up in the same file.
 
-Cabinet ships no executables and no hooks. Plugin-shipped agents cannot declare
-`hooks`, `mcpServers` or `permissionMode` — Claude Code blocks all three for
-security — so the `tools:` allowlist is the only enforcement surface available,
-which is why it carries the whole invariant.
+Plugin-shipped agents cannot declare `hooks`, `mcpServers` or `permissionMode`
+— Claude Code blocks all three for security — so for a role definition the
+`tools:` allowlist is the only enforcement surface available, which is why it
+carries the whole invariant. The advisory roles rely on nothing else.
+
+Cabinet does now ship executables and a hook definition, added for the runtime
+in `docs/superpowers/plans/2026-09-09-cabinet-ai-company.md`: the runtime
+package under `plugins/cabinet/scripts/`, and a plugin-level `PreToolUse` hook
+at `plugins/cabinet/hooks/hooks.json`. The hook is a second enforcement
+surface, not a replacement for the first: it checks the requested agent type
+and message recipient mechanically, and it is inert unless a Cabinet launch
+profile set `CABINET_PROFILE_KIND`, so an ordinary session is unaffected. It
+can only refuse; nothing in it widens a grant.
 
 ## Groundwork — design intent
 
