@@ -11,7 +11,9 @@ Modules:
     exports     atomic human-readable views written from stored state.
     processes   bounded subprocess adapter with an allowlisted environment.
     profiles    restricted launch profiles for the chief, staff and workers.
+    rpc         newline-delimited JSON-RPC over stdio, and the owner dialog.
+    service     the bounded set of operations exposed as MCP tools.
 """
 
-__all__ = ["contracts", "errors", "exports", "migration", "processes",
-           "profiles", "store"]
+__all__ = ["approval", "contracts", "errors", "exports", "migration", "policy",
+           "processes", "profiles", "rpc", "service", "store"]

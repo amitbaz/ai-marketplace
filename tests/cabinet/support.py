@@ -228,3 +228,291 @@ class CompanyCase(unittest.TestCase):
             setup_scope(**kwargs))
         self.setup_elicitor = ui
         return outcome
+
+
+# --- service, launcher and protocol fixtures --------------------------------
+#
+# Everything below lands with F4b. `ServiceCase` is the fixture the contracts'
+# table names, and O2 through A2 build their suites on it.
+
+PLUGIN_ROOT = repo_root() / "plugins" / "cabinet"
+SERVICE_SCRIPT = PLUGIN_ROOT / "scripts" / "cabinet-service"
+LAUNCH_SCRIPT = PLUGIN_ROOT / "scripts" / "cabinet-launch"
+MCP_JSON = PLUGIN_ROOT / ".mcp.json"
+
+
+def load_script(path, name):
+    """Import a packaged executable as a module without running it."""
+
+    import importlib.machinery
+    import importlib.util
+
+    loader = importlib.machinery.SourceFileLoader(name, str(path))
+    spec = importlib.util.spec_from_loader(name, loader)
+    module = importlib.util.module_from_spec(spec)
+    loader.exec_module(module)
+    return module
+
+
+class FakeGithub:
+    """Recorder standing in for the board adapter O3 lands.
+
+    `execute_action` must refuse a forbidden kind before anything reaches an
+    adapter, so `calls` staying empty is the assertion, not the return value.
+    """
+
+    def __init__(self):
+        self.calls = []
+
+    def apply(self, operation, payload):
+        self.calls.append((operation, copy.deepcopy(payload)))
+        return {"ok": True}
+
+
+class FakeSuperset:
+    """Recorder standing in for the workspace adapter O4 lands."""
+
+    def __init__(self):
+        self.calls = []
+        self.launch_count = 0
+        self.workspace_create_count = 0
+
+    def create_workspace(self, name, branch, base_ref):
+        self.calls.append(("create_workspace", name, branch, base_ref))
+        self.workspace_create_count += 1
+        return {"workspace_id": "W-fake"}
+
+    def create_terminal(self, workspace_id, launch_argv):
+        self.calls.append(("create_terminal", workspace_id, list(launch_argv)))
+        self.launch_count += 1
+        return {"terminal_id": "T-fake"}
+
+
+def launch_context(company_dir, repo="demo/company", session_id="S1",
+                   launch_id="L0000000", profile_digest=None,
+                   profile_path=None, role="chief-of-staff"):
+    """The verified restricted-launch record `cabinet-service` hands over.
+
+    It carries no capability: the entrypoint verifies the capability and
+    passes on only the facts the service is allowed to hold.
+    """
+
+    company_dir = str(company_dir)
+    return {
+        "kind": "restricted",
+        "launch_id": launch_id,
+        "company_dir": company_dir,
+        "repo": repo,
+        "role": role,
+        "profile_path": profile_path or
+        "%s/runtime/profiles/%s.settings.json" % (company_dir, launch_id),
+        "profile_digest": profile_digest or ("0" * 64),
+        "session_id": session_id,
+    }
+
+
+class ServiceCase(unittest.TestCase):
+    """A company whose service this process may mutate.
+
+    Set `restricted = False` in a subclass for the ordinary plugin-loaded
+    connection, which holds no launcher context and may only read.
+    """
+
+    repo = "demo/company"
+    restricted = True
+
+    def setUp(self):
+        from cabinet_runtime import profiles
+        from cabinet_runtime.service import CabinetService
+        from cabinet_runtime.store import Store, own_process_identity
+
+        self.tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(self.tmp.cleanup)
+        self.root = Path(self.tmp.name) / "company"
+        self.clock = FakeClock()
+        self.store = Store(self.root, self.clock, repo=self.repo).open()
+        self.addCleanup(self.store.close)
+        self.store.propose_batch(batch())
+        pid, marker = own_process_identity()
+        self.store.acquire_lease("S1", pid, marker)
+        self.github = FakeGithub()
+        self.superset = FakeSuperset()
+        self.elicitor = FakeElicitor({"action": "accept",
+                                      "content": {"approve": True}})
+        self.launch = (launch_context(self.root, repo=self.repo)
+                       if self.restricted else None)
+        self.service = CabinetService(
+            self.store, self.github, self.superset, self.clock, self.elicitor,
+            profiles.build_profile, launch=self.launch, sleeper=lambda _: None)
+
+    def call(self, method, arguments=None):
+        """Call a tool the way the protocol layer does."""
+
+        return self.service.call("cabinet_%s" % method, arguments or {})
+
+    def refuse(self, method, arguments=None):
+        """Call a tool expecting a CabinetError; return its code."""
+
+        from cabinet_runtime.errors import CabinetError
+
+        try:
+            self.call(method, arguments)
+        except CabinetError as problem:
+            return problem.code
+        raise AssertionError("cabinet_%s did not refuse" % method)
+
+    def approve_batch_through_fake_ui(self, batch_id="B001", revision=1):
+        """Approve a batch the way the owner does: an accepting dialog."""
+
+        self.elicitor.response = {"action": "accept",
+                                  "content": {"approve": True}}
+        return self.call("request_owner_approval",
+                         {"batch_id": batch_id, "revision": revision})
+
+    def approve_setup_through_fake_ui(self, **kwargs):
+        """Complete the one-time setup dialog through the service."""
+
+        self.elicitor.response = {"action": "accept",
+                                  "content": {"approve": True}}
+        kwargs.setdefault("repo", self.repo)
+        return self.call("setup", {"scope": setup_scope(**kwargs)})
+
+
+class RpcHarness:
+    """Drives a real `RpcServer` over a pipe pair, from the client side.
+
+    The server runs on its own thread with genuine file objects, so the
+    ordering the tests assert is the ordering the transport actually produces.
+    A client reader thread parks every inbound message in a queue, because an
+    `elicitation/create` server request arrives while the `tools/call` that
+    caused it is still unanswered.
+    """
+
+    def __init__(self, service, elicitor=None, **kwargs):
+        import queue as queue_module
+        import threading
+
+        from cabinet_runtime.rpc import RpcServer
+
+        self._to_server = os.pipe()
+        self._from_server = os.pipe()
+        self._server_in = open(self._to_server[0], "rb", buffering=0)
+        self._server_out = open(self._from_server[1], "wb", buffering=0)
+        self._client_out = open(self._to_server[1], "wb", buffering=0)
+        self._client_in = open(self._from_server[0], "rb", buffering=0)
+        self.inbox = queue_module.Queue()
+        self.held = []
+        self.server = RpcServer(self._server_in, self._server_out, service,
+                                elicitor, **kwargs)
+        self._serve = threading.Thread(target=self.server.serve, daemon=True)
+        self._receive = threading.Thread(target=self._read_forever, daemon=True)
+        self._next_id = 0
+
+    # --- lifecycle ---------------------------------------------------------
+
+    def start(self):
+        self._serve.start()
+        self._receive.start()
+        return self
+
+    def close(self):
+        for stream in (self._client_out, self._server_in, self._server_out,
+                       self._client_in):
+            try:
+                stream.close()
+            except OSError:
+                pass
+        self.server.stop()
+        self._serve.join(timeout=3)
+
+    def _read_forever(self):
+        import json as json_module
+
+        while True:
+            line = self._client_in.readline()
+            if not line:
+                return
+            try:
+                self.inbox.put(json_module.loads(line.decode("utf-8")))
+            except ValueError:
+                self.inbox.put({"__unparsed__": line.decode("utf-8", "replace")})
+
+    # --- sending -----------------------------------------------------------
+
+    def send(self, message):
+        import json as json_module
+
+        self.send_raw((json_module.dumps(message) + "\n").encode("utf-8"))
+
+    def send_raw(self, data):
+        self._client_out.write(data)
+        self._client_out.flush()
+
+    def request(self, method, params=None, message_id=None):
+        """Send a client request and return the id it was sent under."""
+
+        if message_id is None:
+            self._next_id += 1
+            message_id = self._next_id
+        body = {"jsonrpc": "2.0", "id": message_id, "method": method}
+        if params is not None:
+            body["params"] = params
+        self.send(body)
+        return message_id
+
+    # --- receiving ---------------------------------------------------------
+
+    def take(self, match, timeout=10.0):
+        """Return the first inbound message satisfying `match`.
+
+        Messages that do not match are held and remain available to a later
+        `take`, so a test can assert ordering without losing anything.
+        """
+
+        import queue as queue_module
+        import time as time_module
+
+        for index, message in enumerate(self.held):
+            if match(message):
+                return self.held.pop(index)
+        deadline = time_module.monotonic() + timeout
+        while True:
+            remaining = deadline - time_module.monotonic()
+            if remaining <= 0:
+                raise AssertionError("no matching message; held=%r" % (self.held,))
+            try:
+                message = self.inbox.get(timeout=remaining)
+            except queue_module.Empty:
+                raise AssertionError("no matching message; held=%r" % (self.held,))
+            if match(message):
+                return message
+            self.held.append(message)
+
+    def answer(self, message_id, timeout=1.0):
+        """Return the response to `message_id`, or None if none has arrived."""
+
+        try:
+            return self.take(lambda m: m.get("id") == message_id
+                             and "method" not in m, timeout=timeout)
+        except AssertionError:
+            return None
+
+    def server_request(self, method, timeout=10.0):
+        return self.take(lambda m: m.get("method") == method and "id" in m,
+                         timeout=timeout)
+
+    def respond(self, message_id, result):
+        self.send({"jsonrpc": "2.0", "id": message_id, "result": result})
+
+    # --- the handshake -----------------------------------------------------
+
+    def initialize(self, protocol="2025-11-25", capabilities=None):
+        if capabilities is None:
+            capabilities = {"elicitation": {"form": {}}} \
+                if protocol == "2025-11-25" else {"elicitation": {}}
+        message_id = self.request("initialize", {
+            "protocolVersion": protocol, "capabilities": capabilities,
+            "clientInfo": {"name": "cabinet-test", "version": "1"}})
+        result = self.take(lambda m: m.get("id") == message_id)
+        self.send({"jsonrpc": "2.0", "method": "notifications/initialized"})
+        return result

@@ -66,6 +66,17 @@ ERROR_CODES = {
     "PROFILE_CREDENTIALS_EXPOSED": "A profile exposes a credential directory.",
     "PROFILE_ARGV_MISMATCH": "A launch command line contradicts its profile.",
     "PROFILE_HOOK_MISSING": "A profile does not register the dispatch check.",
+    # Service surface
+    "TOOL_UNKNOWN": "That name is not an exposed Cabinet tool.",
+    "RESTRICTED_SESSION_REQUIRED": "That operation needs the verified "
+                                   "restricted launch context.",
+    "LAUNCH_CONTEXT_INVALID": "A launch context is malformed, carries a "
+                              "secret, or names another company.",
+    "CAPABILITY_INVALID": "The per-launch capability does not match its "
+                          "launch record.",
+    "ELICITATION_UNSUPPORTED": "The connected client cannot show the owner a "
+                               "form dialog.",
+    "NOT_IMPLEMENTED_YET": "That operation has no executor in this release.",
     # Backup and restore
     "BACKUP_DESTINATION_EXISTS": "The backup destination already exists.",
     "RESTORE_DESTINATION_EXISTS": "The restore destination already exists.",

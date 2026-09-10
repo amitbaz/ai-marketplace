@@ -23,6 +23,7 @@ import os
 import shutil
 import sqlite3
 import subprocess
+import threading
 import tempfile
 import uuid
 from pathlib import Path
@@ -336,6 +337,9 @@ class Store:
         self._requested_repo = repo
         self._busy_timeout = busy_timeout
         self._process_alive = process_alive or default_process_alive
+        #: Serializes access to the connection across threads. Re-entrant, so
+        #: a transaction may call a method that reads under the same lock.
+        self.lock = threading.RLock()
         self._conn = None
         self._identity = None
         self._session_id = None
@@ -447,8 +451,12 @@ class Store:
 
     def _connect(self):
         fresh = not self.database_path.exists()
+        # The MCP service reads on its protocol thread and runs tools on a
+        # worker thread, so the connection outlives the thread that made it.
+        # `Store.lock` is what keeps that safe: every transaction takes it, and
+        # `CabinetService` holds it for the whole of one operation.
         conn = sqlite3.connect(str(self.database_path), isolation_level=None,
-                               timeout=5.0)
+                               timeout=5.0, check_same_thread=False)
         conn.row_factory = sqlite3.Row
         conn.execute("PRAGMA foreign_keys=ON")
         conn.execute("PRAGMA journal_mode=WAL")
@@ -579,6 +587,10 @@ class Store:
 
     @contextlib.contextmanager
     def _transaction(self, fence=True):
+        with self.lock:
+            yield from self._locked_transaction(fence)
+
+    def _locked_transaction(self, fence=True):
         conn = self._require_writable()
         try:
             conn.execute("BEGIN IMMEDIATE")

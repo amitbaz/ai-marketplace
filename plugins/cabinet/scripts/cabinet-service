@@ -1,0 +1,267 @@
+#!/usr/bin/env python3
+"""Cabinet's stdio MCP entrypoint.
+
+Two ways in, and they are not the same connection:
+
+* **Ordinary.** The plugin's own `.mcp.json` starts this file with no
+  launcher variables. It resolves the repository from `git remote get-url
+  origin` in the working directory, opens that company, and serves the
+  read-only operations. Nothing it exposes can change company state.
+
+* **Restricted.** `cabinet-launch` writes a private launch record and a
+  per-launch capability, hands their paths to this process through the
+  generated MCP configuration, and starts the chief. This file reads the
+  capability from its private file, compares its digest with the record, and
+  only then builds a service that may write. The capability itself never
+  reaches the service object, a tool result, an export or the repository.
+
+Nothing here interprets what an operation means; that is `service.py`. This
+file resolves identity, verifies the launch, and connects streams.
+"""
+
+import hashlib
+import json
+import os
+import stat
+import sys
+from datetime import datetime, timezone
+from pathlib import Path
+
+sys.path.insert(0, str(Path(__file__).resolve().parent))
+
+from cabinet_runtime import processes                        # noqa: E402
+from cabinet_runtime.errors import CabinetError              # noqa: E402
+from cabinet_runtime.profiles import build_profile           # noqa: E402
+from cabinet_runtime.rpc import RpcServer, StdioElicitor     # noqa: E402
+from cabinet_runtime.service import CabinetService           # noqa: E402
+from cabinet_runtime.store import Store                      # noqa: E402
+
+ENV_LAUNCH_FILE = "CABINET_LAUNCH_FILE"
+ENV_CAPABILITY_FILE = "CABINET_CAPABILITY_FILE"
+ENV_HOME = "CABINET_HOME"
+ENV_REPO = "CABINET_REPO"
+
+#: Fields the launch record on disk must carry.
+LAUNCH_RECORD_FIELDS = ("kind", "launch_id", "company_dir", "repo", "role",
+                        "profile_path", "profile_digest", "session_id",
+                        "capability_sha256")
+
+#: Fields handed to the service. `capability_sha256` is deliberately absent:
+#: the service holds facts about the launch, never anything secret.
+LAUNCH_CONTEXT_FIELDS = tuple(field for field in LAUNCH_RECORD_FIELDS
+                              if field != "capability_sha256")
+
+MAX_PRIVATE_BYTES = 64 * 1024
+GIT_TIMEOUT = 10
+
+
+def utc_now():
+    return datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
+
+
+def sha256_of(text):
+    return hashlib.sha256(text.encode("utf-8")).hexdigest()
+
+
+def log(text):
+    sys.stderr.write("cabinet-service: %s\n" % text)
+    sys.stderr.flush()
+
+
+# --- private files ----------------------------------------------------------
+
+def read_private(path, label):
+    """Read a small owner-only file, refusing anything a peer could have set."""
+
+    candidate = Path(path)
+    if not candidate.is_absolute():
+        raise CabinetError("UNSAFE_PATH", "%s must be absolute: %s"
+                           % (label, path))
+    if candidate.is_symlink():
+        raise CabinetError("UNSAFE_PATH", "%s is a symlink: %s" % (label, path))
+    try:
+        info = candidate.lstat()
+    except OSError as problem:
+        raise CabinetError("UNSAFE_PATH", "%s is unreadable: %s"
+                           % (label, problem))
+    if not stat.S_ISREG(info.st_mode):
+        raise CabinetError("UNSAFE_PATH", "%s is not a regular file" % label)
+    if stat.S_IMODE(info.st_mode) & 0o077:
+        raise CabinetError("UNSAFE_PATH",
+                           "%s is readable beyond its owner (mode %o)"
+                           % (label, stat.S_IMODE(info.st_mode)))
+    if info.st_size > MAX_PRIVATE_BYTES:
+        raise CabinetError("UNSAFE_PATH", "%s is larger than %d bytes"
+                           % (label, MAX_PRIVATE_BYTES))
+    return candidate.read_text(encoding="utf-8")
+
+
+def verify_launch(environ):
+    """Return the verified launch context, or None for an ordinary session.
+
+    A half-supplied context is an error rather than a downgrade: a launch that
+    lost its capability must not quietly become a read-only session that looks
+    like the chief.
+    """
+
+    launch_file = environ.get(ENV_LAUNCH_FILE)
+    capability_file = environ.get(ENV_CAPABILITY_FILE)
+    if not launch_file and not capability_file:
+        return None
+    if not launch_file or not capability_file:
+        raise CabinetError("LAUNCH_CONTEXT_INVALID",
+                           "%s and %s must be supplied together"
+                           % (ENV_LAUNCH_FILE, ENV_CAPABILITY_FILE))
+    try:
+        record = json.loads(read_private(launch_file, "the launch record"))
+    except ValueError as problem:
+        raise CabinetError("LAUNCH_CONTEXT_INVALID",
+                           "the launch record is not JSON: %s" % problem)
+    if not isinstance(record, dict):
+        raise CabinetError("LAUNCH_CONTEXT_INVALID",
+                           "the launch record must be an object")
+    missing = [field for field in LAUNCH_RECORD_FIELDS if field not in record]
+    if missing:
+        raise CabinetError("LAUNCH_CONTEXT_INVALID",
+                           "the launch record is missing %s"
+                           % ", ".join(missing))
+    capability = read_private(capability_file, "the launch capability").strip()
+    if not capability or sha256_of(capability) != record["capability_sha256"]:
+        raise CabinetError("CAPABILITY_INVALID",
+                           "the capability does not match its launch record")
+    company = Path(record["company_dir"])
+    if not company.is_absolute() or not company.is_dir():
+        raise CabinetError("LAUNCH_CONTEXT_INVALID",
+                           "the launch record names no company directory")
+    if Path(capability_file).resolve().parent != \
+            (company / "runtime" / "profiles").resolve():
+        raise CabinetError("LAUNCH_CONTEXT_INVALID",
+                           "the capability does not live under this company's "
+                           "private runtime directory")
+    return {field: record[field] for field in LAUNCH_CONTEXT_FIELDS}
+
+
+# --- ordinary identity ------------------------------------------------------
+
+def repo_from_origin(url):
+    """Return `owner/name` for a GitHub remote URL, or None."""
+
+    text = (url or "").strip()
+    if not text:
+        return None
+    if text.endswith(".git"):
+        text = text[:-len(".git")]
+    if "://" in text:
+        text = text.split("://", 1)[1]
+        text = text.split("/", 1)[1] if "/" in text else ""
+    elif ":" in text and not text.startswith("/"):
+        text = text.split(":", 1)[1]
+    else:
+        return None
+    parts = [part for part in text.split("/") if part]
+    if len(parts) != 2:
+        return None
+    return "/".join(parts)
+
+
+def repo_from_git(cwd, environ):
+    """Read the origin remote of the working directory, or return None."""
+
+    try:
+        result = processes.run_argv(
+            ["git", "remote", "get-url", "origin"], cwd=cwd,
+            env=processes.build_env(("PATH", "HOME"), environ=environ),
+            timeout=GIT_TIMEOUT)
+    except CabinetError as problem:
+        log("no repository identity: %s" % problem.message)
+        return None
+    if result["returncode"] != 0:
+        return None
+    return repo_from_origin(result["stdout"])
+
+
+def company_directory(repo, environ):
+    """The company directory for a repository, using the legacy slug."""
+
+    root = environ.get(ENV_HOME)
+    base = Path(root) if root else Path(environ.get("HOME", "~")).expanduser() \
+        / ".cabinet"
+    return Path(base) / "repos" / repo.replace("/", "-")
+
+
+# --- adapters that later tasks replace --------------------------------------
+
+class PendingAdapter:
+    """Stands where a real adapter will be, and refuses by name.
+
+    The injection point is real so `service.py` never has to grow a special
+    case later; every call refuses with the task that owns it.
+    """
+
+    def __init__(self, name, task):
+        self._name = name
+        self._task = task
+
+    def __getattr__(self, operation):
+        if operation.startswith("_"):
+            raise AttributeError(operation)
+
+        def refuse(*_args, **_kwargs):
+            raise CabinetError("NOT_IMPLEMENTED_YET",
+                               "the %s adapter's %s lands in task %s"
+                               % (self._name, operation, self._task))
+
+        return refuse
+
+
+# --- entry ------------------------------------------------------------------
+
+def build_service(environ, cwd, launch=None):
+    """Open the company this connection belongs to and wrap it in a service."""
+
+    if launch is None:
+        launch = verify_launch(environ)
+    if launch is not None:
+        repo = launch["repo"]
+        company = Path(launch["company_dir"])
+    else:
+        repo = environ.get(ENV_REPO) or repo_from_git(cwd, environ)
+        if not repo:
+            raise CabinetError(
+                "REPO_INVALID",
+                "no repository identity: run this from a checkout with an "
+                "origin remote, or set %s" % ENV_REPO)
+        company = company_directory(repo, environ)
+        company.mkdir(parents=True, exist_ok=True)
+        company.chmod(0o700)
+    store = Store(company, utc_now, repo=repo).open()
+    elicitor = StdioElicitor()
+    service = CabinetService(store, PendingAdapter("GitHub", "O3"),
+                             PendingAdapter("Superset", "O4"), utc_now,
+                             elicitor, build_profile, launch=launch)
+    return service, elicitor, store
+
+
+def main(argv=None, environ=None, cwd=None):
+    argv = list(sys.argv[1:] if argv is None else argv)
+    environ = dict(os.environ if environ is None else environ)
+    cwd = cwd or os.getcwd()
+    try:
+        service, elicitor, store = build_service(environ, cwd)
+    except CabinetError as problem:
+        log("%s: %s" % (problem.code, problem.message))
+        return 1
+    try:
+        if "--doctor" in argv:
+            json.dump(service.doctor(), sys.stdout, indent=2, sort_keys=True)
+            sys.stdout.write("\n")
+            return 0
+        RpcServer(sys.stdin.buffer, sys.stdout.buffer, service, elicitor,
+                  log=log).serve()
+        return 0
+    finally:
+        store.close()
+
+
+if __name__ == "__main__":
+    sys.exit(main())

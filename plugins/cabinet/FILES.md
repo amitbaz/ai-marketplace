@@ -95,6 +95,42 @@ the repository so they cannot be committed by accident; they carry a `taken_at`
 because they describe one moment and not the present; and deleting them costs
 nothing, because the next run takes another.
 
+## The runtime, and what it keeps private
+
+The advisory roles above need none of this. It exists for the operating
+company: one lead process, a transactional record of what was agreed, and a
+single typed writer instead of prose commands editing Markdown.
+
+```
+plugins/cabinet/
+  .mcp.json                     the ordinary connection: read-only diagnosis
+  scripts/cabinet-service       the stdio server both connections start
+  scripts/cabinet-launch        writes a private launch, then starts the chief
+  scripts/cabinet-hook          the mechanical dispatch and recipient check
+  scripts/cabinet_runtime/
+    rpc.py                      protocol, owner dialog, worker pool
+    service.py                  the named operations and their schemas
+    store.py, approval.py, policy.py, profiles.py, processes.py, …
+~/.cabinet/repos/<owner>-<repo>/
+  runtime/                      the database, launch profiles, backups
+  views/                        the same company, as Markdown anyone can read
+```
+
+Two of those lines carry the boundary. `runtime/` is **not** an agent-readable
+directory: it holds the database, the generated launch profiles and the
+per-launch capability, and every profile denies reading it. `views/` is the
+readable half — company context, the current batch, handoffs, the latest brief
+— written from stored state and holding no approval internals, no lease
+identity and no credentials. A role reads the views; nothing reads the runtime
+except the service.
+
+The capability is the one genuine secret. `cabinet-launch` mints it per launch,
+writes it to an owner-only file under `runtime/profiles/`, and records only its
+digest. It reaches the service through the generated MCP configuration, so it
+appears in no command line, no prompt, no tool result, no exported view and no
+file in the repository. A session that cannot present it may read and nothing
+else.
+
 ## What belongs in a notebook
 
 Judgements and reasoning that cannot be re-derived. Not facts a live query

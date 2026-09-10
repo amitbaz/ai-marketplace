@@ -1,0 +1,229 @@
+#!/usr/bin/env python3
+"""Start the restricted chief for one company.
+
+The launcher is the only thing that can create a session allowed to change
+company state. It builds the profile, verifies it, writes the private files
+the launch needs, mints a per-launch capability, and replaces itself with the
+Claude process.
+
+The capability is the part to be careful with. It is written to an owner-only
+file under the company's private runtime directory, and only its digest goes
+into the launch record. Its path travels to the service through the generated
+MCP configuration, which is itself owner-only. The value therefore appears in
+no command line, no prompt, no tool result, no exported view and no file in
+the repository, and `--dry-run` asserts that before it prints anything.
+
+Usage:
+
+    cabinet-launch --assignment <name> [--repo owner/repo]
+                   [--claude <path>] [--plugin-root <path>]
+                   [--session-id <uuid>] [--dry-run]
+"""
+
+import argparse
+import hashlib
+import json
+import os
+import secrets
+import sys
+import uuid
+from pathlib import Path
+
+sys.path.insert(0, str(Path(__file__).resolve().parent))
+
+from cabinet_runtime import processes, profiles               # noqa: E402
+from cabinet_runtime.errors import CabinetError               # noqa: E402
+
+#: Whether the chief's `--tools` value also names the Cabinet MCP tools.
+#: Settled by the F4b live smoke and recorded in
+#: `docs/cabinet/acceptance/f4-service-smoke.md`.
+INCLUDE_SERVICE_TOOLS_IN_TOOLS_FLAG = False
+
+ENV_HOME = "CABINET_HOME"
+CAPABILITY_BYTES = 32
+INHERITED = ("PATH", "HOME", "LANG", "LC_ALL", "TERM", "TMPDIR")
+
+
+def parse_arguments(argv):
+    parser = argparse.ArgumentParser(
+        prog="cabinet-launch", description="Start the restricted chief.")
+    parser.add_argument("--assignment", default="chief",
+                        help="short name for this launch")
+    parser.add_argument("--repo", help="owner/repo; read from origin if absent")
+    parser.add_argument("--claude", help="path to the Claude executable")
+    parser.add_argument("--plugin-root", help="path to the installed plugin")
+    parser.add_argument("--session-id", help="session UUID for the chief")
+    parser.add_argument("--include-service-tools", action="store_true",
+                        default=INCLUDE_SERVICE_TOOLS_IN_TOOLS_FLAG,
+                        help="also name the Cabinet tools in --tools")
+    parser.add_argument("--dry-run", action="store_true",
+                        help="write the launch and print it instead of running")
+    return parser.parse_args(argv)
+
+
+def which(program, environ):
+    for directory in environ.get("PATH", "").split(os.pathsep):
+        candidate = Path(directory) / program
+        if candidate.is_file() and os.access(str(candidate), os.X_OK):
+            return str(candidate.resolve())
+    return None
+
+
+def repo_from_origin(url):
+    text = (url or "").strip()
+    if text.endswith(".git"):
+        text = text[:-len(".git")]
+    if "://" in text:
+        text = text.split("://", 1)[1]
+        text = text.split("/", 1)[1] if "/" in text else ""
+    elif ":" in text and not text.startswith("/"):
+        text = text.split(":", 1)[1]
+    else:
+        return None
+    parts = [part for part in text.split("/") if part]
+    return "/".join(parts) if len(parts) == 2 else None
+
+
+def resolve_repo(environ, cwd):
+    result = processes.run_argv(
+        ["git", "remote", "get-url", "origin"], cwd=cwd,
+        env=processes.build_env(("PATH", "HOME"), environ=environ), timeout=10)
+    if result["returncode"] != 0:
+        raise CabinetError("REPO_INVALID",
+                           "no origin remote in %s; pass --repo" % cwd)
+    repo = repo_from_origin(result["stdout"])
+    if repo is None:
+        raise CabinetError("REPO_INVALID", "the origin remote names no owner/repo")
+    return repo
+
+
+def company_directory(repo, environ):
+    root = environ.get(ENV_HOME)
+    base = Path(root) if root else \
+        Path(environ.get("HOME", "~")).expanduser() / ".cabinet"
+    return Path(base) / "repos" / repo.replace("/", "-")
+
+
+def write_private(path, text):
+    """Write an owner-only file, replacing whatever was there."""
+
+    path = Path(path)
+    if path.is_symlink():
+        raise CabinetError("UNSAFE_PATH", "%s is a symlink" % path)
+    with open(str(path), "w", encoding="utf-8") as stream:
+        stream.write(text)
+    path.chmod(0o600)
+    return str(path)
+
+
+def mcp_configuration(plugin_root, launch_file, capability_file):
+    """The chief's explicit connection: this service, and nothing else."""
+
+    return {"mcpServers": {"cabinet": {
+        "command": "python3",
+        "args": ["%s/scripts/cabinet-service" % plugin_root],
+        "env": {"CABINET_LAUNCH_FILE": launch_file,
+                "CABINET_CAPABILITY_FILE": capability_file}}}}
+
+
+def build_launch(options, environ, cwd):
+    """Write every private file this launch needs and return its description."""
+
+    plugin_root = str(Path(options.plugin_root or
+                           Path(__file__).resolve().parents[1]).resolve())
+    claude_path = options.claude or which("claude", environ)
+    if not claude_path:
+        raise CabinetError("ARGV_INVALID",
+                           "no Claude executable found; pass --claude")
+    repo = options.repo or resolve_repo(environ, cwd)
+    # The deny rules are computed from the launching user's own home, not from
+    # whatever `$HOME` the child ends up with. F4a left this implicit.
+    home = environ.get("HOME")
+    company = company_directory(repo, environ)
+    private = company / "runtime" / "profiles"
+    views = company / "views"
+    for directory in (company, company / "runtime", private, views):
+        directory.mkdir(parents=True, exist_ok=True)
+        directory.chmod(0o700)
+
+    launch_id = "L%s" % secrets.token_hex(6)
+    session_id = options.session_id or str(uuid.uuid4())
+    capability = secrets.token_hex(CAPABILITY_BYTES)
+    paths = {name: str(private / ("%s.%s" % (launch_id, suffix)))
+             for name, suffix in (("settings_path", "settings.json"),
+                                  ("mcp_config", "mcp.json"),
+                                  ("capability_file", "capability"),
+                                  ("launch_file", "launch.json"))}
+    peer_registry = str(views / "peers.json")
+
+    profile = profiles.build_profile(
+        profiles.CHIEF_ROLE,
+        {"assignment": options.assignment, "claude_path": claude_path,
+         "plugin_root": plugin_root, "mcp_config": paths["mcp_config"],
+         "settings_path": paths["settings_path"], "session_id": session_id,
+         "peer_registry": peer_registry},
+        str(views), home=home,
+        include_service_tools_in_tools_flag=options.include_service_tools)
+    profiles.verify_profile(profile)
+
+    write_private(paths["capability_file"], capability)
+    write_private(paths["launch_file"], json.dumps({
+        "kind": "restricted", "launch_id": launch_id,
+        "company_dir": str(company), "repo": repo,
+        "role": profiles.CHIEF_ROLE, "profile_path": paths["settings_path"],
+        "profile_digest": profile["digest"], "session_id": session_id,
+        "capability_sha256": hashlib.sha256(
+            capability.encode("utf-8")).hexdigest()}, indent=2, sort_keys=True))
+    write_private(paths["settings_path"], profiles.settings_json(profile))
+    write_private(paths["mcp_config"], json.dumps(mcp_configuration(
+        plugin_root, paths["launch_file"], paths["capability_file"]),
+        indent=2, sort_keys=True))
+    write_private(peer_registry, json.dumps(
+        {"chief": profile["session_name"],
+         "peers": sorted(set(profiles.STAFF_AGENT_TYPES)
+                         | {profile["session_name"]})},
+        indent=2, sort_keys=True))
+
+    environment = processes.build_env(INHERITED, extra=dict(profile["env"]),
+                                      environ=environ)
+    report = {"company_dir": str(company), "repo": repo, "home": home,
+              "launch_id": launch_id, "session_id": session_id,
+              "session_name": profile["session_name"],
+              "profile_digest": profile["digest"],
+              "public_context": str(views), "peer_registry": peer_registry,
+              "plugin_root": plugin_root, "claude_path": claude_path,
+              "argv": list(profile["argv"]), "env": environment}
+    report.update(paths)
+    _refuse_to_reveal(capability, report)
+    return report, environment, capability
+
+
+def _refuse_to_reveal(capability, report):
+    """The capability must not be derivable from anything we print or exec."""
+
+    if capability in json.dumps(report):
+        raise CabinetError("CAPABILITY_INVALID",
+                           "the launch description would reveal the capability")
+
+
+def main(argv=None, environ=None, cwd=None):
+    options = parse_arguments(list(sys.argv[1:] if argv is None else argv))
+    environ = dict(os.environ if environ is None else environ)
+    cwd = cwd or os.getcwd()
+    try:
+        report, environment, _capability = build_launch(options, environ, cwd)
+    except CabinetError as problem:
+        sys.stderr.write("cabinet-launch: %s: %s\n"
+                         % (problem.code, problem.message))
+        return 1
+    if options.dry_run:
+        json.dump(report, sys.stdout, indent=2, sort_keys=True)
+        sys.stdout.write("\n")
+        return 0
+    argv = report["argv"]
+    os.execve(argv[0], argv, environment)
+    return 1                                    # unreachable once exec succeeds
+
+
+if __name__ == "__main__":
+    sys.exit(main())
