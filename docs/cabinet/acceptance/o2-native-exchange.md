@@ -174,6 +174,26 @@ launch line.
 | Retry, blocked transport and correction resolution over native transport | not run here | Both delivery attempts succeeded on the first try, so no probe came due. These paths are `unit_verified` in `tests/cabinet/test_handoffs.py`, not `native_verified`. |
 | A worker (`implementer`, `test-runner`) registering its address | not run here | Workers are O4's, and their launch is blocked on Superset authentication. `cabinet_register_session` is `unit_verified`. |
 
+## One side effect worth knowing about
+
+The **failed** first launch created a directory under the owner's real
+`~/.cabinet`. When the restricted launch was refused, the service degraded to
+an ordinary read-only connection, and an ordinary connection resolves its
+repository from `git remote get-url origin` in the working directory — this
+worktree. It therefore opened `~/.cabinet/repos/amitbaz-ai-marketplace/`, and
+opening a company creates it.
+
+What was created: an empty schema-2 database and an `identity.json`, zero rows
+in every table, no owner content. The owner's real company
+(`amitbaz-career-platform`) was not opened and not modified. The directory was
+moved to the session scratchpad rather than deleted, so it is recoverable.
+
+The generalisation matters more than the incident: **a refused restricted
+launch does not stop, it falls back to a read-only connection on whatever
+company the current directory implies, and that fallback can create a company
+directory as a side effect of a failure.** A diagnosis connection arguably
+should not create anything. Recorded here for whoever owns that decision.
+
 ## Reproducing it
 
 The synthetic company, the instruction file and the launch outputs live under
