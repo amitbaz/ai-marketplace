@@ -24,6 +24,7 @@ import json
 import os
 import stat
 import sys
+import time
 from datetime import datetime, timezone
 from pathlib import Path
 
@@ -47,12 +48,22 @@ LAUNCH_RECORD_FIELDS = ("kind", "launch_id", "company_dir", "repo", "role",
                         "session_id", "host_pid", "host_process_start",
                         "lease_generation", "capability_sha256")
 
+#: Fields a record may carry. A record written without them is a foreground
+#: launch, which is the checked case, so their absence never widens anything.
+OPTIONAL_RECORD_FIELDS = ("background", "written_epoch")
+
 #: Fields handed to the service: facts about the launch and nothing else. The
 #: capability digest, the host identity and the bound generation stay here,
 #: because they are this file's checks to make and the service has no use for
 #: them beyond the answer.
 LAUNCH_CONTEXT_FIELDS = ("kind", "launch_id", "company_dir", "repo", "role",
-                         "profile_path", "profile_digest", "session_id")
+                         "profile_path", "profile_digest", "session_id",
+                         "background")
+
+#: How long a background launch record stays usable, in seconds. A detached
+#: session has no parent to bind to, so the binding is the capability plus the
+#: length of time a launch takes to start. See `check_background_host`.
+BACKGROUND_LAUNCH_WINDOW_SECONDS = 120
 
 MAX_PRIVATE_BYTES = 64 * 1024
 GIT_TIMEOUT = 10
@@ -109,7 +120,8 @@ def verify_launch(environ):
 def launch_context(record):
     """The facts a verified record hands to the service, and nothing else."""
 
-    return {field: record[field] for field in LAUNCH_CONTEXT_FIELDS}
+    return {field: record[field] for field in LAUNCH_CONTEXT_FIELDS
+            if field in record}
 
 
 def verified_record(environ):
@@ -136,6 +148,12 @@ def verified_record(environ):
     if not isinstance(record, dict):
         raise CabinetError("LAUNCH_CONTEXT_INVALID",
                            "the launch record must be an object")
+    unknown = [field for field in record
+               if field not in LAUNCH_RECORD_FIELDS + OPTIONAL_RECORD_FIELDS]
+    if unknown:
+        raise CabinetError("LAUNCH_CONTEXT_INVALID",
+                           "the launch record has unknown %s"
+                           % ", ".join(sorted(unknown)))
     missing = [field for field in LAUNCH_RECORD_FIELDS if field not in record]
     if missing:
         raise CabinetError("LAUNCH_CONTEXT_INVALID",
@@ -216,8 +234,13 @@ def check_host(record):
     environment variables pointing at two readable files are the whole of the
     check, and a stale export in a shell profile would silently promote every
     ordinary session on the machine to a writing one.
+
+    A background launch is the one case where that ancestry does not exist,
+    and it gets a different check rather than a waived one.
     """
 
+    if record.get("background"):
+        return check_background_host(record)
     parent = os.getppid()
     if parent != record["host_pid"]:
         raise CabinetError(
@@ -237,6 +260,40 @@ def check_host(record):
                 "LAUNCH_HOST_MISMATCH",
                 "process %d is not the process that wrote this launch record"
                 % parent)
+
+
+def check_background_host(record):
+    """Bind a detached launch to time, because it has no parent to bind to.
+
+    `claude --bg` starts the session in a process that is deliberately not a
+    descendant of the launcher: the launcher's own process exits and the
+    service is reparented. Measured on 2.1.267 — the recorded pid was gone and
+    the server's parent was an unrelated `claude bg-spare` process. The
+    ancestry check therefore cannot hold here, and asserting it anyway would be
+    exactly the unenforced claim rule six forbids.
+
+    What still holds is the per-launch capability, verified before this point,
+    and a short window. The record is usable only for about as long as a launch
+    takes to start, so a record left behind in a shell profile and picked up an
+    hour later is refused rather than honoured. This is a weaker binding than
+    the foreground one, it is weaker on purpose, and it is recorded as such in
+    `docs/cabinet/acceptance/o2-native-exchange.md`.
+    """
+
+    written = record.get("written_epoch")
+    if not isinstance(written, (int, float)):
+        raise CabinetError(
+            "LAUNCH_HOST_MISMATCH",
+            "a background launch record states when it was written; this one "
+            "does not, so nothing binds it to this process")
+    age = time.time() - float(written)
+    if age < -5 or age > BACKGROUND_LAUNCH_WINDOW_SECONDS:
+        raise CabinetError(
+            "LAUNCH_HOST_MISMATCH",
+            "this background launch record is %.0f seconds old; it is usable "
+            "for %d seconds after it is written, because a detached session "
+            "has no parent process to bind to"
+            % (age, BACKGROUND_LAUNCH_WINDOW_SECONDS))
 
 
 def check_generation(record, store):

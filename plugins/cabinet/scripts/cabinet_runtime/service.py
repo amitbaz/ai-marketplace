@@ -72,6 +72,11 @@ REGISTERABLE_ROLES = (profiles.STAFF_AGENT_TYPES + profiles.WORKER_TYPES)
 LAUNCH_FIELDS = ("kind", "launch_id", "company_dir", "repo", "role",
                  "profile_path", "profile_digest", "session_id")
 
+#: Facts a launch context may carry but need not. `background` says the
+#: session was detached, which changes how the entrypoint bound it to this
+#: process and is therefore something `doctor` has to say out loud.
+OPTIONAL_LAUNCH_FIELDS = ("background",)
+
 #: Words that must never name a field in a launch context. A context is a set
 #: of facts about the launch, never a secret the service could leak.
 SECRET_WORDS = ("capability", "secret", "token", "password", "credential",
@@ -212,7 +217,8 @@ def validate_launch(launch, store=None):
     if missing:
         raise CabinetError("LAUNCH_CONTEXT_INVALID",
                            "launch context is missing %s" % ", ".join(missing))
-    unknown = [field for field in launch if field not in LAUNCH_FIELDS]
+    unknown = [field for field in launch
+               if field not in LAUNCH_FIELDS + OPTIONAL_LAUNCH_FIELDS]
     if unknown:
         raise CabinetError("LAUNCH_CONTEXT_INVALID",
                            "launch context has unknown %s"
@@ -374,7 +380,12 @@ class CabinetService:
         note("pause", "paused" if self.store.is_paused() else "running",
              lease["paused_reason"] if lease and lease["paused"] else "")
         if self.launch:
-            note("launch", "restricted", "role %s" % self.launch["role"])
+            note("launch", "restricted",
+                 "role %s%s" % (self.launch["role"],
+                                "; detached, so the launch is bound by its "
+                                "capability and a short window rather than by "
+                                "a parent process"
+                                if self.launch.get("background") else ""))
         elif self.launch_refusal:
             note("launch", "refused",
                  "%s: %s" % (self.launch_refusal.get("code"),

@@ -10,6 +10,7 @@ import json
 import os
 import stat
 import tempfile
+import time
 import unittest
 from pathlib import Path
 
@@ -702,6 +703,56 @@ class ChiefLaunchTest(unittest.TestCase):
             environ, str(self.root))
         self.assertTrue(report["peer_registry"].startswith(
             str(Path(report["company_dir"]) / "runtime")))
+
+
+class BackgroundLaunchBindingTest(unittest.TestCase):
+    """A detached session has no parent, so it is bound to time instead.
+
+    Measured on Claude Code 2.1.267: `claude --bg` leaves the launcher's own
+    process gone and the MCP server parented to an unrelated `claude bg-spare`
+    process, so the foreground ancestry check cannot hold. What replaces it has
+    to be a real refusal, not a waiver.
+    """
+
+    def setUp(self):
+        self.module = load_script(PLUGIN_ROOT / "scripts" / "cabinet-service",
+                                  "cabinet_service_background")
+
+    def record(self, **overrides):
+        body = {"host_pid": 1, "host_process_start": "x",
+                "background": True, "written_epoch": time.time()}
+        body.update(overrides)
+        return body
+
+    def refuse(self, record):
+        with self.assertRaises(CabinetError) as caught:
+            self.module.check_host(record)
+        return caught.exception.code
+
+    def test_a_fresh_background_record_is_accepted(self):
+        self.module.check_host(self.record())
+
+    def test_a_stale_background_record_is_refused(self):
+        age = self.module.BACKGROUND_LAUNCH_WINDOW_SECONDS + 60
+        self.assertEqual(self.refuse(self.record(written_epoch=time.time() - age)),
+                         "LAUNCH_HOST_MISMATCH")
+
+    def test_a_background_record_with_no_written_time_is_refused(self):
+        record = self.record()
+        del record["written_epoch"]
+        self.assertEqual(self.refuse(record), "LAUNCH_HOST_MISMATCH")
+
+    def test_a_record_from_the_future_is_refused(self):
+        self.assertEqual(
+            self.refuse(self.record(written_epoch=time.time() + 600)),
+            "LAUNCH_HOST_MISMATCH")
+
+    def test_a_foreground_record_still_needs_its_parent(self):
+        """The window is for detached launches only, and widens nothing else."""
+
+        self.assertEqual(self.refuse({"host_pid": 1, "host_process_start": "x",
+                                      "written_epoch": time.time()}),
+                         "LAUNCH_HOST_MISMATCH")
 
 
 if __name__ == "__main__":

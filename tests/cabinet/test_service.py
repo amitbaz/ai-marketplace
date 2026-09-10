@@ -479,7 +479,9 @@ class EntrypointTest(unittest.TestCase):
         context = self.module.verify_launch(self.write_launch())
         self.assertEqual(context["kind"], "restricted")
         self.assertEqual(sorted(context),
-                         sorted(self.module.LAUNCH_CONTEXT_FIELDS))
+                         sorted(field for field
+                                in self.module.LAUNCH_CONTEXT_FIELDS
+                                if field != "background"))
         for absent in ("capability", "capability_sha256", "host_pid",
                        "host_process_start", "lease_generation"):
             self.assertNotIn(absent, context)
