@@ -22,9 +22,9 @@
 **Next action:** Owner must authenticate the local Superset installation at `~/.superset/bin/superset` before the Superset live gate can be tested. Once authenticated, re-run probe and reconciliation tests.
 
 ### Blocker 2: Chief --bg Launch Defect — Missing Plugin Agent Definition
-**Status:** DEFECTIVE in launch path  
-**Detail:** The cabinet-launch script with `--bg` flag spawned a background chief session (9c8cabed) but did not load the packaged agent definition `cabinet:chief-of-staff`. Instead, it used the default template.  
-**Next action (exact):** Verify that `cabinet-launch --bg --plugin-dir <path> --agent cabinet:chief-of-staff` passes `--plugin-dir` *before* `--agent` in the argv to cabinet service, or check how `--bg` resolves plugin agents. Retry the chief launch once with correct flag ordering. If still defective, record as unfixable within O4's scope.
+**Status:** CLOSED (task L1, 2026-09-10) — root-caused and guarded, not fixable at the argv level
+**Detail:** Reproduced live: the chief's exact argv resolves `cabinet:chief-of-staff` correctly in the foreground (`-p`) but not under `--bg`, regardless of `--plugin-dir`/`--agent` ordering. A second probe with inline `--agents` JSON under `--bg` produced the identical "spawning with default template" warning, so this is a CLI-level limitation of Claude Code 2.1.267's background spawn path, not an argv-ordering bug in `cabinet-launch`. Full trace in `docs/cabinet/acceptance/environment.md` (Addendum 2026-09-10, `--bg` does not resolve `--agent`).
+**Fix:** `cabinet_runtime.profiles.chief_launch` now raises `CabinetError("BG_AGENT_UNSUPPORTED", ...)` for `background=True` instead of silently building an argv that spawns the default (unrestricted) template under the chief's capability. A detached chief is not obtainable through `cabinet-launch --bg` until a Claude Code build resolves `--agent` there; run the chief attended in the meantime. Unit test: `tests/cabinet/test_handoffs.py::ChiefLaunchTest::test_background_launch_is_refused`.
 
 ### Blocker 3: Containment Probes — Prompt Injection Refusal
 **Status:** FAIL/INCONCLUSIVE on loopback egress containment  

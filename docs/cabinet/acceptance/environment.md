@@ -168,3 +168,38 @@ negotiating 2025-11-25. The service originally required `form` under that versio
 refused the owner's first interactive dialog attempt with `ELICITATION_UNSUPPORTED`;
 the empty object is now accepted as the backwards-compatible form declaration.
 Print mode (`-p`) still advertises no elicitation at all.
+
+## Addendum 2026-09-10 — `--bg` does not resolve `--agent`/`--agents`/`--plugin-dir` (live_verified)
+
+Probe (task L1, Part A.1): from a scratch directory, ran the chief's exact
+argv shape both attended and detached against Claude Code 2.1.267.
+
+```
+claude --restricted --strict-mcp-config --plugin-dir <cabinet plugin> \
+  --agent cabinet:chief-of-staff --tools Read --model haiku -p "say ok and stop"
+# -> "ok" (agent resolved; no warning)
+
+claude --restricted --strict-mcp-config --plugin-dir <cabinet plugin> \
+  --agent cabinet:chief-of-staff --tools Read --model haiku --bg "say ok and stop"
+# -> "warning: no agent named 'cabinet:chief-of-staff' — spawning with
+#     default template" (session 6274784a; `claude rm`'d after observation)
+```
+
+Inline `--agents '{"probe-agent": {...}}' --agent probe-agent` under `--bg`
+produced the identical warning (session c267e929; `claude rm`'d), so this is
+not a plugin-discovery issue specific to `--plugin-dir` — under `--bg` this
+CLI build does not resolve `--agent` at all, from any source, regardless of
+argv order. Foreground (`-p`) resolves the same argv correctly.
+
+**Consequence:** a `--bg` chief would silently run the unrestricted default
+agent — none of `cabinet:chief-of-staff`'s tool allowlist or
+`disallowedTools` — while still holding the chief's capability file and
+`--restricted`/`--tools` flags. That is a materially different, broader
+session than the profile describes.
+
+**Fix (L1):** `cabinet_runtime.profiles.chief_launch` now refuses
+`background=True` with `CabinetError("BG_AGENT_UNSUPPORTED", ...)` before
+building argv, rather than launching the default-template session. A
+detached chief is not currently obtainable through `cabinet-launch --bg`;
+run the chief attended until a Claude Code build resolves `--agent` under
+`--bg`. Unit test: `tests/cabinet/test_handoffs.py::ChiefLaunchTest::test_background_launch_is_refused`.
