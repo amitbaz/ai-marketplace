@@ -113,3 +113,12 @@ the size guidance; several docstrings/prose drift items; `_require_whole_board`
   `~/.cabinet/repos/amitbaz-career-platform` was verified intact.
 - A bare SendMessage name shared by a teammate and a peer session resolved to the
   peer; worker sessions are named `cabinet-worker-<assignment>`.
+
+## Update — later on 2026-09-10 (before context compaction)
+
+- O4 closed: code reviewed and committed (`f77773d`), evidence `o4-workers.md` (`0c247a0`).
+- Owner gates cleared: Superset logged in; private fixture repo `amitbaz/cabinet-fixture` created (delete after A4); owner answered two real approval dialogs → R04 native_verified (`f3-owner-approval.md`, `92b0f8e`).
+- Fixes landed from live findings: launcher `--model` passthrough (`fe8802b`); client `"elicitation": {}` accepted as form support (`1f67df3`); `--bg` never resolves `--agent` → launcher refuses `--bg` with `BG_AGENT_UNSUPPORTED` (`fee95e5`; earlier background chiefs ran the default template under the restricted profile); worker sandbox block was silently discarded because of an undocumented key `allowMachLookup` → removed, key set pinned by test (`46afabf`).
+- Task L1 (close the O3/O4 live gates) is in progress under subagent `impl-L1` (sonnet; flow sessions on haiku): A.1 done; A.2 (mechanical containment probes) being re-run with the corrected sandbox; then A.3 (Superset worker path); then Part B (GitHub writes on the fixture repo). Dispatch brief: `task-L1-dispatch.md`; report: `task-L1-report.md`.
+- Owner's model rule: flow-test sessions on haiku; reviews/implementers on the model the task needs. Lean testing.
+- After L1: O5 (`task-O5-dispatch.md`, base = L1's final head), then A1–A4, final review.
