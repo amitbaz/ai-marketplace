@@ -3,8 +3,10 @@
 Recorded 2026-09-10 on the owner's macOS machine (Darwin 25.6.0, arm64), Claude
 Code 2.1.267, worktree `codex/cabinet-company-design` at implementation commit
 `3d5bc9c`. Everything below ran against a **synthetic** company under a scratch
-`CABINET_HOME`; the real company directory was never opened and the repository
-`demo/o2-company` does not exist.
+`CABINET_HOME`, and the repository `demo/o2-company` does not exist. The
+owner's real company was never opened; a *failed* first attempt did create an
+empty company directory under the real `~/.cabinet`, which is recorded under
+*One side effect worth knowing about* below.
 
 This closes acceptance item **R05**: an actionable exchange between three staff
 roles, recorded and acknowledged through the service, with no technical message
