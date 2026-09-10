@@ -153,14 +153,34 @@ def bind_record(record, capability):
     ).hexdigest()
 
 
-def mcp_configuration(plugin_root, launch_file, capability_file):
-    """The chief's explicit connection: this service, and nothing else."""
+def mcp_configuration(plugin_root, launch_file, capability_file,
+                      repo_root=None):
+    """The chief's explicit connection: this service, and nothing else.
 
+    `CABINET_REPO_ROOT` is the checkout isolated worktrees are taken from. It
+    travels here rather than being discovered by the service, because the
+    repository a worker is branched from is a property of the launch and not
+    of whatever directory the service happens to start in.
+    """
+
+    env = {"CABINET_LAUNCH_FILE": launch_file,
+           "CABINET_CAPABILITY_FILE": capability_file}
+    if repo_root:
+        env["CABINET_REPO_ROOT"] = str(repo_root)
     return {"mcpServers": {"cabinet": {
         "command": "python3",
         "args": ["%s/scripts/cabinet-service" % plugin_root],
-        "env": {"CABINET_LAUNCH_FILE": launch_file,
-                "CABINET_CAPABILITY_FILE": capability_file}}}}
+        "env": env}}}
+
+
+def repository_root(start):
+    """The checkout this launch was run from, if it is one."""
+
+    here = Path(start).resolve()
+    for candidate in [here] + list(here.parents):
+        if (candidate / ".git").exists():
+            return str(candidate)
+    return None
 
 
 def build_launch(options, environ, cwd):
@@ -238,7 +258,8 @@ def build_launch(options, environ, cwd):
                   json.dumps(launch_record, indent=2, sort_keys=True))
     write_private(paths["settings_path"], profiles.settings_json(profile))
     write_private(paths["mcp_config"], json.dumps(mcp_configuration(
-        plugin_root, paths["launch_file"], paths["capability_file"]),
+        plugin_root, paths["launch_file"], paths["capability_file"],
+        repo_root=repository_root(cwd)),
         indent=2, sort_keys=True))
     write_private(peer_registry, json.dumps(
         {"chief": profile["session_name"],

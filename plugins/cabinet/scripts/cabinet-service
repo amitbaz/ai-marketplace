@@ -32,11 +32,15 @@ sys.path.insert(0, str(Path(__file__).resolve().parent))
 
 from cabinet_runtime import contracts, processes, profiles   # noqa: E402
 from cabinet_runtime.errors import CabinetError              # noqa: E402
+from cabinet_runtime.git import GitAdapter, git_run           # noqa: E402
 from cabinet_runtime.github import GithubAdapter, gh_run      # noqa: E402
 from cabinet_runtime.profiles import build_profile           # noqa: E402
 from cabinet_runtime.rpc import RpcServer, StdioElicitor     # noqa: E402
 from cabinet_runtime import service as service_module         # noqa: E402
-from cabinet_runtime.service import CabinetService           # noqa: E402
+from cabinet_runtime.service import (CabinetService,            # noqa: E402
+                                     chief_address_for)
+from cabinet_runtime.superset import (PROVIDER_ENVIRONMENT,   # noqa: E402
+                                      LocalWorktreeProvider, SupersetAdapter)
 from cabinet_runtime.store import Store, process_start_marker  # noqa: E402
 
 ENV_LAUNCH_FILE = "CABINET_LAUNCH_FILE"
@@ -509,12 +513,98 @@ def build_service(environ, cwd, launch=None):
             renewer = lambda generation: renew_launch(launch_file, generation)
     elicitor = StdioElicitor()
     board = build_board_adapter(store)
+    providers = build_workspace_providers(store, record, environ)
     service = CabinetService(
-        store, board, PendingAdapter("Superset", "O4"),
+        store, board, providers.get("superset"),
         utc_now, elicitor, build_profile, launch=launch,
         launch_refusal=refusal.to_dict()["error"] if refusal else None,
-        launch_renewer=renewer, board_reader=board)
+        launch_renewer=renewer, board_reader=board,
+        providers=providers,
+        worker_toolchain=build_worker_toolchain(record, store))
     return service, elicitor, store
+
+
+def build_workspace_providers(store, record, environ):
+    """Every isolated-workspace mechanism this host can offer, by name.
+
+    Both are constructed whether or not the setup grant names them: which one
+    runs is the grant's decision, and a provider that was never built could
+    not report *why* it is unusable. The Superset adapter answers "not logged
+    in" rather than being silently absent.
+    """
+
+    hooks = store.runtime_dir / "githooks"
+    hooks.mkdir(parents=True, exist_ok=True)
+    os.chmod(str(hooks), 0o700)
+    root = repository_root(environ)
+    git = GitAdapter(git_run(cwd=root), root, str(hooks)) if root else None
+    claude_path = None
+    if record is not None:
+        try:
+            body = json.loads(read_private(record["profile_body_path"],
+                                           "the launch profile"))
+            claude_path = body.get("claude_path")
+        except (CabinetError, ValueError, KeyError):
+            claude_path = None
+    providers = {"superset": SupersetAdapter(
+        provider_run(root or "/"), project_id=(store.identity or {}).get("repo"),
+        host_id=environ.get("SUPERSET_HOST"),
+        superset_path=environ.get("CABINET_SUPERSET", "superset"), git=git)}
+    if root and claude_path:
+        providers["local"] = LocalWorktreeProvider(
+            provider_run(root), root, str(store.root / "workspaces"),
+            claude_path=claude_path, git=git)
+    return providers
+
+
+def build_worker_toolchain(record, store):
+    """The binary, plugin directory and chief address a worker inherits.
+
+    Read from the chief's own verified launch profile, which the entrypoint
+    has already matched against the launch record's digest. Nothing here comes
+    from a tool argument.
+    """
+
+    if record is None:
+        return None
+    try:
+        body = json.loads(read_private(record["profile_body_path"],
+                                       "the launch profile"))
+    except (CabinetError, ValueError, KeyError) as problem:
+        # Fail closed, but say so. Returning None silently makes a later
+        # worker launch refuse with RESTRICTED_SESSION_REQUIRED, which points
+        # at the connection rather than at the profile that could not be read.
+        log("worker toolchain unavailable: %s" % problem)
+        return None
+    return {"claude_path": body.get("claude_path"),
+            "plugin_root": body.get("plugin_root"),
+            "public_context": body.get("public_context"),
+            "chief_name": body.get("session_name"),
+            "chief_address": chief_address_for("worker",
+                                              body.get("session_name")),
+            "peer_registry": str(store.peer_registry_path)}
+
+
+def repository_root(environ):
+    """The checkout isolated worktrees are taken from, or None."""
+
+    root = environ.get("CABINET_REPO_ROOT")
+    if root and os.path.isdir(os.path.join(root, ".git")):
+        return root
+    if root and os.path.exists(os.path.join(root, ".git")):
+        return root
+    return None
+
+
+def provider_run(cwd):
+    """A bounded runner for a provider CLI: no shell, allowlisted environment."""
+
+    env = processes.build_env(PROVIDER_ENVIRONMENT)
+
+    def run(argv, cwd=cwd, timeout=300):
+        return processes.run_argv(argv, cwd, env, timeout, redact_output=False)
+
+    return run
 
 
 def build_board_adapter(store):

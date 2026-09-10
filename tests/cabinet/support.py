@@ -17,6 +17,8 @@ import unittest
 from pathlib import Path
 from urllib.parse import unquote
 
+from cabinet_runtime.errors import CabinetError
+
 FIXTURES = Path(__file__).resolve().parent / "fixtures"
 
 
@@ -61,8 +63,30 @@ ROLE_ADDRESSES = ("chief-of-staff", "product", "engineering", "qa",
 
 
 class FakeClock:
+    """A fixed reading that can be moved forward on purpose.
+
+    The default reading is unchanged, so a suite that never calls `advance`
+    reads exactly what it always read. `advance` exists for the one class of
+    test that needs a deadline to pass without waiting for it.
+    """
+
+    START = "2026-09-09T12:00:00Z"
+
+    def __init__(self):
+        self.reading = self.START
+
+    def advance(self, seconds):
+        self.reading = contracts_module().add_seconds(self.reading, seconds)
+        return self.reading
+
     def __call__(self):
-        return "2026-09-09T12:00:00Z"
+        return self.reading
+
+
+def contracts_module():
+    from cabinet_runtime import contracts
+
+    return contracts
 
 
 class FakeElicitor:
@@ -130,12 +154,13 @@ def guarded_execute(policy, executor, envelope):
 
 
 def setup_scope(repo="demo/company", visibility="private", operations=None,
-                profiles=None, workers=1, accounts=None):
+                profiles=None, workers=1, accounts=None,
+                workspace_provider=None):
     """The setup scope the owner is asked to approve in the setup dialog."""
 
     if profiles is None:
         profiles = ["local-unit"]
-    return {
+    scope = {
         "github_accounts": dict(accounts or {}),
         # The state a scope is in after `service.setup` has read the
         # repository: what is automatic turns on a visibility somebody read,
@@ -154,6 +179,9 @@ def setup_scope(repo="demo/company", visibility="private", operations=None,
                            for name in profiles],
         "capacity": {"implementation_workers": workers},
     }
+    if workspace_provider is not None:
+        scope["workspace_provider"] = workspace_provider
+    return scope
 
 
 class CountingClock:
@@ -299,22 +327,159 @@ class FakeGithub:
 
 
 class FakeSuperset:
-    """Recorder standing in for the workspace adapter O4 lands."""
+    """Recorder standing in for a workspace provider.
 
-    def __init__(self):
+    It records a created resource **even when the response times out**, which
+    is the whole point: a provider that forgets what it made cannot be
+    reconciled, and a test against a forgetful fake would prove that stable
+    names are unnecessary. `workspace_create_count` counts actual creations,
+    so a reconciliation that adopts the existing workspace leaves it at one.
+    """
+
+    def __init__(self, name="superset"):
+        self.name = name
         self.calls = []
         self.launch_count = 0
         self.workspace_create_count = 0
+        #: The response is lost after the resource exists. The service must
+        #: land the action `uncertain` and read back rather than retry.
+        self.timeout_after_creating = False
+        #: Set to an error code to make the next creation fail outright.
+        self.fail_next_create = None
+        self.usable = True
+        self.reason = "ready"
+        self.contained = True
+        self.containment_reason = "no setup command runs on this path"
+        self.workspaces = {}
+        self.terminals = {}
+        self.closed = []
+        self.removed_worktrees = []
+        self._live = None
+        self._counter = 0
+
+    # --- what a test sets up ------------------------------------------------
+
+    def live(self, terminal_id, native_session_id, head):
+        """Set the provider-observed live process, workspace and revision."""
+
+        self._live = {"terminal_id": terminal_id,
+                      "native_session_id": native_session_id, "head": head}
+
+    def gone(self):
+        self._live = None
+
+    # --- the provider interface --------------------------------------------
+
+    def probe(self):
+        return {"provider": self.name, "usable": self.usable,
+                "authenticated": self.usable, "reason": self.reason,
+                "version": "fake"}
+
+    def audit_setup_isolation(self, **unused):
+        return {"contained": self.contained, "reason": self.containment_reason,
+                "setup_commands": [], "hooks_path": "/dev/null"}
+
+    def pin_base(self, ref, base_sha):
+        self.calls.append(("pin_base", ref, base_sha))
+        return {"ref": ref, "sha": base_sha}
 
     def create_workspace(self, name, branch, base_ref):
         self.calls.append(("create_workspace", name, branch, base_ref))
-        self.workspace_create_count += 1
-        return {"workspace_id": "W-fake"}
+        if self.fail_next_create:
+            code, self.fail_next_create = self.fail_next_create, None
+            raise CabinetError(code, "the fake provider was told to fail")
+        record = self.workspaces.get(name)
+        if record is None:
+            self._counter += 1
+            record = {"workspace_id": "W-%s-%d" % (self.name, self._counter),
+                      "name": name, "branch": branch, "base_ref": base_ref,
+                      "path": "/tmp/cabinet-fake/%s" % name,
+                      "actual_base_sha": "a" * 40}
+            self.workspaces[name] = record
+            self.workspace_create_count += 1
+        if self.timeout_after_creating:
+            return {"provider": self.name, "outcome": "uncertain",
+                    "workspace_id": None, "name": name, "branch": branch,
+                    "base_ref": base_ref, "path": None,
+                    "actual_base_sha": None}
+        return dict(record, provider=self.name, outcome="created")
 
-    def create_terminal(self, workspace_id, launch_argv):
+    def remember(self, workspace_id, name, path):
+        self.workspaces.setdefault(name, {"workspace_id": workspace_id,
+                                          "name": name, "path": path,
+                                          "actual_base_sha": "a" * 40})
+
+    def create_terminal(self, workspace_id, launch_argv, cwd=None):
         self.calls.append(("create_terminal", workspace_id, list(launch_argv)))
         self.launch_count += 1
-        return {"terminal_id": "T-fake"}
+        terminal_id = "T%d" % self.launch_count
+        self.terminals[terminal_id] = {"terminal_id": terminal_id,
+                                       "workspace_id": workspace_id}
+        return {"provider": self.name, "outcome": "created",
+                "terminal_id": terminal_id}
+
+    def list_terminals(self, workspace_id):
+        self.calls.append(("list_terminals", workspace_id))
+        if self._live is None:
+            return []
+        return [dict(self._live, workspace_id=workspace_id, status="running")]
+
+    def read_terminal(self, workspace_id, terminal_id, max_lines=None):
+        self.calls.append(("read_terminal", workspace_id, terminal_id))
+        return {"terminal_id": terminal_id, "output": ""}
+
+    def close_terminal(self, workspace_id, terminal_id):
+        self.calls.append(("close_terminal", workspace_id, terminal_id))
+        self.closed.append((workspace_id, terminal_id))
+        return {"terminal_id": terminal_id, "outcome": "closed"}
+
+    def reconcile_assignment(self, assignment):
+        """What the provider can see about one assignment, right now."""
+
+        self.calls.append(("reconcile_assignment", assignment["assignment_id"]))
+        from cabinet_runtime import superset as workspace_module
+
+        name = workspace_module.workspace_name(assignment["batch_id"],
+                                               assignment["revision"],
+                                               assignment["assignment_id"])
+        record = self.workspaces.get(name)
+        if record is None:
+            return {"outcome": "not_created", "workspace_id": None,
+                    "path": None, "actual_base_sha": None, "live": False,
+                    "terminal_id": None}
+        live = (self._live is not None
+                and assignment.get("terminal_id") in (None,
+                                                      self._live["terminal_id"]))
+        return {"outcome": "adopted", "workspace_id": record["workspace_id"],
+                "name": name, "path": record["path"],
+                "actual_base_sha": record["actual_base_sha"],
+                "live": live,
+                "terminal_id": self._live["terminal_id"] if live else None,
+                "native_session_id":
+                    self._live["native_session_id"] if live else None}
+
+
+def fake_toolchain(company_dir):
+    """The verified-launch facts a worker launch is built from."""
+
+    company_dir = str(company_dir)
+    return {"claude_path": "/bin/claude",
+            "plugin_root": "%s/plugin" % company_dir,
+            "public_context": "%s/views" % company_dir,
+            "chief_name": "cabinet-chief-test",
+            "chief_address": "cabinet-chief-test",
+            "peer_registry": "%s/runtime/peers.json" % company_dir}
+
+
+def local_provider(run, root, workspaces_root, hooks_dir, claude_path="/bin/claude"):
+    """A `LocalWorktreeProvider` wired to a recording `run`."""
+
+    from cabinet_runtime import superset as workspace_module
+    from cabinet_runtime.git import GitAdapter
+
+    git = GitAdapter(run, root, hooks_dir, git_path="/usr/bin/git")
+    return workspace_module.LocalWorktreeProvider(
+        run, root, workspaces_root, claude_path=claude_path, git=git)
 
 
 def launch_context(company_dir, repo="demo/company", session_id="S1",
@@ -424,6 +589,13 @@ class ServiceCase(unittest.TestCase):
         kwargs.setdefault("repo", self.repo)
         return self.call("setup", {"scope": setup_scope(**kwargs)})
 
+    def seed_assignment(self, head="a" * 40, **kwargs):
+        """Set the observed head and seed W001 at that revision."""
+
+        self.superset.live(kwargs.get("terminal_id", "T1"),
+                           kwargs.get("native_session_id", "S-worker"), head)
+        return FixtureBuilder(self).assignment(head=head, **kwargs)
+
 
 class FixtureBuilder:
     """Seeds stored records together with the events that produced them.
@@ -435,6 +607,44 @@ class FixtureBuilder:
 
     def __init__(self, case):
         self.case = case
+
+    def assignment(self, state="reserved", terminal_id=None,
+                   native_session_id=None, assignment_id="W001",
+                   issue_number=12, role="implementer", head="a" * 40):
+        """Seed one assignment and walk it to `state` through the store.
+
+        Every step goes through the same transitions production uses, so a
+        state a fixture can reach is a state the service can reach. The
+        provider-observed identifiers are recorded as observations rather than
+        written into the row behind the machine's back.
+        """
+
+        from cabinet_runtime import superset as workspace_module
+
+        case = self.case
+        store = case.store
+        work_key = workspace_module.work_key(issue_number, ["app/"])
+        record = store.reserve_assignment(assignment_id, "B001", 1, role,
+                                          work_key, issue_number=issue_number)
+        if state == "reserved":
+            return record
+        name = workspace_module.workspace_name("B001", 1, assignment_id)
+        case.superset.remember("W-B001-r1-%s" % assignment_id, name,
+                               "/tmp/cabinet-fake/%s" % name)
+        store.record_assignment_observation(
+            assignment_id, workspace_id="W-B001-r1-%s" % assignment_id,
+            workspace_path="/tmp/cabinet-fake/%s" % name,
+            actual_base_sha=head, profile_digest="d" * 64,
+            terminal_id=terminal_id, started_at=case.clock())
+        record = store.set_assignment_state(assignment_id, "starting")
+        if state == "starting":
+            return record
+        record = store.set_assignment_state(
+            assignment_id, "running", native_session_id=native_session_id)
+        if state == "running":
+            return record
+        raise AssertionError("FixtureBuilder.assignment cannot seed %r"
+                             % (state,))
 
     def handoff(self, handoff_id="H001", state="recorded", **overrides):
         """Seed the contracts' QA correction and walk it to `state`."""

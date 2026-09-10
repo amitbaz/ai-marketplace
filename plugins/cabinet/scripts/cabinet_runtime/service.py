@@ -31,7 +31,13 @@ import contextlib
 import time
 import uuid
 
+import hashlib
+import json
+import os
+from pathlib import Path
+
 from . import contracts, profiles
+from . import superset as workspaces
 from .approval import ApprovalService
 from .errors import CabinetError
 from .exports import VIEW_NAMES
@@ -68,7 +74,100 @@ DISPATCH_OPERATIONS = ("worker.launch", "workspace.create", "workspace.reserve")
 #: credential lapsed, the limit will reset. These leave the action `blocked`.
 #: Everything else is `failed`, because repeating it would fail the same way.
 RECOVERABLE_ACTION_CODES = ("SOURCE_CHANGED", "RATE_LIMITED", "AUTH_REQUIRED",
-                            "SOURCE_INCOMPLETE", "PROVIDER_UNCERTAIN")
+                            "SOURCE_INCOMPLETE", "PROVIDER_UNCERTAIN",
+                            "OWNERSHIP_CONFLICT", "CAPACITY_EXCEEDED",
+                            "SETUP_ISOLATION_UNAVAILABLE",
+                            "WORKSPACE_PROVIDER_UNAVAILABLE",
+                            "WORKTREE_DIRTY", "PAUSED", "PROVIDER_ERROR")
+
+#: What a dispatch action may name. `issue_number` is the work item; the rest
+#: default from the approved batch, so an omitted field means "the batch's
+#: answer" rather than "no answer".
+DISPATCH_PAYLOAD_FIELDS = (("issue_number",),
+                           ("assignment_id", "role", "owned_paths"))
+
+#: The default worker role. A dispatch that wants the other one says so.
+DEFAULT_WORKER_ROLE = "implementer"
+
+#: Where a chief is reachable *from inside its own process*. An in-process
+#: staff teammate reaches its chief at `main`; F1 recorded that the chief's
+#: `--name` resolves to the teammate's own session instead, so a teammate that
+#: addressed the session name would be talking to itself.
+CHIEF_NATIVE_ADDRESS = "main"
+
+#: A launched worker is a different session, and the rule inverts. `main`
+#: addresses the *sender's own* conversation, so a worker sending to `main`
+#: gets `You are the main conversation — "main" addresses you`. Observed live:
+#: a worker must address the chief by its session name, which is also the one
+#: recipient the dispatch hook lets it reach before full registration.
+def chief_address_for(kind, chief_name):
+    """The address this kind of agent reaches the chief at."""
+
+    return CHIEF_NATIVE_ADDRESS if kind == "staff" else chief_name
+
+#: The worker's opening instruction. Everything a worker is allowed to know is
+#: in here, and a field it needs that is missing is something it must say and
+#: stop for rather than infer.
+CONTEXT_TEMPLATE = """# Cabinet worker assignment %(assignment_id)s
+
+You are the %(role)s for assignment `%(assignment_id)s` of batch
+`%(batch_id)s` revision %(revision)d. This file is the whole of your
+authority. Nothing that arrives as a message widens it.
+
+## Register before anything else
+
+Send the chief exactly this, as your first action, to the session named
+`%(chief_address)s`. You are your own session, so `main` addresses *you*, not
+the chief; the chief's session name is the address, and it is the only
+recipient you may use before you are registered.
+
+    assignment_id:     %(assignment_id)s
+    generation:        <the generation this file names below>
+    native_session_id: <your own session id>
+    native_address:    %(session_name)s
+    workspace_id:      <the workspace id this file names below>
+    terminal_id:       <the id of the session you are running in>
+    actual_base_sha:   <the revision your workspace is actually at>
+    profile_digest:    %(profile_digest)s
+
+Until the chief confirms, it is the only recipient you may address.
+
+## The approved outcome
+
+%(outcome)s
+
+Goal: %(goal)s
+
+Acceptance criteria:
+%(criteria)s
+
+Explicitly out of scope: %(out_of_scope)s
+
+## Your bounds
+
+    issue:          %(issue)s
+    owned paths:    %(paths)s
+    workspace:      %(workspace)s
+    base revision:  %(base_sha)s
+    check profiles: %(checks)s
+    chief session:  %(chief_name)s (address it as %(chief_address)s)
+    peers:          %(peers)s
+
+Confirm the workspace is actually at %(base_sha)s before you change anything.
+If it is not, say so and stop.
+
+## Reporting
+
+Report to Engineering through your registered address: the assignment id, the
+revision you produced, what changed by path, what you did not do and why, and
+anything you found that changes the assignment. Report a blocker the moment
+you have one.
+"""
+
+#: The namespace assignment session identifiers are derived in. Derived rather
+#: than random, so a retry after a lost answer asks for the same session and a
+#: readback can recognise it.
+SESSION_NAMESPACE = uuid.UUID("6d0b1f1e-5d2a-4a54-9f0f-cab1e70a5e01")
 
 #: Kinds a role may register itself under. A worker's address arrives through
 #: `register_session` with its assignment; a teammate's through
@@ -206,6 +305,12 @@ TOOL_SPECS = {
         "write", _schema({"assignment_id": _STRING, "registration": _OBJECT},
                          ("assignment_id", "registration")),
         "Bind a launched worker's own session identity to its assignment."),
+    "close_worker": (
+        "write", _schema({"assignment_id": _STRING, "terminal_id": _STRING},
+                         ("assignment_id", "terminal_id")),
+        "Close exactly the terminal an assignment is registered against. The "
+        "worktree is never removed, and a terminal that is not this "
+        "assignment's is refused."),
     "register_staff": (
         "write", _schema({"role": _STRING, "native_address": _STRING},
                          ("role", "native_address")),
@@ -295,10 +400,25 @@ class CabinetService:
                  elicitor=None, profile_builder=None, launch=None,
                  sleeper=None, monotonic=None, launch_refusal=None,
                  launch_renewer=None, board_reader=None,
-                 board_interval_seconds=BOARD_INTERVAL_SECONDS):
+                 board_interval_seconds=BOARD_INTERVAL_SECONDS,
+                 providers=None, worker_toolchain=None):
         self.store = store
         self.github = github
         self.superset = superset
+        #: Isolated-workspace mechanisms this host has, by name. A setup grant
+        #: names which one runs; an unusable one refuses rather than being
+        #: quietly swapped for another.
+        if providers is not None:
+            self.providers = dict(providers)
+        elif superset is not None:
+            self.providers = {getattr(superset, "name", "superset"): superset}
+        else:
+            self.providers = {}
+        #: The toolchain a worker is launched with. It comes from the verified
+        #: launch record, never from a tool argument, because it decides which
+        #: binary runs with which plugin directory.
+        self.worker_toolchain = dict(worker_toolchain) if worker_toolchain \
+            else None
         self.clock = clock or store.now
         self.elicitor = elicitor
         self.profile_builder = profile_builder
@@ -710,11 +830,474 @@ class CabinetService:
             return self._run_board_action(stored, grant)
         if stored["kind"] in DISPATCH_OPERATIONS:
             self._require_whole_board(stored["kind"])
+            return self._run_dispatch_action(stored, grant)
         raise CabinetError(
             "NOT_IMPLEMENTED_YET",
             "%s is authorized under grant %s but has no executor in this "
-            "release: O4 lands the workspace adapter"
+            "release: O5 lands the candidate and check adapters"
             % (stored["kind"], grant["grant_id"]))
+
+    # --- isolated workspaces and workers ------------------------------------
+
+    def _run_dispatch_action(self, stored, grant):
+        """Reserve first, refuse second, and only then touch a provider.
+
+        The order is deliberate. Ownership and capacity are decided against
+        this company's own records, before anything outside this process is
+        asked to do anything, so a refusal costs a database read rather than a
+        workspace somebody has to clean up. A refusal that a later attempt
+        could get past leaves the action `blocked`, which is a wait rather
+        than a failure: the paths will free up, the provider will be logged in.
+        """
+
+        body = self.store.get_batch(stored["batch_id"],
+                                    stored["revision"])["body"]
+        try:
+            identity = self._assignment_identity(stored, body)
+            assignment = self._ensure_reserved(stored, identity, body)
+            if stored["kind"] == "workspace.reserve":
+                self.store.update_action(stored["action_id"], "running")
+                return self.store.update_action(
+                    stored["action_id"], "verified",
+                    evidence={"assignment_id": assignment["assignment_id"],
+                              "work_key": assignment["work_key"],
+                              "state": assignment["state"],
+                              "observed": self.clock()})
+            provider, probe = self._provider()
+            audit = provider.audit_setup_isolation()
+            if not audit.get("contained"):
+                raise CabinetError(
+                    "SETUP_ISOLATION_UNAVAILABLE",
+                    "a worker cannot be created here: %s. A setup command "
+                    "runs before the sandbox exists, so containment is not "
+                    "established and R07 is not claimed"
+                    % (audit.get("reason") or "the audit gave no reason"))
+            if stored["kind"] == "workspace.create":
+                return self._create_workspace(stored, assignment, body,
+                                              provider, audit)
+            return self._launch_worker(stored, assignment, body, provider,
+                                       audit)
+        except CabinetError as problem:
+            self._land_dispatch(stored, problem)
+            raise
+
+    def _land_dispatch(self, stored, problem):
+        """Record why a dispatch stopped, on the action it stopped."""
+
+        current = self.store.get_action(stored["action_id"])
+        if current["state"] in ("verified", "failed"):
+            return
+        state = "blocked" if problem.code in RECOVERABLE_ACTION_CODES \
+            else "failed"
+        try:
+            self.store.update_action(
+                current["action_id"], state,
+                evidence={"code": problem.code, "message": problem.message,
+                          "observed": self.clock()})
+        except CabinetError:
+            # A company that is paused or fenced cannot be written to at all.
+            # The refusal the caller sees is the one that matters; losing the
+            # note about it must not replace it with a different error.
+            pass
+
+    def _provider(self):
+        """The workspace provider this company's setup grant names."""
+
+        setup = self.store.active_setup_grant(self.store.identity["repo"])
+        if setup is None:
+            raise CabinetError(
+                "SETUP_NOT_APPROVED",
+                "creating an isolated workspace needs the setup grant, which "
+                "names which workspace provider this host may use")
+        return workspaces.select_provider(self.providers, setup["scope"])
+
+    # --- reservation --------------------------------------------------------
+
+    def _assignment_identity(self, stored, body):
+        """What this dispatch claims, checked against the approved batch."""
+
+        payload = stored["payload"]
+        required, optional = DISPATCH_PAYLOAD_FIELDS
+        for field in required:
+            if field not in payload:
+                raise CabinetError("FIELD_MISSING",
+                                   "%s names its %s" % (stored["kind"], field))
+        for field in payload:
+            if field not in required + optional:
+                raise CabinetError("FIELD_UNKNOWN",
+                                   "%s has no %r field" % (stored["kind"], field))
+        issue = payload["issue_number"]
+        if isinstance(issue, bool) or not isinstance(issue, int):
+            raise CabinetError("FIELD_INVALID",
+                               "issue_number is a whole number")
+        if body["issues"] and issue not in body["issues"]:
+            raise CabinetError(
+                "FIELD_INVALID",
+                "issue %d is not in %s revision %d; a worker is dispatched "
+                "against the work the owner approved, not against a number "
+                "supplied at dispatch time"
+                % (issue, stored["batch_id"], stored["revision"]))
+        paths = payload.get("owned_paths") or body["owned_paths"]
+        if not isinstance(paths, list) or not paths:
+            raise CabinetError("FIELD_INVALID",
+                               "owned_paths is a non-empty list")
+        for index, path in enumerate(paths):
+            contracts.check_relative_path(path, "owned_paths[%d]" % index)
+            if path not in body["owned_paths"] and not any(
+                    _within_path(path, owned) for owned in body["owned_paths"]):
+                raise CabinetError(
+                    "FIELD_INVALID",
+                    "%r is outside the paths %s revision %d owns"
+                    % (path, stored["batch_id"], stored["revision"]))
+        role = payload.get("role", DEFAULT_WORKER_ROLE)
+        if role not in profiles.WORKER_TYPES:
+            raise CabinetError(
+                "ROLE_UNKNOWN",
+                "%r is not an isolated worker type; the packaged ones are %s"
+                % (role, ", ".join(profiles.WORKER_TYPES)))
+        assignment_id = payload.get("assignment_id") or ("W%03d" % issue)
+        profiles.safe_slug(assignment_id, "assignment_id")
+        return {"assignment_id": assignment_id, "issue_number": issue,
+                "owned_paths": sorted(paths), "role": role,
+                "work_key": workspaces.work_key(issue, paths)}
+
+    def _ensure_reserved(self, stored, identity, body):
+        """The assignment this dispatch owns, reserving it if it is new."""
+
+        try:
+            existing = self.store.get_assignment(identity["assignment_id"])
+        except CabinetError as missing:
+            if missing.code != "ASSIGNMENT_NOT_FOUND":
+                raise
+            existing = None
+        if existing is not None:
+            if existing["state"] not in contracts.LIVE_ASSIGNMENT_STATES:
+                raise CabinetError(
+                    "OWNERSHIP_CONFLICT",
+                    "assignment %s is %s; continuing that work is a new "
+                    "assignment, not a second start of this one"
+                    % (existing["assignment_id"], existing["state"]))
+            if existing["work_key"] != identity["work_key"]:
+                raise CabinetError(
+                    "OWNERSHIP_CONFLICT",
+                    "assignment %s already owns %s, not %s"
+                    % (existing["assignment_id"], existing["work_key"],
+                       identity["work_key"]))
+            return existing
+        self._check_ownership(identity)
+        self._check_live_capacity(stored, body)
+        try:
+            return self.store.reserve_assignment(
+                identity["assignment_id"], stored["batch_id"],
+                stored["revision"], identity["role"], identity["work_key"],
+                issue_number=identity["issue_number"])
+        except CabinetError as clash:
+            if clash.code == "ASSIGNMENT_CONFLICT":
+                raise CabinetError("OWNERSHIP_CONFLICT", clash.message) from clash
+            raise
+
+    def _check_ownership(self, identity):
+        """At most one live assignment owns a given work item and path set.
+
+        Overlap is the test, not equality. Two assignments editing `app/` and
+        `app/api/` are not two pieces of work that happen to be near each
+        other; they are one worktree's worth of conflict waiting to be
+        discovered at merge time. The loser waits.
+        """
+
+        wanted = set(identity["owned_paths"])
+        for other in self.store.get_assignments(contracts.LIVE_ASSIGNMENT_STATES):
+            if other["assignment_id"] == identity["assignment_id"]:
+                continue
+            held = workspaces.parse_work_key(other["work_key"])
+            clashing = sorted(
+                path for path in wanted
+                for owned in held["paths"]
+                if _within_path(path, owned) or _within_path(owned, path))
+            if other["work_key"] == identity["work_key"] or clashing:
+                raise CabinetError(
+                    "OWNERSHIP_CONFLICT",
+                    "%s is live on %s and owns %s; this claim waits rather "
+                    "than racing it"
+                    % (other["assignment_id"], other["work_key"],
+                       ", ".join(clashing or held["paths"])))
+
+    def _check_live_capacity(self, stored, body):
+        """The batch's own worker ceiling, against what is live right now."""
+
+        ceiling = body["capacity"].get("implementation_workers", 0)
+        live = [row for row in
+                self.store.get_assignments(contracts.LIVE_ASSIGNMENT_STATES)
+                if row["batch_id"] == stored["batch_id"]
+                and row["revision"] == stored["revision"]]
+        if len(live) >= ceiling:
+            raise CabinetError(
+                "CAPACITY_EXCEEDED",
+                "%s revision %d allows %d implementation worker(s) and %d "
+                "%s live (%s); this dispatch waits"
+                % (stored["batch_id"], stored["revision"], ceiling, len(live),
+                   "is" if len(live) == 1 else "are",
+                   ", ".join(row["assignment_id"] for row in live)))
+
+    # --- workspaces ---------------------------------------------------------
+
+    def _create_workspace(self, stored, assignment, body, provider, audit):
+        """Pin the approved base, then create the one workspace this owns."""
+
+        if assignment["workspace_id"]:
+            self.store.update_action(stored["action_id"], "running")
+            return self.store.update_action(
+                stored["action_id"], "verified",
+                evidence={"outcome": "already_created",
+                          "workspace_id": assignment["workspace_id"],
+                          "observed": self.clock()})
+        name = workspaces.workspace_name(stored["batch_id"], stored["revision"],
+                                         assignment["assignment_id"])
+        branch = workspaces.branch_name(stored["batch_id"], stored["revision"],
+                                        assignment["assignment_id"])
+        ref = workspaces.base_ref_name(stored["batch_id"], stored["revision"])
+        running = self.store.update_action(stored["action_id"], "running")
+        pinned = None
+        if getattr(provider, "git", None) is not None:
+            pinned = provider.pin_base(ref, body["base_sha"])
+        result = provider.create_workspace(name, branch, ref)
+        if result.get("outcome") == "uncertain":
+            return self.store.update_action(
+                running["action_id"], "uncertain",
+                evidence={"outcome": "uncertain", "name": name,
+                          "branch": branch, "base_ref": ref,
+                          "assignment_id": assignment["assignment_id"],
+                          "reason": result.get("reason"),
+                          "containment": audit,
+                          "observed": self.clock()})
+        self._adopt_workspace(assignment, result, body)
+        return self.store.update_action(
+            running["action_id"], "verified",
+            external_ref={"provider": result.get("provider"),
+                          "workspace_id": result.get("workspace_id"),
+                          "name": name, "branch": branch},
+            evidence={"outcome": result.get("outcome"), "name": name,
+                      "branch": branch, "base_ref": ref,
+                      "pinned": pinned, "containment": audit,
+                      "assignment_id": assignment["assignment_id"],
+                      "actual_base_sha": result.get("actual_base_sha"),
+                      "observed": self.clock()})
+
+    def _adopt_workspace(self, assignment, result, body):
+        """Record a provider's workspace against the assignment that owns it."""
+
+        actual = result.get("actual_base_sha")
+        if actual and actual != body["base_sha"]:
+            raise CabinetError(
+                "BASE_SHA_MISMATCH",
+                "the workspace is at %s; %s revision was approved at %s"
+                % (actual, assignment["assignment_id"], body["base_sha"]))
+        return self.store.record_assignment_observation(
+            assignment["assignment_id"],
+            workspace_id=result.get("workspace_id"),
+            workspace_path=result.get("path"),
+            actual_base_sha=actual or body["base_sha"])
+
+    # --- workers ------------------------------------------------------------
+
+    def _launch_worker(self, stored, assignment, body, provider, audit):
+        """Build the verified profile, write the context, start the session."""
+
+        if not assignment["workspace_id"]:
+            raise CabinetError(
+                "WORKSPACE_NOT_CREATED",
+                "assignment %s has no workspace yet; workspace.create runs "
+                "before worker.launch" % assignment["assignment_id"])
+        if assignment["state"] not in ("reserved", "blocked"):
+            raise CabinetError(
+                "INVALID_TRANSITION",
+                "assignment %s is %s; a worker is launched once, from a "
+                "reservation" % (assignment["assignment_id"],
+                                 assignment["state"]))
+        toolchain = self._toolchain()
+        profile = self._worker_profile(assignment, body, toolchain)
+        context = self._write_worker_context(assignment, body, toolchain,
+                                             profile)
+        session_id = str(uuid.uuid5(
+            SESSION_NAMESPACE, "%s:%d:%s" % (stored["batch_id"],
+                                             stored["revision"],
+                                             assignment["assignment_id"])))
+        launch = profiles.worker_launch(profile, context["path"], session_id)
+        self.store.record_assignment_observation(
+            assignment["assignment_id"], profile_digest=profile["digest"],
+            started_at=self.clock())
+        starting = self.store.set_assignment_state(
+            assignment["assignment_id"], "starting")
+        running = self.store.update_action(stored["action_id"], "running")
+        result = provider.create_terminal(assignment["workspace_id"],
+                                          launch["argv"],
+                                          cwd=starting["workspace_path"])
+        evidence = {"assignment_id": assignment["assignment_id"],
+                    "session_name": launch["session_name"],
+                    "native_session_id_requested": session_id,
+                    "profile_digest": profile["digest"],
+                    "context_file": context["path"],
+                    "context_sha256": context["sha256"],
+                    "containment": audit,
+                    "outcome": result.get("outcome"),
+                    "observed": self.clock()}
+        if result.get("outcome") == "uncertain":
+            evidence["reason"] = result.get("reason")
+            return self.store.update_action(running["action_id"], "uncertain",
+                                            evidence=evidence)
+        self.store.record_assignment_observation(
+            assignment["assignment_id"], terminal_id=result.get("terminal_id"))
+        evidence["terminal_id"] = result.get("terminal_id")
+        return self.store.update_action(
+            running["action_id"], "verified",
+            external_ref={"provider": result.get("provider"),
+                          "workspace_id": assignment["workspace_id"],
+                          "terminal_id": result.get("terminal_id")},
+            evidence=evidence)
+
+    def _toolchain(self):
+        """Where the worker's binary, plugin and chief address come from.
+
+        Never from a tool argument. The chief's own verified launch record
+        carries the profile it was started with, and a worker is built from
+        the same facts; a model that could name the executable would be able
+        to name a different one.
+        """
+
+        if self.worker_toolchain:
+            return dict(self.worker_toolchain)
+        launch = self.launch or {}
+        body_path = launch.get("profile_body_path")
+        if not body_path:
+            raise CabinetError(
+                "RESTRICTED_SESSION_REQUIRED",
+                "launching a worker needs the chief's verified launch profile, "
+                "which names the executable and plugin directory a worker "
+                "inherits; this connection carries none")
+        try:
+            with open(body_path, "r", encoding="utf-8") as handle:
+                body = json.load(handle)
+        except (OSError, ValueError) as problem:
+            raise CabinetError(
+                "LAUNCH_PROFILE_MISMATCH",
+                "the chief's launch profile could not be read: %s" % problem)
+        return {"claude_path": body.get("claude_path"),
+                "plugin_root": body.get("plugin_root"),
+                "public_context": body.get("public_context"),
+                "chief_name": body.get("session_name"),
+                "chief_address": chief_address_for("worker",
+                                                   body.get("session_name")),
+                "peer_registry": str(self.store.peer_registry_path)}
+
+    def _worker_profile(self, assignment, body, toolchain):
+        """The verified launch profile for one worker, and nothing wider."""
+
+        builder = self.profile_builder or profiles.build_profile
+        workspace = {"assignment": assignment["assignment_id"],
+                     "path": assignment["workspace_path"],
+                     "claude_path": toolchain["claude_path"],
+                     "plugin_root": toolchain["plugin_root"],
+                     "chief_name": toolchain["chief_name"]}
+        if toolchain.get("peer_registry"):
+            workspace["peer_registry"] = toolchain["peer_registry"]
+        checks = ()
+        if assignment["role"] == "test-runner":
+            setup = self.store.active_setup_grant(self.store.identity["repo"])
+            approved = (setup or {}).get("scope", {}).get("check_profiles", [])
+            checks = [profile for profile in approved
+                      if profile["profile_id"] in body["check_profile_ids"]]
+        return builder(assignment["role"], workspace,
+                       toolchain["public_context"], check_profiles=checks)
+
+    def _write_worker_context(self, assignment, body, toolchain, profile):
+        """Write the worker's instruction once, read-only, outside the worktree.
+
+        Outside, for two reasons. The worktree is what the worker edits and
+        what a diff is taken from, and a file Cabinet dropped into it would
+        show up as the worker's work. And the worker has no need to read it:
+        the text reaches the session as its opening instruction, so the file
+        is the record of what was said, not a channel.
+        """
+
+        name = workspaces.workspace_name(assignment["batch_id"],
+                                         assignment["revision"],
+                                         assignment["assignment_id"])
+        directory = Path(self.store.root) / "workspaces" / ("%s.context" % name)
+        directory.mkdir(parents=True, exist_ok=True)
+        os.chmod(str(directory), 0o700)
+        path = directory / ("%s.md" % assignment["assignment_id"])
+        text = self._worker_context_text(assignment, body, toolchain, profile)
+        if path.exists():
+            os.chmod(str(path), 0o600)
+            path.unlink()
+        with open(str(path), "w", encoding="utf-8") as handle:
+            handle.write(text)
+        os.chmod(str(path), 0o400)
+        return {"path": str(path),
+                "sha256": hashlib.sha256(text.encode("utf-8")).hexdigest()}
+
+    def _worker_context_text(self, assignment, body, toolchain, profile):
+        """Everything a worker is allowed to know, and nothing it must guess."""
+
+        held = workspaces.parse_work_key(assignment["work_key"])
+        peers = ", ".join(sorted(row["role"] + " (" + row["native_address"] + ")"
+                                 for row in self.store.get_addresses()))
+        criteria = "\n".join(
+            "- %s: %s" % (item["id"], item["behavior"])
+            for item in body["acceptance"])
+        return CONTEXT_TEMPLATE % {
+            "assignment_id": assignment["assignment_id"],
+            "role": assignment["role"],
+            "batch_id": assignment["batch_id"],
+            "revision": assignment["revision"],
+            "outcome": body["outcome"],
+            "goal": body["goal"],
+            "criteria": criteria,
+            "issue": held["issue"],
+            "paths": ", ".join(held["paths"]),
+            "workspace": assignment["workspace_path"] or "(not yet created)",
+            "base_sha": body["base_sha"],
+            "checks": ", ".join(body["check_profile_ids"]) or "(none)",
+            "out_of_scope": ", ".join(body["out_of_scope"]) or "(none stated)",
+            "chief_address": toolchain.get("chief_address")
+            or chief_address_for("worker", toolchain.get("chief_name")),
+            "chief_name": toolchain.get("chief_name", "(unknown)"),
+            "session_name": profile["session_name"],
+            "profile_digest": profile["digest"],
+            "peers": peers or "(none registered yet)",
+        }
+
+    # --- closing ------------------------------------------------------------
+
+    def close_worker(self, assignment_id, terminal_id):
+        """Close exactly the terminal this assignment is registered against.
+
+        The identifier is required rather than looked up, and then checked
+        against the record, because the failure this prevents is closing a
+        terminal that belongs to somebody else — a session started by the
+        owner, or the previous generation of this same assignment. The
+        worktree is never removed: uncommitted work in it is somebody's, and
+        deciding it is disposable is not this method's call.
+        """
+
+        assignment = self.store.get_assignment(assignment_id)
+        registered = assignment["terminal_id"]
+        if not registered:
+            raise CabinetError(
+                "TERMINAL_NOT_REGISTERED",
+                "assignment %s has no registered terminal to close"
+                % assignment_id)
+        if str(terminal_id) != str(registered):
+            raise CabinetError(
+                "TERMINAL_NOT_REGISTERED",
+                "assignment %s is registered against terminal %s, not %s"
+                % (assignment_id, registered, terminal_id))
+        provider, _ = self._provider()
+        result = provider.close_terminal(assignment["workspace_id"],
+                                         registered)
+        return {"assignment_id": assignment_id, "terminal_id": registered,
+                "workspace_id": assignment["workspace_id"],
+                "worktree": "preserved", "result": result}
 
     # --- board actions ------------------------------------------------------
 
@@ -1172,14 +1755,22 @@ class CabinetService:
     def register_session(self, assignment_id, registration):
         """Bind a launched worker's own session identity to its assignment.
 
-        This is the minimal form O2 needs: it makes the worker's address
-        checkable and writes it into the registry the dispatch hook reads. The
-        assignment state machine is O4's, and nothing here touches it.
+        A worker exists when three sources agree: the record this service
+        issued when it launched one, the worker's own account of itself, and
+        what the provider can see right now. Two of the three is not enough,
+        and each pair fails differently — a stale generation is a worker from
+        a previous attempt, a mismatched terminal is a different process, and
+        a claim the provider cannot see is a session that talked to us without
+        being the one we started.
+
+        Only after all three agree does the assignment become `running`. Until
+        then it is `starting`, which is the honest description of a dispatch
+        that has not yet produced anything.
         """
 
         if not isinstance(registration, dict):
             raise CabinetError("FIELD_INVALID", "a registration is an object")
-        allowed = ("role", "native_address", "native_session_id", "terminal_id")
+        allowed = ("role", "native_address") + contracts.WORKER_REGISTRATION_FIELDS
         for field in registration:
             if field not in allowed:
                 raise CabinetError("FIELD_UNKNOWN",
@@ -1188,11 +1779,72 @@ class CabinetService:
             if field not in registration:
                 raise CabinetError("FIELD_MISSING",
                                    "a registration states its %r" % field)
+        try:
+            assignment = self.store.get_assignment(assignment_id)
+        except CabinetError as missing:
+            if missing.code != "ASSIGNMENT_NOT_FOUND":
+                raise
+            assignment = None
+        if assignment is not None and assignment["state"] in (
+                "starting", "running"):
+            self._check_worker_identity(assignment, registration)
+            if assignment["state"] == "starting":
+                self.store.set_assignment_state(
+                    assignment_id, "running",
+                    native_session_id=registration["native_session_id"])
         return self._register(registration["role"],
                               registration["native_address"], "worker",
                               assignment_id=assignment_id,
                               native_session_id=registration.get(
                                   "native_session_id"))
+
+    def _check_worker_identity(self, assignment, registration):
+        """The three-way agreement, in the order that tells them apart."""
+
+        stated = contracts.validate_worker_registration(
+            dict(registration, assignment_id=registration.get(
+                "assignment_id", assignment["assignment_id"])))
+        if stated["assignment_id"] != assignment["assignment_id"]:
+            raise CabinetError(
+                "REGISTRATION_MISMATCH",
+                "the registration names assignment %s, not %s"
+                % (stated["assignment_id"], assignment["assignment_id"]))
+        if stated["generation"] != assignment["generation"]:
+            raise CabinetError(
+                "GENERATION_STALE",
+                "assignment %s was reserved at generation %d; this worker "
+                "reports generation %d, so it belongs to an earlier attempt"
+                % (assignment["assignment_id"], assignment["generation"],
+                   stated["generation"]))
+        for field, label in (("workspace_id", "workspace"),
+                             ("terminal_id", "terminal"),
+                             ("profile_digest", "launch profile"),
+                             ("actual_base_sha", "base revision")):
+            recorded = assignment.get(field)
+            if recorded is not None and str(stated[field]) != str(recorded):
+                raise CabinetError(
+                    "REGISTRATION_MISMATCH",
+                    "the worker reports %s %s; assignment %s was launched "
+                    "with %s" % (label, stated[field],
+                                 assignment["assignment_id"], recorded))
+        provider, _ = self._provider()
+        observed = provider.reconcile_assignment(assignment)
+        if not observed.get("live"):
+            raise CabinetError(
+                "REGISTRATION_MISMATCH",
+                "the provider sees no live process for assignment %s, so this "
+                "registration is a claim no observation supports"
+                % assignment["assignment_id"])
+        for field, label in (("workspace_id", "workspace"),
+                             ("terminal_id", "terminal")):
+            seen = observed.get(field)
+            if seen is not None and str(seen) != str(stated[field]):
+                raise CabinetError(
+                    "REGISTRATION_MISMATCH",
+                    "the provider sees %s %s for assignment %s; the worker "
+                    "reports %s" % (label, seen, assignment["assignment_id"],
+                                    stated[field]))
+        return stated
 
     def _register(self, role, native_address, kind, assignment_id=None,
                   native_session_id=None):
@@ -1229,14 +1881,174 @@ class CabinetService:
     # --- operations later tasks own ----------------------------------------
 
     def reconcile(self, observations):
-        raise _deferred("reconcile", "A1")
+        """Read the provider back and make the records say what is true.
+
+        Two questions, and they are separate on purpose. An action that ended
+        `uncertain` asks *did the thing get made* — answered by looking for
+        the stable name, never by trying again. A live assignment asks *is the
+        worker still there* — answered by what the provider can see, never by
+        the absence of a message.
+
+        A1 owns the wider recovery. What lands here is the part the dispatch
+        path cannot be trusted without: a workspace created behind a lost
+        answer is adopted rather than duplicated, a worker that never
+        registered is a startup failure rather than a pending success, and a
+        worker the provider has lost is `lost` rather than assumed busy.
+        """
+
+        if observations is not None and not isinstance(observations, dict):
+            raise CabinetError("FIELD_INVALID",
+                               "observations is an object of adapter readings")
+        report = {"actions": [], "assignments": [], "observed": self.clock()}
+        try:
+            provider, probe = self._provider()
+        except CabinetError as problem:
+            report["provider"] = {"available": False, "code": problem.code,
+                                  "reason": problem.message}
+            return report
+        report["provider"] = {"available": True, "name": probe.get("provider"),
+                              "reason": probe.get("reason")}
+        for action in self.store.get_actions(states=("uncertain",),
+                                             kinds=DISPATCH_OPERATIONS):
+            report["actions"].append(self._reconcile_action(action, provider))
+        for assignment in self.store.get_assignments(("reserved", "starting",
+                                                      "running")):
+            row = self._reconcile_assignment(assignment, provider)
+            if row is not None:
+                report["assignments"].append(row)
+        return report
+
+    def _reconcile_action(self, action, provider):
+        """Adopt what an ambiguous dispatch may already have created."""
+
+        assignment_id = (action.get("evidence") or {}).get("assignment_id")
+        if not assignment_id:
+            return {"action_id": action["action_id"], "outcome": "unknown",
+                    "reason": "the action names no assignment to read back"}
+        assignment = self.store.get_assignment(assignment_id)
+        observed = provider.reconcile_assignment(assignment)
+        if observed.get("outcome") == "not_created":
+            self.store.update_action(
+                action["action_id"], "blocked",
+                evidence={"outcome": "not_created", "observed": self.clock(),
+                          "assignment_id": assignment_id})
+            return {"action_id": action["action_id"], "outcome": "not_created",
+                    "assignment_id": assignment_id}
+        body = self.store.get_batch(assignment["batch_id"],
+                                    assignment["revision"])["body"]
+        self._adopt_workspace(assignment, observed, body)
+        self.store.update_action(
+            action["action_id"], "verified",
+            external_ref={"workspace_id": observed.get("workspace_id"),
+                          "name": observed.get("name")},
+            evidence={"outcome": "adopted", "assignment_id": assignment_id,
+                      "workspace_id": observed.get("workspace_id"),
+                      "actual_base_sha": observed.get("actual_base_sha"),
+                      "observed": self.clock()})
+        return {"action_id": action["action_id"], "outcome": "adopted",
+                "assignment_id": assignment_id,
+                "workspace_id": observed.get("workspace_id")}
+
+    def _reconcile_assignment(self, assignment, provider):
+        """Startup failure, adoption or loss — each said out loud."""
+
+        state = assignment["state"]
+        if state == "starting":
+            started = assignment["started_at"]
+            if started and not contracts.not_after(
+                    self.clock(),
+                    contracts.add_seconds(started,
+                                          contracts.STARTUP_WINDOW_SECONDS)):
+                self.store.set_assignment_state(assignment["assignment_id"],
+                                                "blocked")
+                return {"assignment_id": assignment["assignment_id"],
+                        "outcome": "startup_failed", "code": "STARTUP_FAILED",
+                        "state": "blocked",
+                        "reason": "no registration arrived within %d seconds "
+                                  "of the launch at %s"
+                                  % (contracts.STARTUP_WINDOW_SECONDS, started)}
+            return {"assignment_id": assignment["assignment_id"],
+                    "outcome": "awaiting_registration", "state": state}
+        if state == "reserved":
+            return None
+        observed = provider.reconcile_assignment(assignment)
+        if observed.get("live"):
+            return {"assignment_id": assignment["assignment_id"],
+                    "outcome": "adopted", "state": state,
+                    "terminal_id": observed.get("terminal_id")}
+        self.store.set_assignment_state(assignment["assignment_id"], "lost")
+        return {"assignment_id": assignment["assignment_id"],
+                "outcome": "lost", "state": "lost", "code": "STARTUP_FAILED"
+                if not assignment["native_session_id"] else None,
+                "reason": "the provider no longer sees a live process for "
+                          "this assignment"}
 
     # --- recovery and records ----------------------------------------------
 
     def pause(self, reason):
+        """Fence first, then cancel what never started, then ask the rest to stop.
+
+        The order is the guarantee. The pause commits before anything else, so
+        a dispatch racing this call is refused rather than half-run. A
+        reservation that never became a process is genuinely cancelled,
+        because nothing is running to disagree. A worker that *is* running is
+        moved to `cancel_requested` and sent a recorded stop request — and it
+        stays `cancel_requested` until it says otherwise. Calling that
+        "cancelled" would be this service reporting somebody else's action as
+        finished on the strength of having asked for it.
+        """
+
         lease = self.store.pause(reason)
+        cancelled, requested = [], []
+        for assignment in self.store.get_assignments(
+                contracts.LIVE_ASSIGNMENT_STATES):
+            identifier = assignment["assignment_id"]
+            if assignment["state"] == "reserved":
+                self.store.set_assignment_state(identifier, "cancelled")
+                cancelled.append(identifier)
+                continue
+            if assignment["state"] == "cancel_requested":
+                continue
+            self.store.set_assignment_state(identifier, "cancel_requested")
+            requested.append(identifier)
+            self._record_stop_request(assignment, reason)
         return {"paused": True, "reason": reason,
-                "generation": lease["generation"]}
+                "generation": lease["generation"],
+                "cancelled_reservations": cancelled,
+                "stop_requested": requested,
+                "note": "a stop was requested; a worker is stopped when it "
+                        "reports so, not when the request was recorded"}
+
+    def _record_stop_request(self, assignment, reason):
+        """Durably record the stop before anybody tries to deliver it."""
+
+        envelope = {
+            "handoff_id": "H-stop-%s-g%d" % (assignment["assignment_id"],
+                                             assignment["generation"]),
+            "batch_id": assignment["batch_id"],
+            "revision": assignment["revision"],
+            "from_role": "delivery-lead",
+            "to_role": assignment["role"],
+            "kind": "request",
+            "question": "The company is paused (%s). Stop at a point you can "
+                        "resume from, leave the worktree as it is, and report "
+                        "what is done and what is half done. Nothing in the "
+                        "worktree is deleted." % reason,
+            "evidence": [],
+            "reply_to": None,
+            "expected_response": "What was completed, what was left half "
+                                 "done, and the revision the worktree is at",
+        }
+        envelope = contracts.validate_handoff_envelope(envelope,
+                                                       REGISTERABLE_ROLES)
+        bounded, truncated = contracts.bound_handoff(envelope)
+        try:
+            return self.store.record_handoff(bounded, truncated=truncated,
+                                             fence=False)
+        except CabinetError as clash:
+            if clash.code == "IDEMPOTENCY_CONFLICT":
+                return self.store.get_handoff(envelope["handoff_id"])
+            raise
 
     def checkpoint(self, kind, summary):
         return self.store.append_event("checkpoint", kind, None,
@@ -1271,6 +2083,19 @@ class CabinetService:
                                 and self.store.generation == lease["generation"]),
             "connection": "restricted" if self.launch else "ordinary",
         }
+
+
+def _within_path(path, parent):
+    """True when `path` is `parent` or lives inside it.
+
+    Repository-relative, textual, and deliberately so: this decides whether
+    two assignments would touch the same files, and it runs before any
+    workspace exists to resolve them against.
+    """
+
+    left = str(path).strip("/")
+    right = str(parent).strip("/")
+    return left == right or left.startswith(right + "/")
 
 
 @contextlib.contextmanager

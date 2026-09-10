@@ -130,6 +130,25 @@ ERROR_CODES = {
                            "acceptance verdict.",
     "OWNER_DECISION_REQUIRED": "Dropping an approved goal needs the owner's "
                                "recorded decision.",
+    # Workspaces, workers and registration
+    "WORKSPACE_PROVIDER_UNAVAILABLE": "No configured workspace provider can "
+                                      "create an isolated workspace here.",
+    "SETUP_ISOLATION_UNAVAILABLE": "A setup command would run outside the "
+                                   "approved sandbox before a worker exists.",
+    "OWNERSHIP_CONFLICT": "Another live assignment owns those paths; this one "
+                          "waits rather than racing it.",
+    "WORKSPACE_NOT_CREATED": "The assignment has no workspace to launch a "
+                             "worker into.",
+    "BASE_SHA_MISMATCH": "A ref does not resolve to the approved base "
+                         "revision.",
+    "WORKTREE_DIRTY": "The base checkout has uncommitted changes, so a "
+                      "worktree from it would not be the approved revision.",
+    "REGISTRATION_MISMATCH": "A worker's own registration does not match what "
+                             "the provider observes.",
+    "STARTUP_FAILED": "No registration arrived inside the startup window; the "
+                      "dispatch did not produce a worker.",
+    "TERMINAL_NOT_REGISTERED": "That terminal is not the one this assignment "
+                               "is registered against.",
     # Backup and restore
     "BACKUP_DESTINATION_EXISTS": "The backup destination already exists.",
     "RESTORE_DESTINATION_EXISTS": "The restore destination already exists.",

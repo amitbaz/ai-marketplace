@@ -44,6 +44,28 @@ the allowed paths, the base revision, the checks that must pass, and what to
 report. Written so a worker with no company context can execute it, because
 that is exactly what a worker is.
 
+Those instructions become the worker's context file, written once and left
+read-only outside its worktree. A field you leave out is one the worker will
+say is missing and stop for, which is the behaviour you want — the alternative
+is a worker inferring its own boundary.
+
+**What a worker reports to you.** The assignment id, the revision it produced,
+what changed by path, what it did not do and why, and anything it found that
+changes the assignment. A report that names no revision is not a candidate;
+ask for the revision rather than reading the worktree yourself.
+
+**A blocked worker is information, not a delay.** When a worker reports
+blocked, the assignment is blocked. Do not re-dispatch it into the same
+workspace hoping for a different outcome, and do not widen its paths so it can
+route around the obstacle: at most one live assignment owns a given path set,
+and reaching outside it collides with somebody else's work rather than
+avoiding the problem.
+
+**Follow-ups are messages.** A worker is steered by native messages to its
+session, never by typing into its terminal. If a worker has exited, its
+terminal is a shell, and what you send there is a command rather than an
+instruction to anybody.
+
 ## What you own in a disagreement
 
 **Technical means.** How it is built, in what order internally, with what

@@ -198,7 +198,105 @@ A body edit changes only Cabinet's managed block and leaves every other line
 of the ticket alone. Replacing a whole body means overwriting somebody's
 writing, so it happens only against a replacement that was reviewed as text.
 
+## Dispatching an assignment into an isolated workspace
+
+Nothing about an implementation worker is a matter of intention. A batch is
+approved, an assignment is reserved, a workspace is created at the exact
+approved revision, a worker is launched into it with a verified profile, and
+the worker registers itself before it is anything more than a process. Each of
+those is a recorded step, and skipping one does not produce a faster start; it
+produces a worker nobody can account for.
+
+The order is fixed:
+
+1. **Reserve the assignment.** One work item and one path set, claimed. A
+   second claim on paths somebody already holds waits — it does not race, and
+   it is not a reason to widen the first assignment's paths so both fit.
+2. **Create the workspace.** The approved base revision is pinned to a fixed
+   ref and read back before anything is branched from it. A moving branch name
+   is never the base: what the owner approved was a revision.
+3. **Launch the worker.** The command line comes from the verified profile,
+   and the instruction comes from a context file written once and left
+   read-only. Neither is assembled from anything a model said.
+4. **Wait for registration.** The assignment is `starting`, not `running`. A
+   terminal that started is not a worker.
+
+### The worker context
+
+Every worker is launched with all of this, and a worker missing any of it says
+which field and stops rather than inferring it:
+
+| Field | What it is |
+| --- | --- |
+| `assignment_id` | Its identity across restarts and replacements |
+| `generation` | The lease generation the assignment was reserved at |
+| `outcome`, `goal`, acceptance criteria | The approved result, verbatim |
+| `issue` | The work item it owns |
+| `owned paths` | The paths inside the workspace it may change |
+| `workspace` | The absolute path of the worktree, and the only one |
+| `base revision` | The exact 40-character revision the work starts from |
+| `check profiles` | The approved checks, for a test runner |
+| `chief` | The address it registers with, and its only route out at first |
+| `peers` | The registered addresses it may talk to once registered |
+
+### What registration has to prove
+
+A registration is not an announcement. It is checked against the record the
+service issued at launch **and** against what the provider can see right now,
+and all three have to agree:
+
+    assignment_id      the assignment it claims
+    generation         the generation that assignment was reserved at
+    native_session_id  its own session
+    native_address     the session name it can be reached at
+    workspace_id       the workspace it is running in
+    terminal_id        the process it is running as
+    actual_base_sha    the revision its workspace is actually at
+    profile_digest     the launch profile it was started with
+
+A stale generation is a worker from a previous attempt. A mismatched terminal
+is a different process. A claim the provider cannot see is a session that
+found us rather than one we started. None of the three becomes `running`, and
+a name on its own never was sufficient.
+
+If no registration arrives inside the startup window, the dispatch failed. It
+did not quietly succeed and go unnoticed: an assignment with no registration
+is blocked and said out loud, because a worker believed to be working is worse
+than one known to be absent.
+
+### Follow-ups, stopping, and what is never deleted
+
+Follow-up text goes over native messaging, addressed to the session. It never
+goes to the terminal. A terminal whose Claude process has exited is a shell,
+and text typed into a shell is a command; the fact that the last thing running
+there was a worker does not make the next thing typed a message.
+
+A pause commits first, so nothing new starts. Reservations that never became a
+process are cancelled outright — there is nothing running to disagree. A
+worker that *is* running is asked to stop and moved to `cancel_requested`, and
+it stays there until it reports. Recording the request is not the same as the
+worker having stopped, and reporting it as cancellation would be this company
+claiming somebody else's action as finished.
+
+Closing a terminal is scoped to the assignment registered against it. The
+worktree is never removed, whatever state it is in: uncommitted work in it is
+somebody's, and deciding it is disposable is not a dispatcher's call.
+
+### When a workspace cannot be created here
+
+Two refusals are prerequisites rather than faults, and both name what is
+missing instead of falling back to something else:
+
+- **No usable workspace provider.** The mechanism the setup grant names cannot
+  create an isolated workspace on this host — most often because it is not
+  authenticated. Nothing silently substitutes a different mechanism: which one
+  runs is a decision the owner made at setup, and changing it because
+  something failed is exactly the substitution this refuses.
+- **Setup isolation unavailable.** The project runs a setup command when a
+  workspace is created, and that command runs before the sandbox exists.
+  Containment is not established, so no worker is created and the isolation
+  claim is not made.
+
 ## Extended by
 
-O4 (assignment dispatch into isolated workspaces) and O5 (the correction loop
-and the integration candidate).
+O5 (the correction loop and the integration candidate).

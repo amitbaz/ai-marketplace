@@ -13,10 +13,12 @@ from .errors import CabinetError
 
 #: 2 adds the `addresses` projection and the handoff columns O2 needs; 3 adds
 #: the consecutive-failure counter, which is a different number from the
-#: attempt count and could not share it. An older database is upgraded in place
-#: by `store.SCHEMA_UPGRADES`; a newer one still opens read-only with
-#: SCHEMA_TOO_NEW.
-SCHEMA_VERSION = 4
+#: attempt count and could not share it; 5 adds the workspace facts a
+#: registration is checked against, which have to survive a restart or an
+#: adopted worker could not be told from a claimed one. An older database is
+#: upgraded in place by `store.SCHEMA_UPGRADES`; a newer one still opens
+#: read-only with SCHEMA_TOO_NEW.
+SCHEMA_VERSION = 5
 
 SHA_PATTERN = re.compile(r"^[0-9a-f]{40}$")
 REPO_PATTERN = re.compile(r"^[A-Za-z0-9._-]+/[A-Za-z0-9._-]+$")
@@ -495,8 +497,18 @@ SETUP_SCOPE_FIELDS = ("repo", "visibility", "board_operations",
 # Only `live` makes prose automatic. A repository whose visibility could not be
 # read might be public, and the public-repository rule exists precisely for the
 # case where nobody checked.
+#
+# `workspace_provider` names which isolated-workspace mechanism this host is
+# allowed to use. It is optional and defaults to `superset`, which is the
+# design's mechanism; `local` is the git-worktree provider, and it is a
+# deliberate owner choice rather than a fallback something can slide into when
+# Superset is unavailable. An unusable provider refuses the dispatch instead.
 OPTIONAL_SETUP_FIELDS = ("github_accounts", "visibility_source",
-                         "visibility_confirmed")
+                         "visibility_confirmed", "workspace_provider")
+
+#: The isolated-workspace mechanisms a setup grant may name.
+WORKSPACE_PROVIDERS = ("superset", "local")
+DEFAULT_WORKSPACE_PROVIDER = "superset"
 VISIBILITY_SOURCES = ("live", "declared", "unknown")
 CHECK_PROFILE_FIELDS = ("profile_id", "argv", "env")
 VISIBILITIES = ("private", "public")
@@ -522,6 +534,11 @@ def validate_setup_scope(scope):
         raise CabinetError("FIELD_INVALID",
                            "setup.visibility_source must be one of %s"
                            % (VISIBILITY_SOURCES,))
+    provider = scope.get("workspace_provider", DEFAULT_WORKSPACE_PROVIDER)
+    if provider not in WORKSPACE_PROVIDERS:
+        raise CabinetError("FIELD_INVALID",
+                           "setup.workspace_provider must be one of %s"
+                           % (WORKSPACE_PROVIDERS,))
     confirmed = scope.get("visibility_confirmed")
     if confirmed is not None and confirmed not in VISIBILITIES:
         raise CabinetError("FIELD_INVALID",
@@ -651,6 +668,50 @@ HANDOFF_TRANSITIONS = {
 #: replied, or the obligation is closed, and a sender's stale receipt must not
 #: be able to unmake either.
 DELIVERABLE_HANDOFF_STATES = ("recorded", "sent")
+
+#: What a launched worker sends the chief before it is anything more than a
+#: process. Every field is checked against a service-issued record *and* a
+#: live provider reading; a worker name alone is never sufficient, because a
+#: name is the one thing an unrelated session on this machine can also have.
+WORKER_REGISTRATION_FIELDS = (
+    "assignment_id", "generation", "native_session_id", "native_address",
+    "workspace_id", "terminal_id", "actual_base_sha", "profile_digest",
+)
+
+#: How long after a launch a registration may still arrive. Past it the
+#: dispatch produced no worker, which is a startup failure and never a quiet
+#: success waiting to be discovered later.
+STARTUP_WINDOW_SECONDS = 300
+
+
+def validate_worker_registration(registration):
+    """Return a validated copy of a full worker registration."""
+
+    _require_mapping(registration, "registration")
+    missing = [field for field in WORKER_REGISTRATION_FIELDS
+               if field not in registration]
+    if missing:
+        raise CabinetError(
+            "FIELD_MISSING",
+            "a worker registration states %s; this one omits %s"
+            % (", ".join(WORKER_REGISTRATION_FIELDS), ", ".join(missing)))
+    checked = {}
+    for field in ("assignment_id", "native_session_id", "native_address",
+                  "workspace_id", "terminal_id", "profile_digest"):
+        checked[field] = _text(registration[field], "registration.%s" % field)
+    generation = registration["generation"]
+    if isinstance(generation, bool) or not isinstance(generation, int):
+        raise CabinetError("FIELD_INVALID",
+                           "registration.generation is a whole number")
+    checked["generation"] = generation
+    sha = registration["actual_base_sha"]
+    if not isinstance(sha, str) or not SHA_PATTERN.match(sha):
+        raise CabinetError(
+            "FIELD_INVALID",
+            "registration.actual_base_sha is 40 lowercase hex characters")
+    checked["actual_base_sha"] = sha
+    return checked
+
 
 ASSIGNMENT_TRANSITIONS = {
     "reserved": ("starting", "cancelled", "blocked", "lost"),

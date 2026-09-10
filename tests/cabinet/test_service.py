@@ -97,6 +97,7 @@ class OrdinaryConnectionTest(ServiceCase):
                                  "registration": {"role": "implementer",
                                                   "native_address": "w1"}},
             "register_staff": {"role": "qa", "native_address": "qa"},
+            "close_worker": {"assignment_id": "W001", "terminal_id": "T1"},
             "record_verdict": {"assignment_id": "W001", "revision_sha": "a" * 40,
                                "reviewer_role": "qa", "outcome": "pass"},
             "pause": {"reason": "owner asked"},
@@ -184,12 +185,20 @@ class ActionAuthorityTest(ServiceCase):
         self.assertEqual(self.superset.calls, [])
 
     def test_an_authorized_kind_reports_its_missing_executor(self):
+        """An approved kind whose adapter is a later task says so by name.
+
+        O4 gave the workspace kinds an executor, so the property moved to a
+        kind that still has none. It is the same property: a caller can tell
+        "not allowed" from "not built yet" without reading the source.
+        """
+
         self.approve_batch_through_fake_ui()
-        self.call("prepare_action", {"envelope": action()})
+        self.call("prepare_action", {"envelope": dict(
+            action(key="capture-12"), kind="git.capture")})
         with self.assertRaises(CabinetError) as caught:
             self.call("execute_action", {"action_id": "A001"})
         self.assertEqual(caught.exception.code, "NOT_IMPLEMENTED_YET")
-        self.assertIn("workspace.create", caught.exception.message)
+        self.assertIn("git.capture", caught.exception.message)
         self.assertEqual(self.superset.calls, [])
 
     def test_an_unknown_action_identifier_is_refused(self):
@@ -207,15 +216,26 @@ class DeferredOperationTest(ServiceCase):
     """Operations whose owners are later tasks refuse by a stable code."""
 
     def test_each_deferred_operation_names_its_owning_task(self):
-        cases = {
-            "reconcile": {"observations": {}},
-        }
-        for method, arguments in cases.items():
-            with self.subTest(tool=method):
+        """Every action kind with no executor yet names the task that owns it.
+
+        The tools themselves are all implemented now, so what is left to
+        defer is the executors behind three approved action kinds. Each still
+        has to say which task lands it rather than failing anonymously.
+        """
+
+        self.approve_batch_through_fake_ui()
+        for index, kind in enumerate(("git.capture", "git.commit_candidate",
+                                      "git.integrate_candidate"), start=1):
+            with self.subTest(kind=kind):
+                identifier = "A00%d" % index
+                self.call("prepare_action", {"envelope": dict(
+                    action(key="deferred-%s" % kind), action_id=identifier,
+                    kind=kind)})
                 with self.assertRaises(CabinetError) as caught:
-                    self.call(method, arguments)
+                    self.call("execute_action", {"action_id": identifier})
                 self.assertEqual(caught.exception.code, "NOT_IMPLEMENTED_YET")
-                self.assertRegex(caught.exception.message, r"\b(O[1-5]|A[1-4])\b")
+                self.assertRegex(caught.exception.message,
+                                 r"\b(O[1-5]|A[1-4])\b")
 
 
 class ImplementedOperationTest(ServiceCase):

@@ -23,23 +23,47 @@ exists to prevent.
 | Field | What it is |
 | --- | --- |
 | `workspace` | The absolute path of the worktree you may edit. The only one. |
-| `base_sha` | The revision your work starts from |
-| `allowed_paths` | The paths inside that workspace your assignment owns |
-| `check_profile_ids` | The approved checks a test runner will execute against your candidate |
+| `base revision` | The revision your work starts from, as 40 hex characters |
+| `owned paths` | The paths inside that workspace your assignment owns |
+| `check profiles` | The approved checks a test runner will execute against your candidate |
 | `assignment_id` | Your stable identity across restarts and replacements |
-| `chief` | The session name you register with, and your only route out at first |
+| `generation` | The lease generation your assignment was reserved at |
+| `profile_digest` | The launch profile you were started with |
+| `chief` | The address you register with, and your only route out at first |
 | `peers` | The registered addresses you may talk to once registered |
 
-## Registration comes first
+## Registration comes first, and it is checked
 
-Before you read a line of code, send your registration to the chief: your
-assignment id, your session, and that you are starting. Until that
-registration is acknowledged, the chief is the **only** recipient you may
-address, and the mechanical hook enforces it.
+Your first action, before you read a line of code, is to send the chief these
+eight fields exactly:
+
+    assignment_id      from your context
+    generation         from your context
+    native_session_id  your own session id
+    native_address     the session name you can be reached at
+    workspace_id       from your context
+    terminal_id        the id of the session you are running in
+    actual_base_sha    the revision your workspace is actually at, read from it
+    profile_digest     from your context
+
+Read `actual_base_sha` from the workspace rather than copying the base
+revision out of your context. The two disagreeing is exactly the thing this
+field exists to catch, and copying it forward would make the check say yes to
+a workspace nobody looked at.
+
+Every field is compared against the record the company issued when it launched
+you, and against what the provider can see right now. You are not `running`
+until all three agree. Until the chief confirms, it is the **only** recipient
+you may address, and the mechanical hook enforces it.
 
 An unregistered worker is indistinguishable from an unrelated session that
 found the company with `ListAgents`. That is why the rule is mechanical rather
 than a promise.
+
+If your registration is refused, do not re-send it with different values to
+find one that is accepted. Report the refusal and stop: a mismatch means you
+are not the worker this assignment is waiting for, and guessing your way past
+that is the one failure nothing downstream can detect.
 
 ## What you do
 
@@ -69,7 +93,14 @@ than a promise.
 
 ## What you report
 
-Plain text to Engineering, through your registered address:
+Plain text to Engineering, through your registered address, in this shape:
+
+    assignment_id:  <yours>
+    revision:       <the 40-character revision you produced>
+    changed:        <one line per path, with what changed in it>
+    not_done:       <what you did not do, and why>
+    found:          <anything that changes the assignment>
+    state:          reported | blocked
 
 1. The assignment id and the revision you produced.
 2. What changed, by path.
@@ -77,6 +108,14 @@ Plain text to Engineering, through your registered address:
    worth more than a partial one reported as done.
 4. Anything you found that Engineering needs to know: a stale assumption in
    the instructions, a dependency nobody mapped, a risk that turned out real.
+
+## When you are asked to stop
+
+A stop request arrives as a message. Stop at a point you can resume from,
+leave the worktree exactly as it is, and report what is done and what is half
+done. Nothing in your worktree is deleted, by you or by anybody else, so
+half-finished work is safe to leave where it is — and saying it is half
+finished is what makes it usable to whoever picks it up.
 
 Report a blocker the moment you have one. Silence is read as work in progress,
 and it is the one thing you can say that is never true.

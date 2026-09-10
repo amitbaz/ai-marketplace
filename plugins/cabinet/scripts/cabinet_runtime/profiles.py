@@ -53,8 +53,8 @@ SERVICE_METHODS = (
     "snapshot", "doctor", "context", "acquire_lead", "setup", "propose_batch",
     "request_owner_approval", "record_handoff", "update_handoff",
     "prepare_action", "execute_action", "register_session", "register_staff",
-    "record_verdict", "pause", "reconcile", "checkpoint", "export_company",
-    "backup", "wait_events",
+    "close_worker", "record_verdict", "pause", "reconcile", "checkpoint",
+    "export_company", "backup", "wait_events",
 )
 SERVICE_TOOLS = tuple("mcp__cabinet__cabinet_%s" % name
                       for name in SERVICE_METHODS)

@@ -176,6 +176,10 @@ CREATE TABLE assignments (
     state             TEXT NOT NULL,
     work_key          TEXT NOT NULL,
     reported_sha      TEXT,
+    workspace_path    TEXT,
+    actual_base_sha   TEXT,
+    profile_digest    TEXT,
+    started_at        TEXT,
     created_seq       INTEGER NOT NULL,
     updated_seq       INTEGER NOT NULL
 );
@@ -235,7 +239,19 @@ SCHEMA_UPGRADES = {
     4: (
         "ALTER TABLE assignments ADD COLUMN reported_sha TEXT",
     ),
+    5: (
+        "ALTER TABLE assignments ADD COLUMN workspace_path TEXT",
+        "ALTER TABLE assignments ADD COLUMN actual_base_sha TEXT",
+        "ALTER TABLE assignments ADD COLUMN profile_digest TEXT",
+        "ALTER TABLE assignments ADD COLUMN started_at TEXT",
+    ),
 }
+
+#: Assignment columns a caller may write. State is not among them: it moves
+#: through `set_assignment_state` and its declared machine, never as a field.
+ASSIGNMENT_FIELDS = ("workspace_id", "terminal_id", "native_session_id",
+                     "reported_sha", "workspace_path", "actual_base_sha",
+                     "profile_digest", "started_at")
 
 LIVE_ASSIGNMENT_INDEX = (
     "CREATE UNIQUE INDEX assignments_live_work ON assignments(work_key) "
@@ -1273,6 +1289,18 @@ class Store:
             raise CabinetError("ACTION_NOT_FOUND", "no action %s" % action_id)
         return self._action_row(row)
 
+    def get_actions(self, states=None, kinds=None):
+        """Every action, newest last, optionally narrowed by state or kind."""
+
+        conn = self._require_open()
+        rows = conn.execute("SELECT * FROM actions ORDER BY created_seq")
+        found = [self._action_row(row) for row in rows]
+        if states is not None:
+            found = [row for row in found if row["state"] in states]
+        if kinds is not None:
+            found = [row for row in found if row["kind"] in kinds]
+        return found
+
     def update_action(self, action_id, state, external_ref=None, evidence=None):
         """Move an action through its state machine and record the evidence.
 
@@ -1365,11 +1393,43 @@ class Store:
             return found
         return [row for row in found if row["state"] in states]
 
+    def record_assignment_observation(self, assignment_id, **fields):
+        """Record what a provider was observed to have, without moving state.
+
+        Creating a workspace and starting a terminal are observations about
+        the world; they are not the assignment changing what it is. Keeping
+        them out of `set_assignment_state` means the state machine has exactly
+        one writer and no self-transitions had to be invented to let a caller
+        write down an identifier.
+        """
+
+        for key in fields:
+            if key not in ASSIGNMENT_FIELDS:
+                raise CabinetError("FIELD_UNKNOWN",
+                                   "assignment has no field %r" % key)
+        stated = {key: value for key, value in fields.items()
+                  if value is not None}
+        with self._transaction() as conn:
+            row = conn.execute("SELECT * FROM assignments WHERE assignment_id = ?",
+                               (assignment_id,)).fetchone()
+            if row is None:
+                raise CabinetError("ASSIGNMENT_NOT_FOUND",
+                                   "no assignment %s" % assignment_id)
+            if not stated:
+                return self._assignment_row(row)
+            event = self._append_event_locked(
+                conn, "assignment.observed", assignment_id, row["revision"],
+                dict(stated))
+            columns = ["%s = ?" % key for key in stated] + ["updated_seq = ?"]
+            values = list(stated.values()) + [event["seq"], assignment_id]
+            conn.execute("UPDATE assignments SET %s WHERE assignment_id = ?"
+                         % ", ".join(columns), values)
+        return self.get_assignment(assignment_id)
+
     def set_assignment_state(self, assignment_id, state, **fields):
         """Move an assignment through its state machine."""
 
-        allowed = ("workspace_id", "terminal_id", "native_session_id",
-                   "reported_sha")
+        allowed = ASSIGNMENT_FIELDS
         for key in fields:
             if key not in allowed:
                 raise CabinetError("FIELD_UNKNOWN",
@@ -1407,6 +1467,10 @@ class Store:
                 "generation": row["generation"], "state": row["state"],
                 "work_key": row["work_key"],
                 "reported_sha": row["reported_sha"],
+                "workspace_path": row["workspace_path"],
+                "actual_base_sha": row["actual_base_sha"],
+                "profile_digest": row["profile_digest"],
+                "started_at": row["started_at"],
                 "created_seq": row["created_seq"],
                 "updated_seq": row["updated_seq"]}
 
@@ -1465,7 +1529,7 @@ class Store:
 
     # --- handoffs -----------------------------------------------------------
 
-    def record_handoff(self, envelope, truncated=False):
+    def record_handoff(self, envelope, truncated=False, fence=True):
         """Persist a handoff envelope before anything is delivered.
 
         Re-recording the identical envelope returns the stored record and adds
@@ -1476,7 +1540,8 @@ class Store:
         """
 
         self._require_writable()
-        self._check_not_paused()
+        if fence:
+            self._check_not_paused()
         frozen = digest(envelope)
 
         with self._transaction() as conn:

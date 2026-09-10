@@ -1363,7 +1363,10 @@ class BoardFreshnessTest(BoardActionCase):
                                 {"issue_number": 12, "role": "implementer"})
         code = self.refuse("execute_action",
                            {"action_id": prepared["action_id"]})
-        self.assertEqual(code, "NOT_IMPLEMENTED_YET")
+        # Past the board gate and into O4's own executor, which then refuses
+        # for its own reason: a worker is launched into a workspace, and this
+        # assignment has not had one created yet.
+        self.assertEqual(code, "WORKSPACE_NOT_CREATED")
 
 
 if __name__ == "__main__":

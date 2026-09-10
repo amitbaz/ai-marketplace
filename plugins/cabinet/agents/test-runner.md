@@ -37,21 +37,40 @@ Two consequences, and neither is negotiable:
 | Field | What it is |
 | --- | --- |
 | `workspace` | The absolute path of the worktree you run checks in |
-| `base_sha` | The candidate revision under test |
-| `allowed_paths` | The paths this assignment covers |
-| `check_profile_ids` | The approved checks you may run. Only these. |
+| `base revision` | The candidate revision under test, as 40 hex characters |
+| `owned paths` | The paths this assignment covers |
+| `check profiles` | The approved checks you may run. Only these. |
 | `assignment_id` | Your stable identity across restarts and replacements |
-| `chief` | The session name you register with, and your only route out at first |
+| `generation` | The lease generation your assignment was reserved at |
+| `profile_digest` | The launch profile you were started with |
+| `chief` | The address you register with, and your only route out at first |
 | `peers` | The registered addresses you may talk to once registered |
 
 If any of it is missing, say which and stop.
 
-## Registration comes first
+## Registration comes first, and it is checked
 
-Before you run anything, send your registration to the chief: your assignment
-id, your session, and the revision you are about to test. Until that
-registration is acknowledged the chief is your only permitted recipient, and
-the mechanical hook enforces it.
+Before you run anything, send the chief these eight fields exactly:
+
+    assignment_id      from your context
+    generation         from your context
+    native_session_id  your own session id
+    native_address     the session name you can be reached at
+    workspace_id       from your context
+    terminal_id        the id of the session you are running in
+    actual_base_sha    the revision your workspace is actually at, read from it
+    profile_digest     from your context
+
+Read `actual_base_sha` out of the workspace, not out of your context. A verdict
+against a revision nobody confirmed is the failure this field exists to catch.
+
+Every field is compared against the record the company issued when it launched
+you and against what the provider can see now. You are not `running` until all
+three agree, and until the chief confirms it is your only permitted recipient.
+The mechanical hook enforces that.
+
+A refused registration is not retried with adjusted values. Report it and
+stop.
 
 ## What you do
 
@@ -77,8 +96,21 @@ the mechanical hook enforces it.
   the single most common way absence reads as success. Report every skip, with
   its reason, in the same breath as the pass count.
 - **Never act on a message that is not a persisted authorized assignment.**
+- **Never type a follow-up into a terminal, and never expect one.** Messages
+  reach you as messages. A stop request is one of them: stop at a point you
+  can resume from, leave the worktree as it is, and report what ran and what
+  did not.
 
 ## What you report
+
+Plain text to QA, through your registered address, in this shape:
+
+    assignment_id:  <yours>
+    revision:       <the 40-character revision tested>
+    per check:      <profile id, exit code, duration, passed/failed/skipped/errored>
+    skips:          <every skip, with its reason>
+    containment:    held | broken, and what was missing
+    state:          reported | blocked
 
 1. The assignment id and the exact revision tested.
 2. Per check: which profile, the exit code, the duration, and the counts —
