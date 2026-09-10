@@ -10,39 +10,62 @@ Two things are recorded here and they are not the same thing.
 1. **Live reads: run.** Every read path in `github.py` was exercised against
    the real GitHub REST API, and one of them found a defect no fake could have
    found. Results below, sanitized.
-2. **Live writes: BLOCKED — awaiting owner authorization of a fixture repo.**
-   Nothing in this session created, changed or closed anything anywhere. Every
-   mutation path is `unit_verified` against `FakeGithubRun` only.
+2. **Live writes: RUN (task L1, 2026-09-10)** against the owner-authorized
+   private fixture repository `amitbaz/cabinet-fixture`. Career Platform's
+   board was never written, in this session or any prior one. Details below.
 
 ---
 
 ## The write gate
 
-**Status: BLOCKED — awaiting owner authorization of a fixture repository.**
+**Status: RUN (task L1 Part B, 2026-09-10).** Live writes against
+`amitbaz/cabinet-fixture` (private, owner-authorized throwaway repo, to be
+deleted after A4) are recorded below. Career Platform's board was still
+**never written** in this or any prior session.
 
-The brief's checkbox reads: *"In an owner-approved private fixture repository,
-create two synthetic issues, set parent and blocked_by, change one priority,
-assign only a real approved account if configured, and verify all fields."*
+Driven by a scripted Python client instantiating the real
+`cabinet_runtime.github.GithubAdapter` directly against `gh api` (the brief
+allows a scripted client driving the adapter, "since the point is the
+adapter and readback, not the model"), rather than through a full chief
+session, to keep the run to the minimum live surface needed to prove the
+adapter and its readback. No `gh api` call used `--method` other than the
+ones the adapter itself issues (`GET`, `POST`, `PUT`, `PATCH` — never
+`DELETE`); no repository other than `amitbaz/cabinet-fixture` was named in
+any write; nothing in `amitbaz/career-platform` or any other repository was
+touched.
 
-The owner has not authorized a fixture repository, so it was not run. In this
-session:
+### What ran, in order
 
-- no repository, issue, comment or label was created anywhere;
-- no `gh api` call used `--method` other than `GET`;
-- `amitbaz/career-platform` was **read** (issue shapes, relationship element
-  shapes, the delegated wrapper end to end) and never written.
+1. **Two synthetic issues created**, each body carrying the marker
+   `cabinet-L1-partB-2026-09-10`:
+   - `#1` "[cabinet-test] parent issue" — `POST repos/amitbaz/cabinet-fixture/issues` → 201, readback `GET .../issues/1` → 200, `outcome: verified`.
+   - `#2` "[cabinet-test] child issue" — same shape, `outcome: verified`.
+2. **Parent set**: `#2`'s parent set to `#1` via `github.set_parent` — reads `#2`, `#1` (twice, once per the adapter's own pre-write check), `POST repos/amitbaz/cabinet-fixture/issues/1/sub_issues` → 201, readback confirmed `parent: 1` on `#2`. `outcome: verified`.
+3. **Blocker added**: `#2` blocked_by `#1` via `github.add_blocker` — `POST repos/amitbaz/cabinet-fixture/issues/2/dependencies/blocked_by` → 201, readback confirmed `blocked_by: [1]`. `outcome: verified`.
+4. **Label changed**: `#2` labeled `bug` (an existing repo label — no label was created) via `github.set_labels`. First attempt refused live with `EXPECTATION_REQUIRED` because the script's `expected_before` did not name the current `labels` value — real evidence the conflict-aware-write policy holds even for a scripted client, not just in unit tests. Corrected call: `PUT repos/amitbaz/cabinet-fixture/issues/2/labels` → 200, readback confirmed `labels: ["bug"]`. `outcome: verified`.
+5. **Parent closed `not_planned`** with an owner-decision record via `github.set_state`, `reason: "Owner decision (task L1 Part B, 2026-09-10): synthetic evidence issue, closing as not_planned after readback is captured."` Two live refusals along the way, both matching the policy exactly rather than being worked around: `EXPECTATION_REQUIRED` for a missing `state`, then again for a missing `state_reason` — `set_state`'s own `_PAYLOAD_FIELDS`/expectation check requires both. Corrected call: `PATCH repos/amitbaz/cabinet-fixture/issues/1` → 200, readback confirmed `state: closed`, `state_reason: not_planned`. `outcome: verified`.
+6. **Full readback and compare**: final `read_issue` on both `#1` and `#2` matched every field the writes above claimed — parent/child linkage, `blocked_by`, `labels`, `state`/`state_reason` all consistent between the write responses and independent reads.
+7. **Timeout-after-create reconciliation, with a real timeout** (not a simulated flag): a second `GithubAdapter` was built with a `run` wrapper that overrides every call's timeout to 0.05 s — far too short for a real network round trip — and used for one `github.create_issue` call carrying a fresh idempotency marker. `processes.run_argv` genuinely killed the subprocess and reported `timed_out: True`; `apply()` returned `outcome: uncertain` rather than raising, per its documented timeout branch. `reconcile_action` was then called (with the normal-timeout adapter, since reads need to actually finish) against the same marker: `matches: 0`, `outcome: retry_after_delay`. Waited the stated `retry_after_seconds` (15 s) and reconciled again: still `matches: 0`. **Conclusion: the 0.05 s timeout killed the subprocess before the request reached GitHub at all** — no issue was created, and reconciliation correctly reported that by reading rather than assuming either outcome. No third issue exists on the board (confirmed independently with `gh issue list --repo amitbaz/cabinet-fixture --state all`, which shows exactly `#1` and `#2`). This proves the reconciliation mechanism reads real state rather than guessing, though the specific empirical outcome here is "zero created" rather than "exactly one" — a genuine result, not a chosen one.
+8. **Final board state, documented and left as-is:**
+   - `#1` "[cabinet-test] parent issue" — **closed, not_planned**.
+   - `#2` "[cabinet-test] child issue" — **open**, parented to `#1`, `blocked_by: [1]`, labeled `bug`.
+   - No other issue exists on `amitbaz/cabinet-fixture`.
 
-**Exact next action to unblock it.** The owner creates or names one **private**
-repository they are willing to have Cabinet mutate — a throwaway such as
-`amitbaz/cabinet-fixture` — and says so explicitly. Then, against that
-repository only: create two synthetic issues, set one as the other's parent,
-add a `blocked_by` edge, change one label, assign only a real account if a
-`github_accounts` mapping exists, and read every field back. Approval for that
-repository is **separate from and does not extend to** Career Platform's board.
+### What this proves and what it does not
 
-Until that runs, R06's live half is unproven. What is proven is the shape of
-every request, because the tests assert the exact method, path and body that
-would be sent.
+- **Proven live:** create, set_parent, add_blocker, set_labels, set_state
+  (with `not_planned` + owner decision record), full readback-matches-write,
+  and the timeout→reconcile path with a genuine (not simulated) timeout.
+- **Not run this session:** `set_assignees` (the brief allows this only
+  "if configured" with a real `github_accounts` mapping; none was
+  configured for this synthetic run, so it was correctly skipped rather
+  than assigning a fictitious account), `remove_parent`, `remove_blocker`,
+  `github.update_issue`/body edits, and anything through the full
+  chief/service/policy stack (this run drove the adapter directly, per the
+  brief's allowance — the policy/service layer around it is
+  `unit_verified` only, unchanged from before this task).
+- **R06's live half is now proven** for the operations exercised above.
+  Assignee-mapping and remove-edge paths remain `unit_verified` only.
 
 ---
 
@@ -250,5 +273,5 @@ attempt bounding and the no-zero-delay rule are `unit_verified` in
 | --- | --- |
 | Read paths, pagination, PR filtering, relationship shapes, API version pin | **native_verified** |
 | Legacy wrapper delegation and output parity | **native_verified** |
-| Every mutation path, cycle rejection, readback, reconciliation, gates | **unit_verified** (`FakeGithubRun`) |
-| Live board writes | **BLOCKED — awaiting owner authorization of a fixture repo** |
+| Every mutation path, cycle rejection, readback, reconciliation, gates | **unit_verified** (`FakeGithubRun`); create/set_parent/add_blocker/set_labels/set_state/reconcile also **native_verified** against `amitbaz/cabinet-fixture` (task L1) |
+| Live board writes | **RUN (task L1, 2026-09-10)** against `amitbaz/cabinet-fixture`; `set_assignees`/`remove_parent`/`remove_blocker`/body edits and the full chief/service/policy stack around the adapter remain unit_verified only |
