@@ -377,8 +377,48 @@ class CredentialBoundaryTest(ProfileCase):
         creds = profiles.credential_paths(str(self.home), str(self.plugin))
         self.assertIn("%s/.cabinet/**/runtime" % self.home, creds)
         for path in creds:
-            self.assertIn("Read(%s/**)" % path, deny)
-            self.assertIn("Write(%s/**)" % path, deny)
+            with self.subTest(path=path):
+                for tool in ("Read", "Edit", "Write", "NotebookEdit"):
+                    # The bare form is the only one that can match a file; the
+                    # glob form is the only one that can match a directory's
+                    # contents. Every credential path carries both.
+                    self.assertIn("%s(%s)" % (tool, path), deny)
+                    self.assertIn("%s(%s/**)" % (tool, path), deny)
+
+    def test_a_credential_file_is_denied_by_a_rule_that_can_match_it(self):
+        # A rule written `Read(<file>/**)` matches nothing, so a file listed
+        # only in that form is denied by no rule at all. The sessions that
+        # carry no sandbox are the ones this has to hold for.
+        for profile in (self.chief(), self.staff()):
+            deny = list(profile["deny"])
+            for name in profiles.CLAUDE_PRIVATE_FILES:
+                with self.subTest(role=profile["role"], name=name):
+                    path = "%s/%s" % (self.home, name)
+                    self.assertIn(path, profile["credential_paths"])
+                    self.assertIn("Read(%s)" % path, deny)
+                    self.assertIn("Write(%s)" % path, deny)
+
+    def test_the_owner_oauth_credentials_are_denied_for_every_role(self):
+        path = "%s/.claude/.credentials.json" % self.home
+        for profile in (self.chief(), self.staff(), self.worker("implementer"),
+                        self.worker("test-runner")):
+            with self.subTest(role=profile["role"]):
+                self.assertIn("Read(%s)" % path, list(profile["deny"]))
+
+    def test_a_private_directory_carries_both_deny_forms(self):
+        deny = list(self.chief()["deny"])
+        for name in profiles.CLAUDE_PRIVATE_DIRS:
+            with self.subTest(name=name):
+                path = "%s/%s" % (self.home, name)
+                self.assertIn("Read(%s)" % path, deny)
+                self.assertIn("Read(%s/**)" % path, deny)
+
+    def test_no_private_file_is_listed_as_a_directory(self):
+        self.assertEqual(
+            set(profiles.CLAUDE_PRIVATE_FILES) & set(profiles.CLAUDE_PRIVATE_DIRS),
+            set())
+        for name in profiles.CLAUDE_PRIVATE_FILES:
+            self.assertRegex(name, r"\.(json|jsonl)$")
 
     def test_company_views_stay_readable(self):
         creds = profiles.credential_paths(str(self.home), str(self.plugin))

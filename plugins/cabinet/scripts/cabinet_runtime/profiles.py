@@ -88,13 +88,18 @@ CLAUDE_HOME = ".claude"
 #: Read denies used when the plugin itself is installed under `~/.claude`, so
 #: the tree cannot be denied whole. These are the parts that carry credentials,
 #: other sessions' transcripts, or settings that could widen this session.
-CLAUDE_PRIVATE_DIRS = (
+#: Files are listed separately from directories because a deny rule written as
+#: `Tool(<file>/**)` matches nothing at all — see `deny_forms`.
+CLAUDE_PRIVATE_FILES = (
     ".claude/.credentials.json", ".claude/settings.json",
-    ".claude/settings.local.json", ".claude/projects", ".claude/sessions",
-    ".claude/session-env", ".claude/shell-snapshots", ".claude/history.jsonl",
-    ".claude/todos", ".claude/statsig", ".claude/ide", ".claude/daemon",
-    ".claude/tasks", ".claude/teams", ".claude/backups",
-    ".claude/file-history", ".claude/downloads", ".claude/cache",
+    ".claude/settings.local.json", ".claude/history.jsonl",
+)
+CLAUDE_PRIVATE_DIRS = (
+    ".claude/projects", ".claude/sessions", ".claude/session-env",
+    ".claude/shell-snapshots", ".claude/todos", ".claude/statsig",
+    ".claude/ide", ".claude/daemon", ".claude/tasks", ".claude/teams",
+    ".claude/backups", ".claude/file-history", ".claude/downloads",
+    ".claude/cache",
 )
 
 SETTINGS_KEYS = ("crossSessionInbound", "permissions", "sandbox", "hooks")
@@ -264,10 +269,23 @@ def credential_paths(home=None, plugin_root=None):
     claude_home = "%s/%s" % (home, CLAUDE_HOME)
     if plugin_root and covers(claude_home, plugin_root):
         paths.extend(safe_path("%s/%s" % (home, name), "private path")
-                     for name in CLAUDE_PRIVATE_DIRS)
+                     for name in CLAUDE_PRIVATE_FILES + CLAUDE_PRIVATE_DIRS)
     else:
         paths.append(safe_path(claude_home, "private path"))
     return tuple(paths)
+
+
+def deny_forms(tool, path):
+    """Both deny rules a path needs, because one form alone leaves a gap.
+
+    `Tool(<path>/**)` matches what is *inside* a directory and matches nothing
+    at all under a file, so on its own it leaves a credential file such as
+    `~/.claude/.credentials.json` denied by no rule. `Tool(<path>)` matches the
+    path itself. A path Cabinet has not created yet could be either, so both
+    are emitted and the one that does not apply simply never matches.
+    """
+
+    return ("%s(%s)" % (tool, path), "%s(%s/**)" % (tool, path))
 
 
 def required_deny(plugin_root, public_context, creds):
@@ -276,10 +294,10 @@ def required_deny(plugin_root, public_context, creds):
     rules = []
     for base in (plugin_root, public_context):
         for tool in WRITE_TOOLS:
-            rules.append("%s(%s/**)" % (tool, base))
+            rules.extend(deny_forms(tool, base))
     for path in creds:
         for tool in ("Read",) + WRITE_TOOLS:
-            rules.append("%s(%s/**)" % (tool, path))
+            rules.extend(deny_forms(tool, path))
     return tuple(rules)
 
 
