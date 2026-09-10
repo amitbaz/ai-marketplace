@@ -300,15 +300,36 @@ class SupersetAdapter(_Provider):
                 "hooks_path": None,
                 "provider": self.name,
             }
+        # `superset projects` has no `get` subcommand (confirmed live against
+        # Superset 1.27.0: "Unknown command: get" — only create/list/setup
+        # exist), so the project's configuration is read from `list` and
+        # matched by id rather than fetched singly.
         payload, _ = self._call(
-            self._argv("projects", "get", "--project", self.project_id,
-                       "--json"),
+            self._argv("projects", "list", "--local", "--json"),
             "reading the Superset project", READ_TIMEOUT_SECONDS)
+        rows = payload if isinstance(payload, list) else \
+            (payload.get("projects") if isinstance(payload, dict) else [])
+        project = None
+        for row in rows or []:
+            if isinstance(row, dict) and \
+                    str(_first(row, "projectId", "project_id", "id")) \
+                    == str(self.project_id):
+                project = row
+                break
+        if project is None:
+            return {
+                "contained": False,
+                "reason": "project %s is not set up on this host (not in "
+                          "`superset projects list`); its setup commands "
+                          "cannot be read until it is" % self.project_id,
+                "setup_commands": None,
+                "hooks_path": None,
+                "provider": self.name,
+            }
         commands = []
-        if isinstance(payload, dict):
-            for key in ("setupCommand", "setup_command", "setupScript"):
-                if payload.get(key):
-                    commands.append(str(payload[key]))
+        for key in ("setupCommand", "setup_command", "setupScript"):
+            if project.get(key):
+                commands.append(str(project[key]))
         return {
             "contained": not commands,
             "reason": ("no setup command is configured on this project"

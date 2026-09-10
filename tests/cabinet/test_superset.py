@@ -465,6 +465,37 @@ class SupersetArgvTest(unittest.TestCase):
         self.assertFalse(audit["contained"])
         self.assertIn("not logged in", audit["reason"].lower())
 
+    def test_audit_reads_projects_list_not_a_get_subcommand(self):
+        # `superset projects` has no `get` subcommand on Superset 1.27.0
+        # (confirmed live: "Unknown command: get" — only create/list/setup
+        # exist). audit_setup_isolation must read `list` and match by id.
+        run = RecordingRun([
+            _text("1.27.0\n"), _text("ok\n"),
+            _ok([{"projectId": "PROJ", "name": "demo"}]),
+        ])
+        adapter = self.adapter(run)
+        audit = adapter.audit_setup_isolation()
+        self.assertEqual(run.argv[2][1:4], ["projects", "list", "--local"])
+        self.assertTrue(audit["contained"])
+        self.assertEqual(audit["setup_commands"], [])
+
+    def test_a_project_not_set_up_on_this_host_is_not_contained(self):
+        run = RecordingRun([_text("1.27.0\n"), _text("ok\n"), _ok([])])
+        adapter = self.adapter(run)
+        audit = adapter.audit_setup_isolation()
+        self.assertFalse(audit["contained"])
+        self.assertIn("not set up on this host", audit["reason"])
+
+    def test_a_project_with_a_setup_command_is_not_contained(self):
+        run = RecordingRun([
+            _text("1.27.0\n"), _text("ok\n"),
+            _ok([{"projectId": "PROJ", "setupCommand": "npm install"}]),
+        ])
+        adapter = self.adapter(run)
+        audit = adapter.audit_setup_isolation()
+        self.assertFalse(audit["contained"])
+        self.assertIn("npm install", audit["reason"])
+
     def test_stable_names_do_not_change_between_attempts(self):
         first = workspace.workspace_name("B001", 1, "W012")
         second = workspace.workspace_name("B001", 1, "W012")
