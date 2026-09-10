@@ -361,7 +361,37 @@ class SupersetAdapter(_Provider):
                     "actual_base_sha": None,
                     "reason": "the create call timed out after it may already "
                               "have been dispatched"}
-        return self._workspace_record(payload, name, branch, base_ref)
+        record = self._workspace_record(payload, name, branch, base_ref)
+        if not record["path"]:
+            # `workspaces create`'s own JSON (observed live, Superset 1.27.0)
+            # nests only id/name/branch/type under "workspace" -- no path and
+            # no base sha, unlike `workspaces list`, which does carry
+            # `worktreePath`. Without a path nothing later can resolve this
+            # workspace's cwd (`_path_of` raises WORKSPACE_NOT_CREATED), so a
+            # missing path is filled in from one follow-up list call rather
+            # than left for the caller to rediscover.
+            record = self._fill_path_from_list(record)
+        return record
+
+    def _fill_path_from_list(self, record):
+        payload, _ = self._call(
+            self._argv("workspaces", "list", "--project", self.project_id,
+                       "--json"),
+            "listing workspaces to resolve a path", READ_TIMEOUT_SECONDS)
+        rows = payload if isinstance(payload, list) else \
+            (payload.get("workspaces") if isinstance(payload, dict) else [])
+        for row in rows or []:
+            if isinstance(row, dict) and \
+                    str(_first(row, "workspaceId", "workspace_id", "id")) \
+                    == record["workspace_id"]:
+                path = _first(row, "path", "worktreePath", "worktree_path",
+                              "cwd")
+                if path:
+                    self.remember(record["workspace_id"], record["name"],
+                                 path)
+                    return dict(record, path=str(path))
+                break
+        return record
 
     def _workspace_record(self, payload, name, branch, base_ref,
                           outcome="created"):

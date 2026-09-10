@@ -411,6 +411,25 @@ class SupersetArgvTest(unittest.TestCase):
         self.assertNotIn("--agent", argv)
         self.assertNotIn("--prompt", argv)
 
+    def test_a_create_response_with_no_path_is_filled_in_from_list(self):
+        # Observed live (Superset 1.27.0): `workspaces create`'s own JSON
+        # nests only id/name/branch/type under "workspace" -- no path, no
+        # base sha -- unlike `workspaces list`, which does carry
+        # `worktreePath`. A missing path must not silently stay missing:
+        # `_path_of` raises WORKSPACE_NOT_CREATED downstream without it.
+        run = RecordingRun([
+            _ok({"workspace": {"id": "W-1", "name": "cabinet-b001-r1-w012",
+                               "branch": "cabinet/b001/r1/w012"}}),
+            _ok([{"id": "W-1", "worktreePath": "/w/resolved"}]),
+        ])
+        adapter = self.adapter(run)
+        record = adapter.create_workspace("cabinet-b001-r1-w012",
+                                          "cabinet/b001/r1/w012",
+                                          "refs/cabinet/b001/1")
+        self.assertEqual(record["path"], "/w/resolved")
+        self.assertEqual(run.argv[1][1:4], ["workspaces", "list", "--project"])
+        self.assertEqual(adapter._path_of("W-1"), "/w/resolved")
+
     def test_a_terminal_carries_a_quoted_command_that_round_trips(self):
         run = RecordingRun([_ok({"terminalId": "T-1"})])
         adapter = self.adapter(run)
