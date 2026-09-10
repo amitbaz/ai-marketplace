@@ -122,3 +122,7 @@ the size guidance; several docstrings/prose drift items; `_require_whole_board`
 - Task L1 (close the O3/O4 live gates) is in progress under subagent `impl-L1` (sonnet; flow sessions on haiku): A.1 done; A.2 (mechanical containment probes) being re-run with the corrected sandbox; then A.3 (Superset worker path); then Part B (GitHub writes on the fixture repo). Dispatch brief: `task-L1-dispatch.md`; report: `task-L1-report.md`.
 - Owner's model rule: flow-test sessions on haiku; reviews/implementers on the model the task needs. Lean testing.
 - After L1: O5 (`task-O5-dispatch.md`, base = L1's final head), then A1–A4, final review.
+
+## Update — L1 closed (2026-09-10, HEAD ea2d225)
+
+L1 done: `--bg` refusal, sandbox-key fix, mechanical containment probes (R07 on local + Superset providers; docker-socket stat caveat), GitHub writes on `cabinet-fixture` (R06), Superset workspace/terminal/worker live (bootstrap commit 5b87fc7 in the fixture repo; project set up on the host by the owner). Open: interactive worker launch in a Superset terminal hits Claude's workspace-trust prompt (`-p` skips it); worker↔Engineering message exchange through Superset not run. Next task: O5 (`task-O5-dispatch.md`, base ea2d225), then A1–A4, final review. 857 tests green.
