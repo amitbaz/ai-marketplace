@@ -203,3 +203,22 @@ building argv, rather than launching the default-template session. A
 detached chief is not currently obtainable through `cabinet-launch --bg`;
 run the chief attended until a Claude Code build resolves `--agent` under
 `--bg`. Unit test: `tests/cabinet/test_handoffs.py::ChiefLaunchTest::test_background_launch_is_refused`.
+
+## Addendum 2026-09-10 — why the worker sandbox had no effect (native_verified, fixed)
+
+Controller bisect with `claude -p --model haiku --restricted --strict-mcp-config --settings <json> --tools Bash`
+in a scratch directory, asking the model to run `ls ~/.ssh` (settings carried `sandbox.filesystem.denyRead`
+for that path and `network.strictAllowlist: true` with an empty allowlist):
+
+| Settings passed | Observed |
+| --- | --- |
+| Minimal block (`enabled`, `failIfUnavailable`, `allowUnsandboxedCommands`, `excludedCommands`, `filesystem.denyRead`, `network.strictAllowlist/allowedDomains`) + `permissions.allow: ["Bash"]` | Sandbox active: `curl https://example.com` → `CONNECT tunnel failed, response 403`; `ls ~/.ssh` → `Operation not permitted`; no permission prompt |
+| The worker profile's full block as built by `profiles.worker_sandbox()` (same keys plus `network.allowMachLookup: false`) | No sandbox: Bash asked for approval ("requires your approval"), i.e. `autoAllowBashIfSandboxed` never engaged |
+| Same block with `allowMachLookup` removed | Sandbox active: the model reported `/Users/amitbaz/.ssh is restricted by the sandbox` |
+| Same block with the deny lists shortened but `allowMachLookup` kept | No sandbox (prompt) |
+
+Conclusion: Claude Code 2.1.267 silently discards the whole `sandbox` object when it contains an
+undocumented key. `allowMachLookup` was such a key. Removed from `worker_sandbox()`; a test now
+restricts the block to documented keys. This is the root cause of the L1 A.2 "containment FAIL"
+(all probes ran unsandboxed). `failIfUnavailable` cannot fire in that state because the block never
+loads. Re-run of the mechanical probes follows with the corrected profile.

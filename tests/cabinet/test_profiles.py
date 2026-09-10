@@ -1328,3 +1328,28 @@ class ModelPassthroughTest(ProfileCase):
         mutated = profiles.plain(self.chief())
         mutated["argv"] = list(mutated["argv"]) + ["--model", "opus"]
         self.refuse(mutated, "PROFILE_ARGV_MISMATCH")
+
+
+class SandboxKeyAllowlistTest(ProfileCase):
+    """Claude Code 2.1.267 silently discards the entire sandbox block when it
+    meets a key it does not document (observed live with `allowMachLookup`):
+    the worker then runs unsandboxed and prompts for Bash. Only documented
+    keys may appear."""
+
+    DOCUMENTED = {
+        "": {"enabled", "failIfUnavailable", "allowUnsandboxedCommands",
+             "excludedCommands", "filesystem", "network", "credentials",
+             "autoAllowBashIfSandboxed"},
+        "filesystem": {"disabled", "denyRead", "denyWrite", "allowRead",
+                       "allowWrite"},
+        "network": {"strictAllowlist", "allowedDomains", "deniedDomains",
+                    "allowUnixSockets", "allowAllUnixSockets",
+                    "allowLocalBinding", "httpProxyPort", "socksProxyPort"},
+    }
+
+    def test_worker_sandbox_uses_only_documented_keys(self):
+        sandbox = profiles.plain(self.worker("test-runner"))["settings"]["sandbox"]
+        self.assertTrue(set(sandbox) <= self.DOCUMENTED[""], set(sandbox))
+        for section in ("filesystem", "network"):
+            self.assertTrue(set(sandbox[section]) <= self.DOCUMENTED[section],
+                            set(sandbox[section]))

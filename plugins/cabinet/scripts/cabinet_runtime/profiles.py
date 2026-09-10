@@ -469,10 +469,12 @@ def worker_sandbox(plugin_root, public_context, creds):
             "denyRead": list(creds),
             "denyWrite": [plugin_root, public_context] + list(creds),
         },
+        # No undocumented keys here: Claude Code 2.1.267 silently discards the
+        # whole sandbox block when it meets one (observed live with
+        # `allowMachLookup`), which leaves the worker unsandboxed and prompting.
         "network": {
             "strictAllowlist": True,
             "allowedDomains": [],
-            "allowMachLookup": False,
         },
     }
 
