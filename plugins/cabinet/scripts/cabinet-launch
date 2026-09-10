@@ -70,6 +70,12 @@ def parse_arguments(argv):
                         help="file holding the chief's opening instruction")
     parser.add_argument("--bg", "--background", dest="bg", action="store_true",
                         help="start the chief detached; needs --prompt-file")
+    parser.add_argument("--print", "-p", dest="print_mode", action="store_true",
+                        help="run the chief headless (claude -p), print its "
+                        "final result and exit; needs --prompt-file. Use "
+                        "this instead of --bg for an unattended run: --bg "
+                        "does not resolve --agent on this Claude Code build "
+                        "(see profiles.chief_launch)")
     parser.add_argument("--dry-run", action="store_true",
                         help="write the launch and print it instead of running")
     return parser.parse_args(argv)
@@ -194,11 +200,19 @@ def build_launch(options, environ, cwd):
     if not claude_path:
         raise CabinetError("ARGV_INVALID",
                            "no Claude executable found; pass --claude")
+    if options.bg and options.print_mode:
+        raise CabinetError(
+            "ARGV_INVALID", "--bg and --print are mutually exclusive")
     if options.bg and not options.prompt_file:
         raise CabinetError(
             "FIELD_MISSING",
             "a detached chief has nobody at the keyboard to instruct it; "
             "--bg needs --prompt-file")
+    if options.print_mode and not options.prompt_file:
+        raise CabinetError(
+            "FIELD_MISSING",
+            "a headless chief has nobody at the keyboard to instruct it; "
+            "--print needs --prompt-file")
     repo = options.repo or resolve_repo(environ, cwd)
     # The deny rules are computed from the launching user's own home, not from
     # whatever `$HOME` the child ends up with. F4a left this implicit.
@@ -232,7 +246,8 @@ def build_launch(options, environ, cwd):
         include_service_tools_in_tools_flag=options.include_service_tools)
     profiles.verify_profile(profile)
     launch = profiles.chief_launch(profile, options.prompt_file,
-                                   background=options.bg)
+                                   background=options.bg,
+                                   print_mode=options.print_mode)
 
     # The process that runs Claude is this one: `os.execve` replaces the
     # image and keeps the identifier and the start time, so what is recorded

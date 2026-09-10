@@ -900,13 +900,20 @@ def _verify_sandbox(kind, body, settings):
 
 # --- launching --------------------------------------------------------------
 
-def chief_launch(profile, prompt_file=None, background=False):
+def chief_launch(profile, prompt_file=None, background=False,
+                 print_mode=False):
     """Return the argv for one chief session. Runs nothing.
 
-    The profile's own argv is the whole command line; this adds only the two
-    things that describe *this* start rather than the profile: whether it runs
-    detached, and the instruction it opens with. A background chief needs an
-    opening instruction because nobody is at the keyboard to give it one.
+    The profile's own argv is the whole command line; this adds only the
+    things that describe *this* start rather than the profile: whether it
+    runs detached, whether it runs headless-and-exits, and the instruction
+    it opens with. A background or headless chief needs an opening
+    instruction because nobody is at the keyboard to give it one.
+
+    `print_mode` (`claude -p`) is the unattended path for this CLI build: it
+    runs the chief in the foreground (blocking the launching process, unlike
+    `--bg`) and resolves `--agent` correctly, which `--bg` does not — see
+    the `background` branch below.
     """
 
     body = plain(profile)
@@ -932,8 +939,15 @@ def chief_launch(profile, prompt_file=None, background=False):
             "build does not resolve --agent/--agents/--plugin-dir under "
             "--bg and would silently run the default template instead of "
             "cabinet:chief-of-staff; run the chief attended instead")
+    if print_mode and prompt_file is None:
+        raise CabinetError(
+            "FIELD_MISSING",
+            "a headless (-p) chief has nobody at the keyboard to instruct "
+            "it; print_mode needs a prompt_file")
     verify_profile(body)
     argv = list(build_argv(body))
+    if print_mode:
+        argv.append("-p")
     prompt = None
     if prompt_file is not None:
         prompt = _read_prompt(prompt_file)

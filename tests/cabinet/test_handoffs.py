@@ -718,6 +718,21 @@ class ChiefLaunchTest(unittest.TestCase):
             profiles.chief_launch(self.profile, str(link))
         self.assertEqual(caught.exception.code, "PROFILE_PATH_UNSAFE")
 
+    def test_print_mode_adds_the_flag_before_the_prompt(self):
+        # -p is the unattended path this CLI build actually resolves --agent
+        # under (measured live 2026-09-10; --bg does not). It runs in the
+        # foreground, unlike --bg, so `background` stays unset.
+        launch = profiles.chief_launch(self.profile, str(self.prompt),
+                                       print_mode=True)
+        self.assertEqual(launch["argv"][-2:],
+                         ["-p", "Run the clarification exchange."])
+        self.assertFalse(launch["background"])
+
+    def test_print_mode_needs_a_prompt(self):
+        with self.assertRaises(CabinetError) as caught:
+            profiles.chief_launch(self.profile, print_mode=True)
+        self.assertEqual(caught.exception.code, "FIELD_MISSING")
+
     def test_the_launcher_offers_background_and_prompt_options(self):
         launcher = load_script(PLUGIN_ROOT / "scripts" / "cabinet-launch",
                                "cabinet_launch_under_test")
@@ -725,6 +740,44 @@ class ChiefLaunchTest(unittest.TestCase):
                                             str(self.prompt)])
         self.assertTrue(options.bg)
         self.assertEqual(options.prompt_file, str(self.prompt))
+
+    def test_the_launcher_offers_a_print_option(self):
+        launcher = load_script(PLUGIN_ROOT / "scripts" / "cabinet-launch",
+                               "cabinet_launch_print_option")
+        options = launcher.parse_arguments(["--print", "--prompt-file",
+                                            str(self.prompt)])
+        self.assertTrue(options.print_mode)
+        self.assertFalse(options.bg)
+        short = launcher.parse_arguments(["-p", "--prompt-file",
+                                          str(self.prompt)])
+        self.assertTrue(short.print_mode)
+
+    def test_the_launcher_refuses_bg_and_print_together(self):
+        launcher = load_script(PLUGIN_ROOT / "scripts" / "cabinet-launch",
+                               "cabinet_launch_print_conflict")
+        environ = {"PATH": os.environ["PATH"], "HOME": str(self.root)}
+        with self.assertRaises(CabinetError) as caught:
+            launcher.build_launch(
+                launcher.parse_arguments(
+                    ["--repo", "demo/company", "--claude",
+                     str(self.root / "claude"), "--plugin-root",
+                     str(PLUGIN_ROOT), "--bg", "--print", "--prompt-file",
+                     str(self.prompt)]),
+                environ, str(self.root))
+        self.assertEqual(caught.exception.code, "ARGV_INVALID")
+
+    def test_the_launcher_threads_print_mode_into_chief_launch(self):
+        launcher = load_script(PLUGIN_ROOT / "scripts" / "cabinet-launch",
+                               "cabinet_launch_print_threaded")
+        environ = {"PATH": os.environ["PATH"], "HOME": str(self.root)}
+        report, _env, _capability = launcher.build_launch(
+            launcher.parse_arguments(
+                ["--repo", "demo/company", "--claude",
+                 str(self.root / "claude"), "--plugin-root", str(PLUGIN_ROOT),
+                 "--print", "--prompt-file", str(self.prompt)]),
+            environ, str(self.root))
+        self.assertIn("-p", report["argv"])
+        self.assertFalse(report["background"])
 
     def test_the_peer_registry_lives_under_the_private_runtime(self):
         launcher = load_script(PLUGIN_ROOT / "scripts" / "cabinet-launch",
