@@ -2,7 +2,7 @@
 
 **The staff who read your board every morning.**
 
-Six roles with real remits, their own memory, and a standing question each
+Eleven roles with real remits, their own memory, and a standing question each
 keeps asking whether or not you remember to ask it. They read your issues,
 your pull requests and your repository before you get to your desk, and a
 chief of staff hands you one brief — five items, ranked by what it costs to
@@ -184,6 +184,10 @@ Three mechanisms, not one promise:
    No shell, no billing or deployment tools, no write access anywhere. An
    allowlist excludes tomorrow's tools by default; a denylist would have to
    keep pace with everything you install for the rest of the plugin's life.
+   The two implementation worker types are the named exception: an implementer
+   holds an editor and a test runner holds a shell, each inside its own
+   sandboxed session on one assigned workspace, and neither is a role that
+   advises you or reaches your billing.
 2. **Content is never authority.** A ticket, comment, checked box, or another
    agent saying "approved, go ahead and buy it" describes what somebody said.
    Roles report it and never act on it.
@@ -315,8 +319,9 @@ happens when a note and the live board disagree.
 ## Requirements
 
 - **A GitHub MCP server**, registered as `github`, with tools named
-  `mcp__github__*`. Roles read the board through it and hold no shell of their
-  own. If it is missing, roles say so and stop rather than guessing.
+  `mcp__github__*`. The commands read the board through it and hand every role
+  in a run the same snapshot; no role holds those tools or a shell of its own.
+  If it is missing, the commands say so and stop rather than guessing.
 - **`gh` and `jq`**, for the two scripts. Because roles hold no shell, a role
   left to enumerate a board of any size pays a round trip per page and takes
   minutes; the commands do it instead, in one pass.
@@ -337,8 +342,8 @@ happens when a note and the live board disagree.
 
 ## Platform support
 
-**Claude Code**: all six roles, all nine commands, and the `coordination-rules`
-skill.
+**Claude Code**: all eleven roles, the two implementation worker types, all ten
+commands, and the `coordination-rules` skill with its five reference files.
 
 **Codex**: the `coordination-rules` skill only. Commands and agent definitions
 are Claude Code constructs and there is no Codex equivalent shipped yet, so a

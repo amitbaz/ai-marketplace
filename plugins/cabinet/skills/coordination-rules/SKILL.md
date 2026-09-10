@@ -10,17 +10,21 @@ responsibilities, propose what comes next, talk to each other directly, and
 carry approved work through to verified completion. The owner is the CEO and
 works through one executive assistant, in business language.
 
-**This replaces the advisory-only contract.** Under the old contract a role
-answered a question, wrote a note addressed to another role's notebook, and
-waited for somebody to run that role again. That is not a company; it is a
-queue with a person in the middle. What replaces it is on this page: an
-execution order, handoffs that require an acknowledgment from their recipient,
-and a QA verdict nobody else can manufacture.
+**This replaces the advisory-only contract.** Under the old one a role answered
+a question, wrote a note to another role's notebook, and waited for somebody to
+run that role again. That is a queue with a person in the middle, not a company.
+What replaces it is on this page: an execution order, handoffs that require an
+acknowledgment, and a QA verdict nobody else can manufacture.
 
 Load this skill explicitly with `Skill(skill: "cabinet:coordination-rules")`.
 Spawning a teammate from an agent definition does not guarantee that its
-`skills:` field was applied, so every role loads it as its first act. A role
-that cannot load it says so and stops.
+`skills:` field was applied, so every staff role loads it as its first act. A
+staff role that cannot load it says so and stops.
+
+The two implementation worker types are the exception. An implementer and a
+test runner hold no `Skill` tool, run as their own isolated sessions, and
+receive the rules that bind them in their launch context instead. Where this
+page says "role" it means staff; where a rule reaches a worker, it says worker.
 
 ## The execution order
 
@@ -40,11 +44,10 @@ one of them and returns to it.
 10. Assistant gives the completion/session brief and persists the checkpoint.
 ```
 
-Steps are ordered, not optional. Step 7 is a gate: nothing in steps 8 to 10
-may begin against an unapproved revision, and changing the scope after
-approval invalidates the dispatch authority rather than amending it.
-
-Commands supply the native syntax for these steps. They do not restate them.
+Steps are ordered, not optional. Step 7 is a gate: nothing in steps 8 to 10 may
+begin against an unapproved revision, and changing the scope after approval
+invalidates the dispatch authority rather than amending it. Commands supply the
+native syntax for these steps; they do not restate them.
 
 ## Who decides what
 
@@ -71,18 +74,20 @@ Detail: [`references/company.md`](references/company.md).
 **No agent spends the owner's money, commits them to a cost, or changes what
 they charge. Ever. Only the owner does that, by hand.**
 
-This is the one rule with no exception, no remit that overrides it, and no
-size below which it stops applying. It covers subscriptions, upgrades,
-renewals, domains, provisioning anything billable, setting or changing
-pricing, and cancelling or downgrading — saving money is still the owner's
-call, and a cancelled backup plan is how data dies.
+This is the one rule with no exception, no remit that overrides it, and no size
+below which it stops applying. It covers subscriptions, upgrades, renewals,
+domains, provisioning anything billable, setting or changing pricing, and
+cancelling or downgrading — saving money is the owner's call too.
 
 Four mechanisms make it hold rather than merely stated:
 
-1. **Enumerated tool grants.** Every role's `tools:` line is an allowlist. No
-   shell, no billing or deployment tools, no write access. A denylist would
-   have to keep pace with every tool installed for the rest of this plugin's
-   life; an allowlist excludes tomorrow's tools by default.
+1. **Enumerated tool grants.** Every staff role's `tools:` line is an
+   allowlist. No shell, no billing or deployment tools, no write access. A
+   denylist would have to keep pace with every tool installed for the rest of
+   this plugin's life; an allowlist excludes tomorrow's tools by default. The
+   two worker types are the named exception and stay one: an implementer holds
+   an editor and a test runner holds a shell, each on one assigned workspace
+   under a verified profile, and neither reaches anything billable.
 2. **A mechanical hook.** A `PreToolUse` check validates every `Agent` and
    `SendMessage` call against the packaged registry, so a role cannot spawn a
    general-purpose child that regains what its own grant excludes, and cannot
@@ -207,27 +212,22 @@ The registry, the activation rules and each department's remit are in
 
 ## Recovery and reporting
 
-A session ending does not complete a batch, and no session running means work
-is paused rather than secretly continuing. On startup the chief reconciles
-live work against actual sources before proposing anything; it never treats an
-old session ID as a live worker or infers new approval from old discussion.
+A session ending does not complete a batch, and no session running means work is
+paused rather than secretly continuing. On startup the chief reconciles live work
+against actual sources before proposing anything; it never treats an old session
+ID as a live worker or infers approval from old discussion.
 Detail: [`references/recovery.md`](references/recovery.md).
 
-The owner reads one brief, not six roles' worth of output. Every line that
-reaches them names a capability and what it costs, never the mechanism that
-implements it — no file path, function, class or line number. Mechanism is not
-forbidden, it is filed: it belongs in the notebooks and in the answer a role
-gives when the owner asks for detail. If a role cannot restate a finding as a
-capability and a cost, it has not finished working out what the finding means.
+The owner reads one brief, not every role's output. Every line that reaches
+them names a capability and what it costs, never the mechanism that implements
+it — no file path, function, class or line number. Mechanism is filed rather
+than forbidden: it lives in the notebooks and in the answer a role gives when
+asked for detail. A role that cannot restate a finding as a capability and a
+cost has not finished working out what it means.
 Detail: [`references/briefing.md`](references/briefing.md).
 
-## A brief carries what a ticket cannot know about itself
-
-What changed underneath it, what it overlaps with, which charter constraint
-applies. If a brief is restating the ticket, it should not exist. A brief is
-also text that gets pasted into a session holding real tools, so it never
-carries a command that spends, deploys or publishes, and it says of itself
-that it is background and not instruction.
+A brief carries only what a ticket cannot know about itself, and never a
+command that spends, deploys or publishes.
 
 ## Judgement that accumulates
 
@@ -243,9 +243,9 @@ that it is background and not instruction.
   producing a confident number from nothing.
 - **A pre-mortem before something irreversible.** Assume it shipped and it went
   wrong; explain why. Stated honestly, because rule six applies to this
-  plugin's own methods: the support for this is a laboratory finding on
-  prospective hindsight plus conference-grade evidence that it reduces
-  overconfidence, not a demonstration that it improves risk identification.
+  plugin's own methods: the support is a laboratory finding on prospective
+  hindsight plus conference-grade evidence that it reduces overconfidence, not
+  a demonstration that it improves risk identification.
 - **The charter is amended, never overwritten.** Every line carries its source
   and, where it can go stale, the condition that ends it. Superseded lines
   stay, dated, with what changed and why. Roles propose amendments; only the

@@ -217,8 +217,36 @@ def expected_tools_line(role):
     return ", ".join(profiles.STAFF_TOOLS + profiles.STAFF_SERVICE_TOOLS)
 
 
+def expected_disallowed_line(role):
+    """The denial line is part of the binding contract, not decoration.
+
+    A staff file shipping `disallowedTools: Bash` alone would satisfy a shape
+    check while silently dropping five denials, so the value is compared."""
+    if role == "implementer":
+        return "Bash, NotebookEdit, WebFetch, WebSearch, Agent"
+    if role == "test-runner":
+        return "Write, Edit, NotebookEdit, WebFetch, WebSearch, Agent"
+    return "Bash, Write, Edit, NotebookEdit, WebFetch, WebSearch"
+
+
 def check_roles(root):
     problems = []
+
+    # An unregistered file in agents/ is checked against nothing by name, so
+    # it is the one place a broad tool line could arrive unnoticed. Every file
+    # in the directory must be a registered role, and every registered role
+    # must have a file.
+    directory = root / AGENT_DIR
+    if directory.is_dir():
+        for path in sorted(directory.glob("*.md")):
+            if path.stem not in REQUIRED_ROLES:
+                problems.append(
+                    "%s/%s: not a role in cabinet_runtime.profiles; every agent "
+                    "file must be a registered staff, worker or chief type"
+                    % (AGENT_DIR, path.name))
+    else:
+        problems.append("missing agent directory %s" % AGENT_DIR)
+
     for role in REQUIRED_ROLES:
         parsed, found = read_agent(root, role)
         problems.extend(found)
@@ -226,13 +254,20 @@ def check_roles(root):
             continue
         label = "%s/%s.md" % (AGENT_DIR, role)
 
+        disallowed = parsed.get("disallowedTools")
+        if disallowed:
+            check_tool_list(label, "disallowedTools", disallowed, problems)
+            expected_denials = expected_disallowed_line(role)
+            if disallowed != expected_denials:
+                problems.append(
+                    "%s: disallowedTools must be exactly the contract line\n"
+                    "      expected: %s\n      actual:   %s"
+                    % (label, expected_denials, disallowed))
+
         tools = parsed.get("tools")
         if not tools:
             continue
         entries = check_tool_list(label, "tools", tools, problems)
-        if parsed.get("disallowedTools"):
-            check_tool_list(label, "disallowedTools",
-                            parsed.get("disallowedTools"), problems)
 
         expected = expected_tools_line(role)
         if tools != expected:
@@ -351,7 +386,12 @@ def check_manifests(root):
         if codex.get("description") != claude.get("description"):
             problems.append("manifest descriptions disagree")
 
-    rows = [line for line in readme.read_text().splitlines()
+    try:
+        readme_text = readme.read_text()
+    except OSError as error:
+        return problems + ["README.md is unreadable: %s" % error]
+
+    rows = [line for line in readme_text.splitlines()
             if line.startswith("| [cabinet]")]
     if not rows:
         problems.append("README.md has no cabinet row")
@@ -431,6 +471,28 @@ def self_test():
         if not any("missing role definition" in problem for problem in found):
             failures.append("a missing core role was not rejected")
 
+        # 3b. A staff file keeping the key but dropping five of its denials.
+        root = _fixture_root(stack)
+        _mutate(root / AGENT_DIR / "product.md",
+                "disallowedTools: Bash, Write, Edit, NotebookEdit, WebFetch, "
+                "WebSearch", "disallowedTools: Bash")
+        found = check_all(root)
+        if not any("disallowedTools must be exactly" in problem
+                   for problem in found):
+            failures.append("a truncated disallowedTools line was not rejected")
+
+        # 3c. An extra agent file the registry does not know about. Nothing
+        # checks it by name, so a broad tool line could arrive here unseen.
+        root = _fixture_root(stack)
+        (root / AGENT_DIR / "helper.md").write_text(
+            "---\nname: helper\ndescription: An extra role nobody registered, "
+            "carrying a shell it should not have.\ntools: Bash, Read\n"
+            "disallowedTools: WebFetch\nmodel: inherit\n---\n\nHelper.\n")
+        found = check_all(root)
+        if not any("not a role in cabinet_runtime.profiles" in problem
+                   for problem in found):
+            failures.append("an unregistered agent file was not rejected")
+
         # 4. An unquoted argument hint.
         root = _fixture_root(stack)
         _mutate(root / COMMAND_DIR / "ask.md",
@@ -471,7 +533,7 @@ def self_test():
         for failure in failures:
             print("  - %s" % failure)
         return 1
-    print("Cabinet structural check self-test passed (7 negative fixtures).")
+    print("Cabinet structural check self-test passed (9 negative fixtures).")
     return 0
 
 

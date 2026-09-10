@@ -101,6 +101,15 @@ class CompanyStaff(unittest.TestCase):
         expected = ", ".join(profiles.CHIEF_TOOLS + profiles.SERVICE_TOOLS)
         self.assertEqual(tools_line(profiles.CHIEF_ROLE), expected)
 
+    def test_every_staff_file_denies_the_same_six_tools(self):
+        """A file keeping the key but dropping five denials would look fine."""
+        expected = "Bash, Write, Edit, NotebookEdit, WebFetch, WebSearch"
+        for role in profiles.STAFF_AGENT_TYPES:
+            text = (AGENTS / ("%s.md" % role)).read_text()
+            line = next(x for x in text.splitlines()
+                        if x.startswith("disallowedTools:"))
+            self.assertEqual(line[len("disallowedTools:"):].strip(), expected, role)
+
     def test_workers_hold_no_service_tool(self):
         expected = {"implementer": profiles.IMPLEMENTER_TOOLS,
                     "test-runner": profiles.TEST_RUNNER_TOOLS}
@@ -147,9 +156,11 @@ class WorkflowSkill(unittest.TestCase):
         """An advisory panel routes an observation to a notebook and waits for
         the next run. Staff record, send, and require an acknowledgment."""
         text = SKILL.read_text()
-        for state in ("recorded", "sent", "acknowledged", "resolved",
-                      "failed", "superseded"):
-            self.assertIn(state, text)
+        # Match the state diagram itself. Bare substrings would survive its
+        # deletion: "sent" also occurs inside "present" and "sentence".
+        self.assertIn("recorded → sent → acknowledged → resolved", text)
+        for terminal in ("↘ failed", "↘ superseded"):
+            self.assertIn(terminal, text)
         self.assertIn("cabinet_record_handoff", text)
         self.assertIn("SendMessage", text)
 

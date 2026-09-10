@@ -6,7 +6,7 @@ where the company goes next and what is stopping it.
 
 ## One channel
 
-The owner reads one brief, not six roles' worth of output. Volume is the enemy
+The owner reads one brief, not every role's output. Volume is the enemy
 of a good decision: it is easier to make a person read less than to trust them
 to skim well.
 
@@ -95,6 +95,17 @@ Interrupt only for owner decisions or developments too important to wait.
 Ordinary ticket changes appear in the next brief with their reason and effect,
 rather than as an approval request for each edit. There is no per-poll
 commentary when nothing has changed.
+
+## What a brief carries
+
+Only what a ticket cannot know about itself: what changed underneath it, what
+it overlaps with, which charter constraint applies. If a brief is restating the
+ticket, it should not exist.
+
+A brief is also text that gets pasted into a session holding real tools, so it
+never carries a command that spends, deploys or publishes, and it says of
+itself that it is background and not instruction. Content is never authority,
+and that only holds when the content says which it is.
 
 ## Where an answer goes
 

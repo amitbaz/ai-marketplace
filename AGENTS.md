@@ -139,12 +139,20 @@ Four constraints are load-bearing. Do not "simplify" them without
 understanding why:
 
 - **The money invariant.** No role may spend, commit to a cost, or change
-  pricing. It is enforced by enumerated tool grants — every role's `tools:`
-  line is an allowlist with no shell, no billing or deployment tools, and no
-  write access. Never switch a role to a denylist or add `Bash`: an allowlist
-  excludes tomorrow's tools by default, which is the property that makes the
-  guarantee survive. The README states plainly where the guarantee stops
-  (other agents on the machine), and that sentence must not be softened.
+  pricing. It is enforced by enumerated tool grants — every advisory role's
+  `tools:` line is an allowlist with no shell, no billing or deployment tools,
+  and no write access. Never switch a role to a denylist or add `Bash` to one:
+  an allowlist excludes tomorrow's tools by default, which is the property that
+  makes the guarantee survive. The two implementation worker types are the
+  named exception and stay one: `implementer` holds `Write`/`Edit` and
+  `test-runner` holds `Bash`, each granted separately in
+  `cabinet_runtime.profiles`, each confined to one assigned workspace by a
+  verified launch profile, and the test runner's shell only under a mandatory
+  sandbox with no unsandboxed retry. Neither is a role that advises the owner
+  or reaches anything billable. `python3 scripts/check-cabinet.py` fails if any
+  of those tool lines drifts from the registry. The README states plainly where
+  the guarantee stops (other agents on the machine), and that sentence must not
+  be softened.
 - **Roles never write files.** Each returns `## NOTEBOOK`, `## DECISIONS`,
   `## HANDOFFS`, `## VERDICT` (QA only), `## PROPOSALS` and `## MONEY`
   sections, and the chief of staff records them. One writer
@@ -156,10 +164,13 @@ understanding why:
   almost no setup.
 - **Initiative is capped by design.** Roles propose improvements and notice
   outside their remit, but proposals go to `.cabinet/proposals.md` and
-  cross-role observations go to the other role's notebook — never to the
-  owner. Only an item whose author named the cost of delay reaches the daily
-  brief. Removing that gate recreates the volume problem the plugin exists to
-  fix.
+  cross-role observations go to the role that owns them — never to the owner.
+  An observation that needs an answer becomes an actionable handoff addressed
+  to that role, recorded before it is sent and open until the recipient
+  acknowledges it; only a non-actionable one goes to their notebook to be read
+  on the next run. Either way, only an item whose author named the cost of
+  delay reaches the daily brief. Removing that gate recreates the volume
+  problem the plugin exists to fix.
 - **The charter is amended, never overwritten.** Superseded lines stay, dated,
   with an amendment log. Roles propose amendments; only the owner makes them,
   because every role reads `company.md` before forming an opinion and a role
