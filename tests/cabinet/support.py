@@ -137,6 +137,11 @@ def setup_scope(repo="demo/company", visibility="private", operations=None,
         profiles = ["local-unit"]
     return {
         "github_accounts": dict(accounts or {}),
+        # The state a scope is in after `service.setup` has read the
+        # repository: what is automatic turns on a visibility somebody read,
+        # so the fixture records one rather than leaving the question open.
+        "visibility_source": "live",
+        "visibility_confirmed": visibility,
         "repo": repo,
         "visibility": visibility,
         "board_operations": list(operations if operations is not None else (
@@ -662,6 +667,9 @@ class FakeGithubRun:
         #: way a pull request or an older API version does. Their edges then
         #: read as unknown rather than as none.
         self.hide_relationships = set()
+        #: When false, `GET /repos/{repo}` fails, the way it does when the
+        #: token lost its scope or the network dropped mid-setup.
+        self.repo_readable = True
         self.page_size = 100
         self._next_id = 9000
 
@@ -774,6 +782,8 @@ class FakeGithubRun:
         if parts[:1] == ["cabinet-fake"]:
             return self._page(parts[1], int(query.get("page", "1")))
         if len(parts) == 3 and parts[0] == "repos":
+            if not self.repo_readable:
+                return 403, {"message": "Resource not accessible"}, {}
             return 200, {"full_name": self.repo, "visibility": self.visibility,
                          "private": self.visibility != "public"}, {}
         if len(parts) < 4 or parts[0] != "repos":

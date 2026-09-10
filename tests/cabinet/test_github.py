@@ -13,8 +13,9 @@ Two properties are what these tests exist to hold, and both are easy to lose:
 
 import json
 import unittest
+from unittest import mock
 
-from cabinet_runtime import contracts
+from cabinet_runtime import contracts, github
 from cabinet_runtime.errors import CabinetError
 from cabinet_runtime.github import GithubAdapter
 from support import FakeGithubRun, ServiceCase, action, setup_scope
@@ -49,8 +50,32 @@ class GithubCase(unittest.TestCase):
         self.github = GithubAdapter(self.fake, self.repo,
                                     sleeper=self.fake.sleeper)
 
+    def apply(self, operation, payload, expected_before=None):
+        """Apply the way a caller must: observe the issue, then ask.
+
+        `expected_before` is not optional on a field change, so a test that
+        does not care about staleness still has to travel the path a real
+        caller does. Passing it explicitly overrides this.
+        """
+
+        if expected_before is None and operation in github.EXPECTATION_OPERATIONS:
+            expected_before = github.observe_expectations(
+                self.github.read_issue(payload["issue_number"]), operation,
+                payload)
+        return self.github.apply(operation, payload,
+                                 expected_before=expected_before)
+
     def refuse(self, operation, payload, **kwargs):
         """Apply expecting a CabinetError; return its code."""
+
+        try:
+            self.apply(operation, payload, **kwargs)
+        except CabinetError as problem:
+            return problem.code
+        raise AssertionError("%s did not refuse" % operation)
+
+    def refuse_raw(self, operation, payload, **kwargs):
+        """Go straight to the adapter, for a refusal that must precede any read."""
 
         try:
             self.github.apply(operation, payload, **kwargs)
@@ -66,7 +91,7 @@ class EdgeDirectionTest(GithubCase):
     def test_blocker_uses_issue_database_id(self):
         self.fake.issue(12, {"number": 12, "id": 9012})
         self.fake.issue(14, {"number": 14, "id": 9014})
-        self.github.apply("github.add_blocker", {"issue_number": 14,
+        self.apply("github.add_blocker", {"issue_number": 14,
                                                  "blocker_number": 12})
         request = self.fake.last_mutation()
         self.assertEqual(request["method"], "POST")
@@ -165,9 +190,9 @@ class ReadIssueTest(GithubCase):
         self.fake.issue(11, {"id": 9011})
         self.fake.issue(12, {"id": 9012})
         self.fake.issue(14, {"id": 9014})
-        self.github.apply("github.set_parent", {"issue_number": 14,
+        self.apply("github.set_parent", {"issue_number": 14,
                                                 "parent_number": 11})
-        self.github.apply("github.add_blocker", {"issue_number": 14,
+        self.apply("github.add_blocker", {"issue_number": 14,
                                                  "blocker_number": 12})
         read = self.github.read_issue(14)
         self.assertEqual(read["parent"], 11)
@@ -192,7 +217,7 @@ class ReadIssueTest(GithubCase):
     def test_a_failed_relationship_page_leaves_the_issue_incomplete(self):
         self.fake.issue(11, {"id": 9011})
         self.fake.issue(14, {"id": 9014})
-        self.github.apply("github.set_parent", {"issue_number": 14,
+        self.apply("github.set_parent", {"issue_number": 14,
                                                 "parent_number": 11})
         self.fake.fail_page("sub_issues", 1)
         read = self.github.read_issue(11)
@@ -242,24 +267,24 @@ class ApplyTest(GithubCase):
                          contracts.SETUP_BOARD_OPERATIONS)
 
     def test_a_comment_is_refused_before_any_call(self):
-        code = self.refuse("github.add_comment", {"issue_number": 14,
+        code = self.refuse_raw("github.add_comment", {"issue_number": 14,
                                                   "body": "hello"})
         self.assertEqual(code, "OPERATION_FORBIDDEN")
         self.assertEqual(self.fake.requests, [])
 
     def test_an_arbitrary_endpoint_is_refused_before_any_call(self):
-        code = self.refuse("github.request", {"path": "repos/demo/company",
+        code = self.refuse_raw("github.request", {"path": "repos/demo/company",
                                               "method": "DELETE"})
         self.assertEqual(code, "OPERATION_FORBIDDEN")
         self.assertEqual(self.fake.requests, [])
 
     def test_a_graphql_string_is_refused_before_any_call(self):
-        code = self.refuse("github.graphql", {"query": "{ viewer { login } }"})
+        code = self.refuse_raw("github.graphql", {"query": "{ viewer { login } }"})
         self.assertEqual(code, "OPERATION_FORBIDDEN")
         self.assertEqual(self.fake.requests, [])
 
     def test_another_repository_is_refused_before_any_call(self):
-        code = self.refuse("github.set_labels",
+        code = self.refuse_raw("github.set_labels",
                            {"issue_number": 14, "labels": ["ready"],
                             "repo": "someone/else"})
         self.assertEqual(code, "REPO_MISMATCH")
@@ -273,7 +298,7 @@ class ApplyTest(GithubCase):
                       argv)
 
     def test_a_body_travels_on_standard_input_not_in_the_command_line(self):
-        self.github.apply("github.set_state",
+        self.apply("github.set_state",
                           {"issue_number": 14, "state": "closed",
                            "state_reason": "not_planned",
                            "reason": "The owner deferred it"})
@@ -283,7 +308,7 @@ class ApplyTest(GithubCase):
         self.assertNotIn("not_planned", " ".join(argv))
 
     def test_a_child_uses_the_child_database_id(self):
-        self.github.apply("github.set_parent", {"issue_number": 14,
+        self.apply("github.set_parent", {"issue_number": 14,
                                                 "parent_number": 11})
         request = self.fake.last_mutation()
         self.assertEqual(request["method"], "POST")
@@ -292,9 +317,9 @@ class ApplyTest(GithubCase):
         self.assertEqual(request["body"], {"sub_issue_id": 9014})
 
     def test_removing_a_blocker_names_the_identifier_in_the_path(self):
-        self.github.apply("github.add_blocker", {"issue_number": 14,
+        self.apply("github.add_blocker", {"issue_number": 14,
                                                  "blocker_number": 12})
-        self.github.apply("github.remove_blocker", {"issue_number": 14,
+        self.apply("github.remove_blocker", {"issue_number": 14,
                                                     "blocker_number": 12})
         request = self.fake.last_mutation()
         self.assertEqual(request["method"], "DELETE")
@@ -303,7 +328,7 @@ class ApplyTest(GithubCase):
             "repos/demo/company/issues/14/dependencies/blocked_by/9012")
 
     def test_every_changed_field_is_read_back_before_verified(self):
-        result = self.github.apply("github.set_labels",
+        result = self.apply("github.set_labels",
                                    {"issue_number": 14, "labels": ["ready"]})
         self.assertEqual(result["outcome"], "verified")
         self.assertEqual(result["before"]["labels"], [])
@@ -313,7 +338,7 @@ class ApplyTest(GithubCase):
     def test_a_readback_that_disagrees_is_uncertain_not_verified(self):
         self.fake.issue(15, {"id": 9015})
         self.fake.readback_refuses = True
-        result = self.github.apply("github.set_labels",
+        result = self.apply("github.set_labels",
                                    {"issue_number": 15, "labels": ["ready"]})
         self.assertEqual(result["outcome"], "uncertain")
 
@@ -327,27 +352,92 @@ class CycleTest(ApplyTest):
         self.assertEqual(self.fake.mutations(), [])
 
     def test_a_parent_cycle_is_refused_before_the_write(self):
-        self.github.apply("github.set_parent", {"issue_number": 12,
+        self.apply("github.set_parent", {"issue_number": 12,
                                                 "parent_number": 11})
         code = self.refuse("github.set_parent", {"issue_number": 11,
                                                  "parent_number": 12})
         self.assertEqual(code, "RELATIONSHIP_CYCLE")
 
     def test_a_dependency_cycle_is_refused_before_the_write(self):
-        self.github.apply("github.add_blocker", {"issue_number": 14,
+        self.apply("github.add_blocker", {"issue_number": 14,
                                                  "blocker_number": 12})
         code = self.refuse("github.add_blocker", {"issue_number": 12,
                                                   "blocker_number": 14})
         self.assertEqual(code, "RELATIONSHIP_CYCLE")
 
     def test_a_deep_dependency_cycle_is_refused(self):
-        self.github.apply("github.add_blocker", {"issue_number": 14,
+        self.apply("github.add_blocker", {"issue_number": 14,
                                                  "blocker_number": 13})
-        self.github.apply("github.add_blocker", {"issue_number": 13,
+        self.apply("github.add_blocker", {"issue_number": 13,
                                                  "blocker_number": 12})
         code = self.refuse("github.add_blocker", {"issue_number": 12,
                                                   "blocker_number": 14})
         self.assertEqual(code, "RELATIONSHIP_CYCLE")
+
+    def test_a_short_cycle_behind_a_wide_graph_is_still_refused(self):
+        """Sixty-one blockers on one issue, and a two-hop cycle behind them.
+
+        The walk explores a transitive closure, so the number of issues it
+        touches has nothing to do with how short the cycle is. A budget spent
+        per node used to let this through and write the edge.
+        """
+
+        self.seed(5)
+        for number in range(10, 71):
+            self.seed(number)
+            self.apply("github.add_blocker",
+                              {"issue_number": 5, "blocker_number": number})
+        before = len(self.fake.mutations())
+        code = self.refuse("github.add_blocker", {"issue_number": 10,
+                                                  "blocker_number": 5})
+        self.assertEqual(code, "RELATIONSHIP_CYCLE")
+        self.assertEqual(len(self.fake.mutations()), before)
+
+    def test_a_sixty_eight_hop_chain_is_still_refused(self):
+        chain = list(range(100, 168))
+        for number in chain:
+            self.seed(number)
+        for upper, lower in zip(chain, chain[1:]):
+            self.apply("github.add_blocker",
+                              {"issue_number": upper, "blocker_number": lower})
+        before = len(self.fake.mutations())
+        code = self.refuse("github.add_blocker",
+                           {"issue_number": chain[-1],
+                            "blocker_number": chain[0]})
+        self.assertEqual(code, "RELATIONSHIP_CYCLE")
+        self.assertEqual(len(self.fake.mutations()), before)
+
+    def test_a_walk_that_runs_out_of_budget_refuses_rather_than_writes(self):
+        """The adapter cannot prove there is no cycle, so it writes nothing.
+
+        This is the same answer an unreadable edge gets, and for the same
+        reason: not knowing is not the same as knowing there is none.
+        """
+
+        for number in range(200, 210):
+            self.seed(number)
+        for number in range(201, 210):
+            self.apply("github.add_blocker",
+                              {"issue_number": 200, "blocker_number": number})
+        before = len(self.fake.mutations())
+        with mock.patch.object(github, "MAX_RELATION_NODES", 3):
+            code = self.refuse("github.add_blocker", {"issue_number": 14,
+                                                      "blocker_number": 200})
+        self.assertEqual(code, "SOURCE_INCOMPLETE")
+        self.assertEqual(len(self.fake.mutations()), before)
+
+    def test_a_hierarchy_cycle_past_the_budget_refuses(self):
+        self.seed(300)
+        self.seed(301)
+        self.apply("github.set_parent", {"issue_number": 301,
+                                                "parent_number": 300})
+        with mock.patch.object(github, "MAX_RELATION_NODES", 1):
+            code = self.refuse("github.set_parent", {"issue_number": 14,
+                                                     "parent_number": 301})
+        self.assertEqual(code, "SOURCE_INCOMPLETE")
+
+    def seed(self, number):
+        return self.fake.issue(number, {"id": 90000 + number})
 
 
 class UnreadableEdgeTest(ApplyTest):
@@ -366,7 +456,7 @@ class UnreadableEdgeTest(ApplyTest):
         self.assertEqual(self.fake.mutations(), [])
 
     def test_a_blocker_is_not_written_over_an_unreadable_relationship(self):
-        self.github.apply("github.add_blocker", {"issue_number": 14,
+        self.apply("github.add_blocker", {"issue_number": 14,
                                                  "blocker_number": 12})
         before = len(self.fake.mutations())
         self.fake.fail_page("blocked_by", 1)
@@ -386,9 +476,9 @@ class UnreadableEdgeTest(ApplyTest):
 class ReparentTest(ApplyTest):
 
     def test_reparenting_removes_the_old_edge_and_adds_the_new_one(self):
-        self.github.apply("github.set_parent", {"issue_number": 14,
+        self.apply("github.set_parent", {"issue_number": 14,
                                                 "parent_number": 11})
-        result = self.github.apply("github.set_parent", {"issue_number": 14,
+        result = self.apply("github.set_parent", {"issue_number": 14,
                                                          "parent_number": 12})
         steps = [step["step"] for step in result["substeps"]]
         self.assertEqual(steps, ["remove_parent", "add_parent"])
@@ -396,9 +486,9 @@ class ReparentTest(ApplyTest):
         self.assertEqual(self.github.read_issue(11)["children"], [])
 
     def test_each_substep_records_its_own_method_and_path(self):
-        self.github.apply("github.set_parent", {"issue_number": 14,
+        self.apply("github.set_parent", {"issue_number": 14,
                                                 "parent_number": 11})
-        result = self.github.apply("github.set_parent", {"issue_number": 14,
+        result = self.apply("github.set_parent", {"issue_number": 14,
                                                          "parent_number": 12})
         self.assertEqual(result["substeps"][0]["method"], "DELETE")
         self.assertEqual(result["substeps"][0]["path"],
@@ -406,7 +496,7 @@ class ReparentTest(ApplyTest):
         self.assertEqual(result["substeps"][1]["method"], "POST")
 
     def test_no_checkbox_is_written_into_any_body(self):
-        self.github.apply("github.set_parent", {"issue_number": 14,
+        self.apply("github.set_parent", {"issue_number": 14,
                                                 "parent_number": 11})
         self.assertEqual(self.github.read_issue(14)["body"], "")
         self.assertEqual(self.github.read_issue(11)["body"], "")
@@ -422,7 +512,7 @@ class BodyTest(ApplyTest):
                                         GithubAdapter.MANAGED_END)})
 
     def test_a_managed_block_edit_preserves_the_text_around_it(self):
-        self.github.apply("github.update_issue",
+        self.apply("github.update_issue",
                           {"issue_number": 20, "body_block": "new"})
         body = self.github.read_issue(20)["body"]
         self.assertIn("Human prose.", body)
@@ -437,14 +527,14 @@ class BodyTest(ApplyTest):
         self.assertEqual(self.fake.mutations(), [])
 
     def test_a_reviewed_whole_body_change_is_applied(self):
-        self.github.apply("github.update_issue",
+        self.apply("github.update_issue",
                           {"issue_number": 20, "body": "everything replaced",
                            "whole_body_reviewed": True})
         self.assertEqual(self.github.read_issue(20)["body"],
                          "everything replaced")
 
     def test_a_managed_block_is_appended_when_the_body_has_none(self):
-        self.github.apply("github.update_issue",
+        self.apply("github.update_issue",
                           {"issue_number": 14, "body_block": "first"})
         body = self.github.read_issue(14)["body"]
         self.assertIn(GithubAdapter.MANAGED_BEGIN, body)
@@ -456,21 +546,24 @@ class ConcurrentEditTest(ApplyTest):
     def test_a_body_changed_under_us_is_source_changed(self):
         code = self.refuse(
             "github.update_issue", {"issue_number": 14, "title": "New title"},
-            expected_before={"issue_updated_at": "2026-09-08T09:00:00Z"})
+            expected_before={"issue_updated_at": "2026-09-08T09:00:00Z",
+                             "title": "Issue 14"})
         self.assertEqual(code, "SOURCE_CHANGED")
         self.assertEqual(self.fake.mutations(), [])
 
     def test_a_matching_expectation_proceeds(self):
-        result = self.github.apply(
+        result = self.apply(
             "github.update_issue", {"issue_number": 14, "title": "New title"},
-            expected_before={"issue_updated_at": "2026-09-09T10:00:00Z"})
+            expected_before={"issue_updated_at": "2026-09-09T10:00:00Z",
+                             "title": "Issue 14"})
         self.assertEqual(result["outcome"], "verified")
 
     def test_a_changed_field_is_reported_with_both_values(self):
         try:
-            self.github.apply(
+            self.apply(
                 "github.set_labels", {"issue_number": 14, "labels": ["ready"]},
-                expected_before={"labels": ["triage"]})
+                expected_before={"issue_updated_at": "2026-09-09T10:00:00Z",
+                                 "labels": ["triage"]})
         except CabinetError as problem:
             self.assertEqual(problem.code, "SOURCE_CHANGED")
             self.assertIn("triage", problem.message)
@@ -485,6 +578,83 @@ class ConcurrentEditTest(ApplyTest):
         self.assertEqual(self.fake.mutations(), [])
 
 
+class RequiredExpectationTest(ApplyTest):
+    """Conflict-aware writing is enforced, not offered.
+
+    An action carrying an empty `expected_before` used to get no comparison at
+    all: the re-read happened and had nothing to disagree with, so a whole-body
+    replacement could overwrite somebody's concurrent edit and return
+    `verified`.
+    """
+
+    def test_a_field_change_with_no_expectation_is_refused_before_any_call(self):
+        code = self.refuse_raw("github.set_labels",
+                               {"issue_number": 14, "labels": ["ready"]})
+        self.assertEqual(code, "EXPECTATION_REQUIRED")
+        self.assertEqual(self.fake.requests, [])
+
+    def test_the_refusal_names_the_missing_claims(self):
+        try:
+            self.github.apply("github.set_state",
+                              {"issue_number": 14, "state": "closed",
+                               "state_reason": "completed", "reason": "done"},
+                              expected_before={"issue_updated_at": "x"})
+        except CabinetError as problem:
+            self.assertEqual(problem.code, "EXPECTATION_REQUIRED")
+            self.assertIn("state", problem.message)
+            self.assertIn("state_reason", problem.message)
+        else:
+            raise AssertionError("a bare expectation was not refused")
+
+    def test_a_whole_body_replacement_must_name_the_body_it_replaces(self):
+        self.fake.issue(20, {"id": 9020, "body": "Human prose."})
+        code = self.refuse_raw(
+            "github.update_issue",
+            {"issue_number": 20, "body": "replaced",
+             "whole_body_reviewed": True},
+            expected_before={"issue_updated_at": "2026-09-09T10:00:00Z"})
+        self.assertEqual(code, "EXPECTATION_REQUIRED")
+
+    def test_a_whole_body_replacement_over_a_concurrent_edit_is_refused(self):
+        self.fake.issue(20, {"id": 9020, "body": "Human prose."})
+        code = self.refuse_raw(
+            "github.update_issue",
+            {"issue_number": 20, "body": "replaced",
+             "whole_body_reviewed": True},
+            expected_before={"issue_updated_at": "2026-09-09T10:00:00Z",
+                             "body": "what it said when I read it"})
+        self.assertEqual(code, "SOURCE_CHANGED")
+        self.assertEqual(self.fake.mutations(), [])
+
+    def test_a_managed_block_edit_needs_the_timestamp_but_not_the_whole_body(self):
+        self.assertEqual(
+            github.required_expectations("github.update_issue",
+                                         {"issue_number": 20,
+                                          "body_block": "x"}),
+            ("issue_updated_at",))
+
+    def test_both_spellings_of_the_timestamp_are_accepted(self):
+        result = self.apply(
+            "github.set_labels", {"issue_number": 14, "labels": ["ready"]},
+            expected_before={"updated_at": "2026-09-09T10:00:00Z",
+                             "labels": []})
+        self.assertEqual(result["outcome"], "verified")
+
+    def test_creating_an_issue_needs_no_expectation(self):
+        self.assertEqual(
+            github.required_expectations("github.create_issue",
+                                         {"title": "New"}), ())
+
+    def test_observe_expectations_produces_exactly_what_is_required(self):
+        payload = {"issue_number": 14, "labels": ["ready"]}
+        observed = github.observe_expectations(
+            self.github.read_issue(14), "github.set_labels", payload)
+        self.assertEqual(set(observed),
+                         set(github.required_expectations("github.set_labels",
+                                                          payload)))
+        self.assertEqual(observed["labels"], [])
+
+
 class AssigneeTest(ApplyTest):
 
     def test_an_unassignable_account_is_refused_before_the_write(self):
@@ -495,13 +665,13 @@ class AssigneeTest(ApplyTest):
 
     def test_a_real_account_is_assigned(self):
         self.fake.assignable.add("amitbaz")
-        result = self.github.apply("github.set_assignees",
+        result = self.apply("github.set_assignees",
                                    {"issue_number": 14,
                                     "assignees": ["amitbaz"]})
         self.assertEqual(result["after"]["assignees"], ["amitbaz"])
 
     def test_clearing_assignees_needs_no_account_check(self):
-        result = self.github.apply("github.set_assignees",
+        result = self.apply("github.set_assignees",
                                    {"issue_number": 14, "assignees": []})
         self.assertEqual(result["after"]["assignees"], [])
 
@@ -509,7 +679,7 @@ class AssigneeTest(ApplyTest):
 class StateTest(ApplyTest):
 
     def test_a_state_change_records_its_business_reason_without_commenting(self):
-        result = self.github.apply(
+        result = self.apply(
             "github.set_state", {"issue_number": 14, "state": "closed",
                                  "state_reason": "completed",
                                  "reason": "AC1 passed at the integrated SHA"})
@@ -551,7 +721,7 @@ class RateLimitTest(ApplyTest):
     def test_a_rate_limited_write_is_not_repeated_inside_the_backoff(self):
         self.fake.rate_limit(times=99)
         try:
-            self.github.apply("github.set_labels",
+            self.apply("github.set_labels",
                               {"issue_number": 14, "labels": ["ready"]})
         except CabinetError:
             pass
@@ -569,26 +739,26 @@ class CreateTest(GithubCase):
                 "idempotency_key": key}
 
     def test_a_create_carries_an_operation_marker_in_the_body(self):
-        self.github.apply("github.create_issue", self.payload())
+        self.apply("github.create_issue", self.payload())
         body = self.fake.last_mutation()["body"]["body"]
         self.assertIn("cabinet:action", body)
         self.assertIn("B001:r1:create-invite", body)
         self.assertIn("Body prose.", body)
 
     def test_a_created_issue_returns_its_external_reference(self):
-        result = self.github.apply("github.create_issue", self.payload())
+        result = self.apply("github.create_issue", self.payload())
         self.assertEqual(result["external_ref"]["repo"], "demo/company")
         self.assertIsNotNone(result["external_ref"]["issue_number"])
         self.assertIsNotNone(result["external_ref"]["issue_id"])
 
     def test_a_timeout_after_a_successful_create_is_uncertain(self):
         self.fake.timeout_after_write("repos/demo/company/issues")
-        result = self.github.apply("github.create_issue", self.payload())
+        result = self.apply("github.create_issue", self.payload())
         self.assertEqual(result["outcome"], "uncertain")
 
     def test_reconciling_that_timeout_adopts_the_one_real_issue(self):
         self.fake.timeout_after_write("repos/demo/company/issues")
-        self.github.apply("github.create_issue", self.payload())
+        self.apply("github.create_issue", self.payload())
         created = max(self.fake.issues)
         self.fake.collection("issues", [issue_row(
             created, body=self.fake.issues[created]["body"])])
@@ -600,8 +770,8 @@ class CreateTest(GithubCase):
 
     def test_two_matching_markers_are_uncertain_and_never_adopted(self):
         self.fake.timeout_after_write("repos/demo/company/issues")
-        self.github.apply("github.create_issue", self.payload())
-        self.github.apply("github.create_issue", self.payload())
+        self.apply("github.create_issue", self.payload())
+        self.apply("github.create_issue", self.payload())
         rows = [issue_row(number, body=record["body"])
                 for number, record in sorted(self.fake.issues.items())]
         self.fake.collection("issues", rows)
@@ -622,7 +792,7 @@ class CreateTest(GithubCase):
     def test_reconciling_an_edge_compares_the_live_state(self):
         self.fake.issue(12, {"id": 9012})
         self.fake.issue(14, {"id": 9014})
-        self.github.apply("github.add_blocker", {"issue_number": 14,
+        self.apply("github.add_blocker", {"issue_number": 14,
                                                  "blocker_number": 12})
         outcome = self.github.reconcile_action(action_envelope(
             "github.add_blocker", {"issue_number": 14, "blocker_number": 12}))
@@ -637,7 +807,7 @@ class CreateTest(GithubCase):
 
     def test_no_comment_is_ever_used_as_transport(self):
         self.fake.timeout_after_write("repos/demo/company/issues")
-        self.github.apply("github.create_issue", self.payload())
+        self.apply("github.create_issue", self.payload())
         self.fake.collection("issues", [])
         self.github.reconcile_action(
             action_envelope("github.create_issue", self.payload()))
@@ -697,6 +867,99 @@ class TransportTest(unittest.TestCase):
         self.assertNotIn("ghp_", caught.exception.message)
 
 
+class EvidenceRedactionTest(ApplyTest):
+    """A token pasted into a ticket body must not travel in an evidence record.
+
+    The record has to stay readable as JSON while it happens, which is why
+    this uses the value-only redactor rather than the one that also rewrites
+    `name: value` — that one is what corrupted a licence key into invalid
+    syntax against the live API.
+    """
+
+    TOKEN = "ghp_" + "a" * 36
+
+    def test_a_token_in_a_body_is_masked_in_the_evidence(self):
+        self.fake.issue(20, {"id": 9020,
+                             "body": "Deploy with %s please." % self.TOKEN})
+        result = self.apply("github.update_issue",
+                            {"issue_number": 20, "title": "New title"})
+        record = json.dumps(result["before"]) + json.dumps(result["after"])
+        self.assertNotIn(self.TOKEN, record)
+
+    def test_the_evidence_record_is_still_valid_json(self):
+        self.fake.issue(20, {"id": 9020,
+                             "body": "A licence {\"key\":\"mit\"} and %s."
+                                     % self.TOKEN})
+        result = self.apply(
+            "github.update_issue",
+            {"issue_number": 20, "body": "replaced", "whole_body_reviewed": True},
+            expected_before={
+                "issue_updated_at": "2026-09-09T10:00:00Z",
+                "body": "A licence {\"key\":\"mit\"} and %s." % self.TOKEN})
+        record = json.loads(json.dumps(result))
+        self.assertNotIn(self.TOKEN, json.dumps(record))
+        self.assertIn('"key":"mit"', record["before"]["body"])
+
+    def test_a_state_change_reason_is_redacted_too(self):
+        result = self.apply(
+            "github.set_state",
+            {"issue_number": 14, "state": "closed",
+             "state_reason": "completed",
+             "reason": "verified with %s" % self.TOKEN})
+        self.assertNotIn(self.TOKEN, result["evidence"]["reason"])
+        self.assertIn("[redacted]", result["evidence"]["reason"])
+
+    def test_board_content_itself_is_left_alone_by_design(self):
+        """A role has to read the prose, so the board file keeps it verbatim."""
+
+        self.fake.collection("issues", [issue_row(1, title="A {\"key\":\"mit\"} title")])
+        board = self.github.read_board()
+        self.assertEqual(board["open_issues"][0]["title"],
+                         'A {"key":"mit"} title')
+
+
+class ProviderBoundTest(unittest.TestCase):
+    """The output bound has to be larger than a page the provider really sends.
+
+    One page of a hundred pull requests measured 1,047,842 bytes against the
+    subprocess adapter's default of 1,048,576. Reverting the raised bound used
+    to break no test.
+    """
+
+    def test_the_provider_bound_is_far_above_one_observed_page(self):
+        from cabinet_runtime import processes
+
+        self.assertGreater(github.PROVIDER_OUTPUT_LIMIT,
+                           8 * processes.OUTPUT_LIMIT)
+
+    def test_gh_run_asks_for_that_bound_and_leaves_stdout_unrewritten(self):
+        from cabinet_runtime import processes
+
+        seen = {}
+
+        def spy(argv, cwd, env, timeout, **kwargs):
+            seen.update(kwargs)
+            return {"returncode": 0, "stdout": "", "stderr": "",
+                    "timed_out": False, "classification": "completed"}
+
+        original = processes.run_argv
+        processes.run_argv = spy
+        try:
+            github.gh_run(environ={"PATH": "/usr/bin"})(["gh", "api", "x"])
+        finally:
+            processes.run_argv = original
+        self.assertEqual(seen["output_limit"], github.PROVIDER_OUTPUT_LIMIT)
+        self.assertFalse(seen["redact_output"])
+
+    def test_a_page_at_the_default_bound_would_have_been_truncated(self):
+        from cabinet_runtime import processes
+
+        page = "x" * (processes.OUTPUT_LIMIT + 1)
+        self.assertIn("truncated", processes.bound(page, processes.OUTPUT_LIMIT))
+        self.assertEqual(processes.bound(page, github.PROVIDER_OUTPUT_LIMIT),
+                         page)
+
+
 def _echo(text):
     """A `subprocess.run` stand-in that returns fixed output."""
 
@@ -743,6 +1006,9 @@ class BoardActionCase(ServiceCase):
         self.service.board_reader = self.github
 
     def prepare(self, kind, payload, key="k1", expected_before=None):
+        if expected_before is None and kind in github.EXPECTATION_OPERATIONS:
+            expected_before = github.observe_expectations(
+                self.github.read_issue(payload["issue_number"]), kind, payload)
         envelope = action()
         envelope.update(kind=kind, payload=payload, idempotency_key=key,
                         expected_before=expected_before or {})
@@ -795,7 +1061,8 @@ class ExecuteBoardActionTest(BoardActionCase):
     def test_a_stale_expectation_blocks_the_action_rather_than_failing_it(self):
         prepared = self.prepare(
             "github.set_labels", {"issue_number": 14, "labels": ["ready"]},
-            expected_before={"issue_updated_at": "2026-09-08T00:00:00Z"})
+            expected_before={"issue_updated_at": "2026-09-08T00:00:00Z",
+                             "labels": []})
         code = self.refuse("execute_action",
                            {"action_id": prepared["action_id"]})
         self.assertEqual(code, "SOURCE_CHANGED")
@@ -901,10 +1168,37 @@ class StateGateTest(BoardActionCase):
         self.assertEqual(after["state"], "reserved")
         self.assertEqual(self.store.verdicts_for(after["assignment_id"]), [])
 
-    def seed_passing_verdict(self, outcome="pass"):
+    def test_a_pass_at_an_older_head_does_not_open_the_gate(self):
+        """The work moved after QA looked at it."""
+
+        self.seed_passing_verdict(verdict_sha="c" * 40)
+        code = self.refuse_execute(
+            "github.set_state", {"issue_number": 12, "state": "closed",
+                                 "state_reason": "completed",
+                                 "reason": "QA passed it once"})
+        self.assertEqual(code, "ACCEPTANCE_REQUIRED")
+        self.assertEqual(self.fake.mutations(), [])
+
+    def test_an_assignment_that_reported_nothing_cannot_be_completed(self):
         self.store.reserve_assignment("W001", "B001", 1, "implementer",
                                       "issue:12", issue_number=12)
-        self.store.record_verdict("W001", "b" * 40, "qa", outcome,
+        self.store.record_verdict("W001", "b" * 40, "qa", "pass", [])
+        code = self.refuse_execute(
+            "github.set_state", {"issue_number": 12, "state": "closed",
+                                 "state_reason": "completed",
+                                 "reason": "Nothing was reported"})
+        self.assertEqual(code, "ACCEPTANCE_REQUIRED")
+
+    def seed_passing_verdict(self, outcome="pass", head="b" * 40,
+                             verdict_sha=None):
+        """An assignment that reported a head, and a verdict against one."""
+
+        self.store.reserve_assignment("W001", "B001", 1, "implementer",
+                                      "issue:12", issue_number=12)
+        for state in ("starting", "running"):
+            self.store.set_assignment_state("W001", state)
+        self.store.set_assignment_state("W001", "reported", reported_sha=head)
+        self.store.record_verdict("W001", verdict_sha or head, "qa", outcome,
                                   [{"ref": "artifact:E001", "sha256": "a" * 64}])
 
     def refuse_execute(self, kind, payload, **kwargs):
@@ -953,12 +1247,58 @@ class VisibilityProbeTest(BoardActionCase):
         self.assertEqual(grant["scope"]["visibility"], "public")
         self.assertEqual(grant["scope"]["visibility_source"], "live")
 
-    def test_an_unreadable_repository_keeps_the_declared_visibility(self):
-        self.service.github = None
+    def test_an_unreadable_repository_is_recorded_unknown(self):
+        """A read that failed is not the caller's word for what it found."""
+
+        self.fake.repo_readable = False
         self.approve_setup_through_fake_ui(visibility="private")
         grant = self.store.active_setup_grant(self.repo)
-        self.assertEqual(grant["scope"]["visibility"], "private")
-        self.assertEqual(grant["scope"]["visibility_source"], "declared")
+        self.assertEqual(grant["scope"]["visibility_source"], "unknown")
+        self.assertIsNone(grant["scope"].get("visibility_confirmed"))
+
+    def test_an_unknown_visibility_prepares_prose_rather_than_writing_it(self):
+        self.fake.repo_readable = False
+        self.approve_setup_through_fake_ui(visibility="private")
+        result = self.execute("github.update_issue",
+                              {"issue_number": 14, "title": "New title"})
+        self.assertEqual(result["state"], "prepared")
+        self.assertTrue(result["owner_approval_required"])
+        self.assertEqual(self.fake.mutations(), [])
+
+    def test_an_unknown_visibility_with_no_earlier_live_read_blocks_metadata(self):
+        self.fake.repo_readable = False
+        self.approve_setup_through_fake_ui(visibility="private")
+        code = self.refuse_execute("github.set_labels",
+                                   {"issue_number": 14, "labels": ["ready"]})
+        self.assertEqual(code, "VISIBILITY_UNKNOWN")
+        self.assertEqual(self.fake.mutations(), [])
+
+    def test_metadata_survives_a_failed_read_when_a_live_read_agreed_before(self):
+        """Twice believed private is a stronger position than never checked."""
+
+        self.approve_setup_through_fake_ui(visibility="private")
+        self.store.revoke_grant(
+            self.store.active_setup_grant(self.repo)["grant_id"], "re-running")
+        self.fake.repo_readable = False
+        self.approve_setup_through_fake_ui(visibility="private")
+        grant = self.store.active_setup_grant(self.repo)
+        self.assertEqual(grant["scope"]["visibility_source"], "unknown")
+        self.assertEqual(grant["scope"]["visibility_confirmed"], "private")
+        result = self.execute("github.set_labels",
+                              {"issue_number": 14, "labels": ["ready"]})
+        self.assertEqual(result["state"], "verified")
+
+    def test_a_declared_private_repository_that_is_public_is_recorded_public(self):
+        self.fake.visibility = "public"
+        self.approve_setup_through_fake_ui(visibility="private")
+        grant = self.store.active_setup_grant(self.repo)
+        self.assertEqual(grant["scope"]["visibility"], "public")
+        self.assertEqual(grant["scope"]["visibility_confirmed"], "public")
+
+    def refuse_execute(self, kind, payload, **kwargs):
+        prepared = self.prepare(kind, payload, **kwargs)
+        return self.refuse("execute_action",
+                           {"action_id": prepared["action_id"]})
 
 
 class AssignmentOwnershipTest(BoardActionCase):

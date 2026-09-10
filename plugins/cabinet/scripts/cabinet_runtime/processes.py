@@ -103,14 +103,34 @@ def _check_env_value(name, value):
 
 
 def redact(text):
-    """Return `text` with recognisable credential material removed."""
+    """Return `text` with recognisable credential material removed.
+
+    Two passes: values that are recognisably a credential anywhere, and then
+    anything shaped like `name: value` where the name reads as a secret. The
+    second pass is right for a log line and wrong for structured data — it
+    rewrites `"key":"mit"` in a JSON document into invalid syntax. Use
+    `redact_values` when the text has a shape worth preserving.
+    """
+
+    return _NAMED_SECRET.sub(
+        lambda m: "%s%s%s" % (m.group(1), m.group(2), REDACTED),
+        redact_values(text))
+
+
+def redact_values(text):
+    """Mask credential material without rewriting anything around it.
+
+    Only values that are recognisably a credential on their own — a `ghp_`
+    token, an AWS key id, a JWT, a PEM block — are replaced. Structure
+    survives, so this is safe to run over a string that was parsed out of JSON
+    and will be serialized again.
+    """
 
     if not text:
         return text
     for pattern in _SECRET_VALUES:
         text = pattern.sub(REDACTED, text)
-    return _NAMED_SECRET.sub(lambda m: "%s%s%s" % (m.group(1), m.group(2),
-                                                   REDACTED), text)
+    return text
 
 
 def bound(text, limit):

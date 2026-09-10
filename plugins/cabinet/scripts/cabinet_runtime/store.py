@@ -175,6 +175,7 @@ CREATE TABLE assignments (
     generation        INTEGER NOT NULL,
     state             TEXT NOT NULL,
     work_key          TEXT NOT NULL,
+    reported_sha      TEXT,
     created_seq       INTEGER NOT NULL,
     updated_seq       INTEGER NOT NULL
 );
@@ -230,6 +231,9 @@ SCHEMA_UPGRADES = {
     ),
     3: (
         "ALTER TABLE handoffs ADD COLUMN failures INTEGER NOT NULL DEFAULT 0",
+    ),
+    4: (
+        "ALTER TABLE assignments ADD COLUMN reported_sha TEXT",
     ),
 }
 
@@ -1364,7 +1368,8 @@ class Store:
     def set_assignment_state(self, assignment_id, state, **fields):
         """Move an assignment through its state machine."""
 
-        allowed = ("workspace_id", "terminal_id", "native_session_id")
+        allowed = ("workspace_id", "terminal_id", "native_session_id",
+                   "reported_sha")
         for key in fields:
             if key not in allowed:
                 raise CabinetError("FIELD_UNKNOWN",
@@ -1400,7 +1405,9 @@ class Store:
                 "terminal_id": row["terminal_id"],
                 "native_session_id": row["native_session_id"],
                 "generation": row["generation"], "state": row["state"],
-                "work_key": row["work_key"], "created_seq": row["created_seq"],
+                "work_key": row["work_key"],
+                "reported_sha": row["reported_sha"],
+                "created_seq": row["created_seq"],
                 "updated_seq": row["updated_seq"]}
 
     # --- lease --------------------------------------------------------------

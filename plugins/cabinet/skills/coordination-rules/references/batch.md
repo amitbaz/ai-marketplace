@@ -151,19 +151,44 @@ changed title or body — is **prepared and handed to the owner** with its exact
 content, and the action stays unexecuted. Board maintenance consent is not
 permission to publish.
 
+**On a repository whose visibility could not be read**, nothing is assumed. An
+unread board is treated as one that could be public: prose is prepared for the
+owner, and metadata runs only if the owner declared the board private *and* an
+earlier live read agreed. With no live reading ever, nothing is automatic and
+setup is re-run once the repository can be reached.
+
 Two changes need something beyond the setup grant whatever the repository is:
 
-- **Closing an issue as completed** needs its acceptance verdict. A QA pass at
-  the revision the work produced is what opens that gate; Delivery's reading of
-  done is not, and Engineering reporting a fix is not.
+- **Closing an issue as completed** needs its acceptance verdict — a QA pass
+  recorded against **the exact head the assignment reported**. A pass from
+  before the last change does not close a ticket, because the code QA looked
+  at is not the code that is there now. Delivery's reading of done is not a
+  verdict, and Engineering reporting a fix is not one either.
 - **Closing an issue as not planned when it is in the approved batch** needs
   the owner's recorded decision. Dropping it changes an approved outcome.
+
+### Directing a change means saying what you saw
+
+A board change names what it believes it is changing: the ticket's timestamp,
+and the current value of every field it is about to set. That is not
+bookkeeping. The executor re-reads the ticket immediately before it writes and
+compares; with nothing to compare, a write cannot notice that somebody edited
+the ticket while the action waited, and it would report success for having
+overwritten them. A change that states nothing is refused before it reaches
+the board.
+
+The one exception is Cabinet's own managed block, which changes only the text
+between its markers. Replacing a whole ticket body is the destructive case, and
+that one has to quote the body it is replacing.
 
 ### What a write refuses, and what to do about it
 
 | Refusal | What actually happened | What comes next |
 | --- | --- | --- |
+| The change said nothing about what it believes it is changing | It was directed without reading the ticket first | Read it, record the timestamp and the fields in play, and direct the change against those |
 | The issue moved since the action was prepared | Somebody edited the ticket while the action waited | Re-read, and direct the change again against what the ticket now says. Never re-send the stale body |
+| The repository's visibility is unknown | The live read of the repository failed | Prose waits for the owner. Metadata waits for a repository that can be read; re-run setup |
+| The graph is too wide or too deep to walk | The adapter cannot prove the edge closes no cycle | Nothing was written. The ordering question is a real one; answer it before asking again |
 | The edge would close a cycle | The parent or blocker being added is already downstream of the issue | The ordering itself is wrong; that is Delivery's to resolve, not the board's |
 | The account cannot be assigned | A role name is not a GitHub account | Ownership stays in Cabinet's assignment record. Cabinet never invents a username |
 | The board could not be read whole | A page did not arrive | Nothing dispatches. What is startable is unknown until the board reads clean |

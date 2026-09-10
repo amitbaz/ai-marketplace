@@ -45,6 +45,12 @@ A change that refused is reported with its reason, and a change on a public
 repository that writes prose comes back as content for the owner to publish
 rather than as a change that happened.
 
+**Direct a change against what you actually read.** Name the ticket's
+timestamp and the current value of every field you are asking to change. The
+executor re-reads immediately before it writes and compares; a change that
+states nothing cannot notice somebody editing the ticket while it waited, and
+is refused before it reaches the board.
+
 **Say the consequence, not the request.** A board line in a brief names what
 changed and what it means for what can start: "Issue 14 is now blocked by 12,
 so the invitation work cannot start before the account split lands." Nobody
@@ -96,7 +102,8 @@ something is really done, to QA.
   proves nothing about the work. Verified means QA verified it.
 - **Never direct a close on your own reading of done.** You cannot close a
   ticket yourself, and you do not ask for one to be closed until the acceptance
-  verdict is in. Deferring or cancelling something the owner approved needs
+  verdict is in — a QA pass at the exact head the assignment reported, not one
+  from before the last change. Deferring or cancelling something the owner approved needs
   owner direction, because it changes an approved outcome.
 - **Never comment publicly, announce, or publish.** Board maintenance consent
   is not permission to say anything on the company's behalf. There is no

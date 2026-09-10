@@ -600,20 +600,55 @@ class CabinetService:
         return self._approvals().request_setup(self._with_live_visibility(scope))
 
     def _with_live_visibility(self, scope):
+        """Stamp the scope with where its visibility came from.
+
+        A read that failed is `unknown`, not the caller's word for it. What the
+        caller declared is what they believe; whether prose is automatic turns
+        on what the repository actually is, and those are different facts. Any
+        earlier live reading is carried forward, because "twice believed
+        private" is a stronger position than "never checked".
+        """
+
         if not isinstance(scope, dict):
             return scope
         scope = dict(scope)
+        # Neither field is a caller's to assert. `visibility_source` says what
+        # this process just did, and `visibility_confirmed` is a reading the
+        # store holds; a scope that arrived claiming either would be claiming
+        # a check nobody ran.
+        scope.pop("visibility_source", None)
+        scope.pop("visibility_confirmed", None)
+        confirmed = self._last_confirmed_visibility(scope.get("repo"))
         reader = getattr(self.github, "read_visibility", None)
         if not callable(reader):
-            scope.setdefault("visibility_source", "declared")
-            return scope
-        try:
-            scope["visibility"] = reader()
-        except CabinetError:
-            scope.setdefault("visibility_source", "declared")
-            return scope
-        scope["visibility_source"] = "live"
+            scope["visibility_source"] = "declared"
+        else:
+            try:
+                scope["visibility"] = reader()
+            except CabinetError:
+                scope["visibility_source"] = "unknown"
+            else:
+                scope["visibility_source"] = "live"
+                confirmed = scope["visibility"]
+        if confirmed is not None:
+            scope["visibility_confirmed"] = confirmed
         return scope
+
+    def _last_confirmed_visibility(self, repo):
+        """The last visibility a live read actually returned for this repo.
+
+        Read from every setup grant, revoked ones included. Withdrawing
+        authority to act on a board does not unmake the observation that the
+        board was private, and a re-run of setup after a network failure
+        should not lose it.
+        """
+
+        for grant in reversed(self.store.get_grants()):
+            scope = grant.get("scope") or {}
+            if grant.get("kind") == "setup" and scope.get("repo") == repo \
+                    and scope.get("visibility_confirmed"):
+                return scope["visibility_confirmed"]
+        return None
 
     def _check_dialog(self):
         """Refuse before recording anything when no dialog can be shown.
@@ -770,9 +805,10 @@ class CabinetService:
             if verdict is None:
                 raise CabinetError(
                     "ACCEPTANCE_REQUIRED",
-                    "issue %s has no passing QA verdict, so closing it as "
-                    "completed would be Cabinet asserting an acceptance "
-                    "nobody verified" % (number,))
+                    "issue %s has no QA pass at the head its assignment "
+                    "reported, so closing it as completed would be Cabinet "
+                    "asserting an acceptance nobody verified — or verified "
+                    "against different code" % (number,))
         elif reason == "not_planned" and self._in_approved_batch(number) \
                 and not self._owner_decided(number):
             raise CabinetError(
@@ -782,23 +818,36 @@ class CabinetService:
                 "not a role's" % (number,))
 
     def _acceptance_verdict(self, number):
-        """A passing QA verdict on an assignment for this issue, or None.
+        """A QA pass at the head this issue's assignment actually reported.
 
-        The contract wants this bound to the batch's integrated SHA. The
-        integration record that would name that SHA arrives with the workspace
-        adapter, so today this checks the strongest fact that exists: an
-        independent QA pass recorded at an exact revision for an assignment on
-        this issue. It is stated here rather than claimed as the stronger
-        check.
+        Exactly what is checked, so nobody reads more into it than is there:
+
+        * an assignment on this issue must have **reported a head SHA**. An
+          assignment that never reported one has produced nothing to accept.
+        * a verdict on that assignment must have `reviewer_role == "qa"`,
+          `outcome == "pass"`, and a `revision_sha` **equal to that reported
+          head**. A pass recorded against an earlier revision does not release
+          a close after later, unverified work — which is what an unbound
+          check allowed.
+
+        This is not yet the contract's "QA pass at the batch's *integrated*
+        SHA". The integration record that would name that SHA is written by
+        `git.integrate_candidate`, which has no executor until O5. When it
+        lands, this compares against that record instead of against the
+        assignment's own head, which is the stricter of the two.
         """
 
         for assignment in self.store.get_assignments():
             if assignment["issue_number"] != number:
                 continue
+            head = assignment.get("reported_sha")
+            if not head:
+                continue
             for verdict in self.store.verdicts_for(assignment["assignment_id"]):
                 if verdict["reviewer_role"] == "qa" \
-                        and verdict["outcome"] == "pass":
-                    return verdict
+                        and verdict["outcome"] == "pass" \
+                        and verdict["revision_sha"] == head:
+                    return dict(verdict, assignment_id=assignment["assignment_id"])
         return None
 
     def _in_approved_batch(self, number):

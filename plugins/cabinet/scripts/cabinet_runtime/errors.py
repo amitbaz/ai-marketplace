@@ -122,6 +122,10 @@ ERROR_CODES = {
     "ASSIGNEE_NOT_CONFIGURED": "No owner-confirmed GitHub account is mapped "
                                "for that assignment.",
     "WHOLE_BODY_UNREVIEWED": "A whole-body replacement was not reviewed.",
+    "EXPECTATION_REQUIRED": "A board write did not say what it believes it "
+                            "is changing.",
+    "VISIBILITY_UNKNOWN": "The repository's visibility has never been read "
+                          "live, so what is automatic is not known.",
     "ACCEPTANCE_REQUIRED": "Closing an issue as completed needs its passing "
                            "acceptance verdict.",
     "OWNER_DECISION_REQUIRED": "Dropping an approved goal needs the owner's "

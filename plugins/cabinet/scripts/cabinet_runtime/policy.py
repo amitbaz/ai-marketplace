@@ -110,14 +110,51 @@ class Policy:
             raise CabinetError(
                 "OPERATION_NOT_AUTHORIZED",
                 "the setup grant for %s does not list %s" % (repo, kind))
-        if grant["scope"]["visibility"] == "public" \
-                and kind in PUBLIC_PROSE_OPERATIONS:
-            raise CabinetError(
-                "PUBLIC_PROSE_FORBIDDEN",
-                "%s writes public prose on %s; prepare it for exact-content "
-                "owner approval instead" % (kind, repo))
+        self._check_visibility(grant, kind, repo)
         self._check_not_paused()
         return grant
+
+    @staticmethod
+    def _check_visibility(grant, kind, repo):
+        """What is automatic depends on a visibility somebody actually read.
+
+        Only a live reading makes prose automatic. A repository whose
+        visibility could not be read might be public, and the public-repository
+        rule exists for exactly the case where nobody checked: an unread board
+        is treated as one that could be published to, so prose is prepared for
+        the owner rather than written.
+
+        Metadata is narrower rather than blocked outright. It still runs when
+        the owner declared the board private *and* a live read once agreed,
+        because a label on a board twice believed private is not a
+        publication. With no live reading ever, nothing is automatic.
+        """
+
+        scope = grant["scope"]
+        source = scope.get("visibility_source", "declared")
+        prose = kind in PUBLIC_PROSE_OPERATIONS
+        if source == "live":
+            if scope["visibility"] == "public" and prose:
+                raise CabinetError(
+                    "PUBLIC_PROSE_FORBIDDEN",
+                    "%s writes public prose on %s; prepare it for "
+                    "exact-content owner approval instead" % (kind, repo))
+            return
+        if prose:
+            raise CabinetError(
+                "PUBLIC_PROSE_FORBIDDEN",
+                "%s writes prose on %s, whose visibility has not been read "
+                "live (%s); an unread board is treated as one that could be "
+                "public, so this is prepared for exact-content owner approval "
+                "instead" % (kind, repo, source))
+        if not (scope["visibility"] == "private"
+                and scope.get("visibility_confirmed") == "private"):
+            raise CabinetError(
+                "VISIBILITY_UNKNOWN",
+                "%s's visibility has not been read live (%s) and no earlier "
+                "live read confirmed it private, so %s is not automatic; "
+                "re-run setup once the repository can be read"
+                % (repo, source, kind))
 
     # --- approved execution -------------------------------------------------
 

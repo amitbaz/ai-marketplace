@@ -52,8 +52,13 @@ STATE_REASONS = ("completed", "not_planned", "reopened")
 #: Bounds. `MAX_PAGES` is a stop, not a page count: a collection that never
 #: stops paginating is a provider defect, and looping on it forever is ours.
 MAX_PAGES = 60
-MAX_RELATION_DEPTH = 50
 MAX_PR_CHECKS = 50
+
+#: How many distinct issues a cycle walk will read before it gives up. It is a
+#: whole-board number rather than a depth, because the dependency walk explores
+#: a transitive closure and a closure is as wide as the board. Running out is a
+#: refusal, not a pass: see `_reject_cycle`.
+MAX_RELATION_NODES = 5000
 PAGE_SIZE = 100
 
 #: Rate limiting. Attempts are counted, each wait comes from the provider's own
@@ -73,6 +78,12 @@ RECONCILE_DELAY_SECONDS = 15
 MANAGED_BEGIN = "<!-- cabinet:begin -->"
 MANAGED_END = "<!-- cabinet:end -->"
 MARKER_PREFIX = "cabinet:action"
+
+#: Operations that change something already on an issue, and therefore have to
+#: say what they believe is there. Creating an issue is excluded: there is no
+#: prior state to be stale about.
+EXPECTATION_OPERATIONS = ("github.update_issue", "github.set_labels",
+                          "github.set_assignees", "github.set_state")
 
 #: The edge each operation has to know before it may change it. Against a
 #: relationship the provider could not state, a reparent leaves the old parent
@@ -382,6 +393,7 @@ class GithubAdapter:
                 "%r is not one of the board operations this adapter can "
                 "perform; there is no general endpoint here" % (operation,))
         payload = self._validate(operation, payload)
+        _check_expectations_present(operation, payload, expected_before)
         self._requests = []
         started = self._clock()
         if operation == "github.create_issue":
@@ -405,12 +417,13 @@ class GithubAdapter:
             "operation": operation, "repo": self.repo,
             "outcome": "verified" if verified else "uncertain",
             "external_ref": _external_ref(self.repo, after),
-            "before": _observed(before, desired), "after": _observed(after, desired),
+            "before": _safe(_observed(before, desired)),
+            "after": _safe(_observed(after, desired)),
             "changed": _changed(before, desired),
-            "desired": _plain(desired), "substeps": substeps,
+            "desired": _safe(_plain(desired)), "substeps": substeps,
             "requests": list(self._requests),
-            "evidence": {"reason": payload.get("reason"),
-                         "started": started, "observed": self._clock()},
+            "evidence": _safe({"reason": payload.get("reason"),
+                               "started": started, "observed": self._clock()}),
         }
 
     def _validate(self, operation, payload):
@@ -561,7 +574,8 @@ class GithubAdapter:
             return {"operation": "github.create_issue", "repo": self.repo,
                     "outcome": "uncertain", "external_ref": None,
                     "before": {}, "after": {}, "changed": ["created"],
-                    "desired": {"title": payload["title"]}, "substeps": [],
+                    "desired": _safe({"title": payload["title"]}),
+                    "substeps": [],
                     "requests": list(self._requests),
                     "evidence": {"marker": payload.get("idempotency_key"),
                                  "started": started, "observed": self._clock(),
@@ -574,8 +588,9 @@ class GithubAdapter:
                 "outcome": "verified" if after["title"] == payload["title"]
                 else "uncertain",
                 "external_ref": _external_ref(self.repo, after),
-                "before": {}, "after": _observed(after, {"title": None}),
-                "changed": ["created"], "desired": {"title": payload["title"]},
+                "before": {}, "after": _safe(_observed(after, {"title": None})),
+                "changed": ["created"],
+                "desired": _safe({"title": payload["title"]}),
                 "substeps": [], "requests": list(self._requests),
                 "evidence": {"marker": payload.get("idempotency_key"),
                              "started": started, "observed": self._clock()}}
@@ -598,46 +613,61 @@ class GithubAdapter:
     # --- cycles ------------------------------------------------------------
 
     def _reject_parent_cycle(self, child, parent):
-        node, seen, depth = parent, set(), 0
-        while isinstance(node, int) and depth < MAX_RELATION_DEPTH:
-            if node == child:
-                raise CabinetError(
-                    "RELATIONSHIP_CYCLE",
-                    "making %d the parent of %d would close a hierarchy cycle"
-                    % (parent, child))
-            if node in seen:
-                break
-            seen.add(node)
-            ancestor = self.read_issue(node)
-            if ancestor["parent"] == "unknown":
-                raise CabinetError(
-                    SOURCE_INCOMPLETE,
-                    "issue %d's own parent could not be read, so whether %d "
-                    "is already above %d is unknown" % (node, child, parent))
-            node = ancestor["parent"]
-            depth += 1
+        self._reject_cycle(
+            child, parent, "parent",
+            "making %d the parent of %d would close a hierarchy cycle"
+            % (parent, child),
+            "whether %d is already above %d" % (child, parent))
 
     def _reject_dependency_cycle(self, issue, blocker):
-        queue, seen, depth = [blocker], set(), 0
-        while queue and depth < MAX_RELATION_DEPTH:
+        self._reject_cycle(
+            issue, blocker, "blocked_by",
+            "blocking %d on %d would close a dependency cycle"
+            % (issue, blocker),
+            "whether %d is already upstream of %d" % (issue, blocker))
+
+    def _reject_cycle(self, target, start, edge, cycle_message, question):
+        """Walk one edge's transitive closure looking for `target`.
+
+        Two rules make this a check rather than a gesture, and the second is
+        the one that is easy to get wrong.
+
+        * **The budget counts distinct issues, not hops, and running out is a
+          refusal.** An earlier version spent a small budget per node visited
+          and then *fell out of the loop and wrote the edge*. Because the
+          dependency walk explores a whole upstream set, any issue with more
+          than a few dozen blockers defeated the check no matter how short the
+          cycle was — a two-hop cycle behind sixty-one blockers went straight
+          through. An adapter that cannot finish the walk has not proved
+          there is no cycle, which is the same position as an unreadable edge
+          and gets the same answer: refuse, never write.
+        * **An edge that could not be read is a refusal too.** "No blockers"
+          and "this response could not say" lead to opposite decisions here.
+        """
+
+        queue, seen = [start], set()
+        while queue:
             node = queue.pop()
-            if node == issue:
-                raise CabinetError(
-                    "RELATIONSHIP_CYCLE",
-                    "blocking %d on %d would close a dependency cycle"
-                    % (issue, blocker))
+            if node == target:
+                raise CabinetError("RELATIONSHIP_CYCLE", cycle_message)
             if node in seen:
                 continue
-            seen.add(node)
-            upstream = self.read_issue(node)
-            if not isinstance(upstream["blocked_by"], list):
+            if len(seen) >= MAX_RELATION_NODES:
                 raise CabinetError(
                     SOURCE_INCOMPLETE,
-                    "issue %d's own blockers could not be read, so whether %d "
-                    "is already upstream of %d is unknown"
-                    % (node, issue, blocker))
-            queue.extend(upstream["blocked_by"])
-            depth += 1
+                    "the %s graph reachable from issue %d is larger than the "
+                    "%d issues this adapter will read to answer %s; it cannot "
+                    "prove there is no cycle, so it writes nothing"
+                    % (edge, start, MAX_RELATION_NODES, question))
+            seen.add(node)
+            edges = self.read_issue(node)[edge]
+            if edges == "unknown":
+                raise CabinetError(
+                    SOURCE_INCOMPLETE,
+                    "issue %d's own %s could not be read, so %s is unknown"
+                    % (node, edge, question))
+            queue.extend([edges] if isinstance(edges, int)
+                         else (edges if isinstance(edges, list) else []))
 
     # --- reconciliation ----------------------------------------------------
 
@@ -784,12 +814,19 @@ def _float(text):
 
 
 def _message(response, fallback):
-    """The provider's own explanation, redacted before it can be surfaced.
+    """The provider's own explanation, redacted before it is surfaced.
 
-    `gh_run` turns off the subprocess adapter's redaction so a JSON body
-    survives parsing intact. This is where that debt is paid: every string
-    this module puts into an error, an evidence record or a board file passes
-    through here first.
+    `gh_run` turns off the subprocess adapter's whole-output redaction so a
+    JSON body survives parsing. What is still redacted, and what is not:
+
+    * **redacted** — the child's stderr (`processes.run_argv` always redacts
+      that), provider `message` fields, which is this function, and every
+      string inside an action's evidence record, through `_safe`.
+    * **not redacted** — issue titles, issue bodies and comment bodies in
+      `read_board`, `read_issue` and the snapshot files. That is deliberate:
+      it is the owner's own board content, and masking it would corrupt the
+      prose a role has to read. A credential pasted into a ticket body stays
+      in the board file, as it already does on GitHub.
     """
 
     payload = response.get("payload")
@@ -880,12 +917,76 @@ def _external_ref(repo, read):
 
 # --- expectations, verification and bodies -----------------------------------
 
-#: How an `expected_before` key names something on the live issue.
-_EXPECTED_KEYS = {"issue_updated_at": "updated_at", "title": "title",
-                  "body": "body", "state": "state",
+#: How an `expected_before` key names something on the live issue. Both spellings
+#: of the timestamp are accepted: the action envelope in the contracts calls it
+#: `issue_updated_at`, and a caller copying a provider field calls it
+#: `updated_at`. Refusing one of them would be a spelling test, not a check.
+_EXPECTED_KEYS = {"issue_updated_at": "updated_at", "updated_at": "updated_at",
+                  "title": "title", "body": "body", "state": "state",
                   "state_reason": "state_reason", "labels": "labels",
                   "assignees": "assignees", "parent": "parent",
                   "blocked_by": "blocked_by"}
+
+_TIMESTAMP_KEYS = ("issue_updated_at", "updated_at")
+
+
+def required_expectations(operation, payload):
+    """What a caller must have observed before it may ask for this change.
+
+    Conflict-aware writing is not something a caller opts into. An action that
+    changes a field on an existing issue has to say what it believes that field
+    and the issue's timestamp are, so the re-read taken immediately before the
+    write has something to disagree with. An action carrying nothing gets no
+    comparison at all, and an update that overwrites somebody's concurrent
+    edit then reports `verified`.
+
+    A managed-block edit is the one place `body` is not required: it changes
+    only the text between Cabinet's own markers and leaves every other line
+    alone, so the timestamp is the check that matters. Replacing a whole body
+    is the destructive case, and that one must name the body it is replacing.
+    """
+
+    if operation not in EXPECTATION_OPERATIONS:
+        return ()
+    needed = ["issue_updated_at"]
+    if operation == "github.update_issue":
+        needed += [field for field in ("title", "body") if field in payload]
+    elif operation == "github.set_labels":
+        needed.append("labels")
+    elif operation == "github.set_assignees":
+        needed.append("assignees")
+    elif operation == "github.set_state":
+        needed += ["state", "state_reason"]
+    return tuple(needed)
+
+
+def observe_expectations(read, operation, payload):
+    """Build `expected_before` from a `read_issue` result.
+
+    This is how a caller records what it saw. It exists so the requirement
+    above is a step somebody takes rather than a trap they fall into.
+    """
+
+    observed = {}
+    for key in required_expectations(operation, payload):
+        observed[key] = read.get(_EXPECTED_KEYS[key])
+    return observed
+
+
+def _check_expectations_present(operation, payload, expected):
+    supplied = set(expected or ())
+    if any(key in supplied for key in _TIMESTAMP_KEYS):
+        supplied.update(_TIMESTAMP_KEYS)
+    missing = [key for key in required_expectations(operation, payload)
+               if key not in supplied]
+    if missing:
+        raise CabinetError(
+            "EXPECTATION_REQUIRED",
+            "%s must state what it believes it is changing: expected_before "
+            "is missing %s. Read the issue, record those values, and prepare "
+            "the action against them — a write with nothing to compare is a "
+            "write that cannot notice somebody else's edit"
+            % (operation, ", ".join(missing)))
 
 
 def _check_expectations(before, expected):
@@ -956,6 +1057,25 @@ def _plain(desired):
 
 def _plain_value(value):
     return sorted(value) if isinstance(value, list) else value
+
+
+def _safe(value):
+    """Mask credential material inside an evidence record, keeping its shape.
+
+    An action's evidence carries issue titles and bodies, and a body is prose
+    somebody wrote — occasionally including a token they meant to put
+    somewhere else. This runs over the parsed values rather than over the raw
+    reply, so the record stays serializable; that is the whole reason
+    `processes.redact_values` exists beside `redact`.
+    """
+
+    if isinstance(value, str):
+        return processes.redact_values(value)
+    if isinstance(value, list):
+        return [_safe(item) for item in value]
+    if isinstance(value, dict):
+        return {key: _safe(item) for key, item in value.items()}
+    return value
 
 
 def _merge_managed(body, block):
@@ -1094,9 +1214,12 @@ PROVIDER_OUTPUT_LIMIT = 32 * 1024 * 1024
 def gh_run(cwd="/", timeout=REQUEST_TIMEOUT_SECONDS, environ=None):
     """Build the `run` callable a production adapter is constructed with.
 
-    Everything it inherits is named above, and the result is redacted and
-    bounded by `processes.run_argv` before it comes back, so a token echoed by
-    a diagnostic never reaches a model's context.
+    Everything it inherits is named above. The result is bounded by
+    `processes.run_argv`, and its **stderr** is redacted there; its stdout is
+    not, because redaction rewrites `"key":"mit"` into invalid JSON and this
+    caller parses what comes back. The adapter redacts what it surfaces
+    instead — see `_message` for exactly what that covers and what it does
+    not.
     """
 
     env = processes.build_env(GH_ENVIRONMENT, environ=environ)

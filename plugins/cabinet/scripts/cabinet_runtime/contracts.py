@@ -16,7 +16,7 @@ from .errors import CabinetError
 #: attempt count and could not share it. An older database is upgraded in place
 #: by `store.SCHEMA_UPGRADES`; a newer one still opens read-only with
 #: SCHEMA_TOO_NEW.
-SCHEMA_VERSION = 3
+SCHEMA_VERSION = 4
 
 SHA_PATTERN = re.compile(r"^[0-9a-f]{40}$")
 REPO_PATTERN = re.compile(r"^[A-Za-z0-9._-]+/[A-Za-z0-9._-]+$")
@@ -484,11 +484,20 @@ SETUP_SCOPE_FIELDS = ("repo", "visibility", "board_operations",
 # issue is assigned to anybody. A role name is not an account, and Cabinet
 # never invents one to fill the field.
 #
-# `visibility_source` says whether the recorded visibility came from a live
-# read of the repository or only from what the scope declared. The two lead to
-# different confidence in the public-prose rule, so they are not merged.
-OPTIONAL_SETUP_FIELDS = ("github_accounts", "visibility_source")
-VISIBILITY_SOURCES = ("live", "declared")
+# `visibility_source` says where the recorded visibility came from, and
+# `visibility_confirmed` records the last value a live read actually returned.
+# The three sources lead to different answers, so they are not merged:
+#
+#   live      — read from the repository just now.
+#   unknown   — a live read was attempted and failed.
+#   declared  — no adapter could be asked at all.
+#
+# Only `live` makes prose automatic. A repository whose visibility could not be
+# read might be public, and the public-repository rule exists precisely for the
+# case where nobody checked.
+OPTIONAL_SETUP_FIELDS = ("github_accounts", "visibility_source",
+                         "visibility_confirmed")
+VISIBILITY_SOURCES = ("live", "declared", "unknown")
 CHECK_PROFILE_FIELDS = ("profile_id", "argv", "env")
 VISIBILITIES = ("private", "public")
 SETUP_CAPACITY_FIELDS = ("implementation_workers",)
@@ -513,6 +522,11 @@ def validate_setup_scope(scope):
         raise CabinetError("FIELD_INVALID",
                            "setup.visibility_source must be one of %s"
                            % (VISIBILITY_SOURCES,))
+    confirmed = scope.get("visibility_confirmed")
+    if confirmed is not None and confirmed not in VISIBILITIES:
+        raise CabinetError("FIELD_INVALID",
+                           "setup.visibility_confirmed must be one of %s"
+                           % (VISIBILITIES,))
     accounts = scope.get("github_accounts", {})
     _require_mapping(accounts, "setup.github_accounts")
     for role, login in accounts.items():
