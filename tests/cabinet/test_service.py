@@ -17,6 +17,8 @@ import stat
 import subprocess
 import sys
 import tempfile
+import threading
+import time
 import unittest
 from pathlib import Path
 
@@ -67,6 +69,17 @@ class OrdinaryConnectionTest(ServiceCase):
         statuses = {check["check"]: check["status"]
                     for check in self.call("doctor")["checks"]}
         self.assertEqual(statuses["launch"], "ordinary")
+
+    def test_a_refused_launch_is_reported_rather_than_hidden(self):
+        service = CabinetService(
+            self.store, self.github, self.superset, self.clock, self.elicitor,
+            profiles.build_profile, launch=None,
+            launch_refusal={"code": "LAUNCH_HOST_MISMATCH",
+                            "message": "started by process 42"})
+        checks = {check["check"]: check
+                  for check in service.call("cabinet_doctor", {})["checks"]}
+        self.assertEqual(checks["launch"]["status"], "refused")
+        self.assertIn("LAUNCH_HOST_MISMATCH", checks["launch"]["detail"])
 
     @staticmethod
     def arguments(method):
@@ -296,6 +309,50 @@ class ImplementedOperationTest(ServiceCase):
         self.assertIsNotNone(self.store.active_setup_grant(self.repo))
 
 
+class WaitLivenessTest(ServiceCase):
+    """A parked wait must not stop the rest of the company being read."""
+
+    def test_a_read_runs_while_a_wait_is_in_flight(self):
+        self.service._sleep = time.sleep          # the fixture's is a no-op
+        timings = {}
+
+        def waiter():
+            started = time.monotonic()
+            # A cursor past every event, so nothing short-circuits the poll.
+            self.call("wait_events", {"after_seq": 10 ** 9,
+                                      "timeout_seconds": 2.0})
+            timings["wait"] = time.monotonic() - started
+
+        thread = threading.Thread(target=waiter)
+        thread.start()
+        self.addCleanup(thread.join, 10)
+        time.sleep(0.3)                            # let the wait get parked
+
+        started = time.monotonic()
+        self.call("doctor")
+        timings["read"] = time.monotonic() - started
+        thread.join(timeout=10)
+
+        self.assertLess(timings["read"], 0.5,
+                        "a read waited %.2fs behind a parked wait_events"
+                        % timings["read"])
+        self.assertGreaterEqual(timings["wait"], 1.5)
+
+    def test_a_write_runs_while_a_wait_is_in_flight(self):
+        self.service._sleep = time.sleep
+        thread = threading.Thread(
+            target=lambda: self.call("wait_events",
+                                     {"after_seq": 10 ** 9,
+                                      "timeout_seconds": 2.0}))
+        thread.start()
+        self.addCleanup(thread.join, 10)
+        time.sleep(0.3)
+        started = time.monotonic()
+        self.call("checkpoint", {"kind": "session_open", "summary": "s"})
+        self.assertLess(time.monotonic() - started, 0.5)
+        thread.join(timeout=10)
+
+
 class ToolSchemaTest(ServiceCase):
 
     def test_the_exposed_names_match_the_profile_registry(self):
@@ -358,55 +415,88 @@ class SecrecyTest(ServiceCase):
 
 
 class EntrypointTest(unittest.TestCase):
-    """`cabinet-service` resolves its company and verifies its capability."""
+    """`cabinet-service` resolves its company and verifies its launch."""
 
     def setUp(self):
+        from cabinet_runtime.store import process_start_marker
+
         self.module = load_script(SERVICE_SCRIPT, "cabinet_service")
         self.tmp = tempfile.TemporaryDirectory()
         self.addCleanup(self.tmp.cleanup)
         self.home = Path(self.tmp.name)
+        self.private = self.home / "runtime" / "profiles"
+        self.private.mkdir(parents=True)
+        self.views = self.home / "views"
+        self.views.mkdir()
+        self.parent = os.getppid()
+        self.parent_start = process_start_marker(self.parent)
+        self.profile = profiles.build_profile(
+            "chief-of-staff",
+            {"assignment": "probe", "claude_path": sys.executable,
+             "plugin_root": str(PLUGIN_ROOT),
+             "mcp_config": str(self.private / "L1.mcp.json"),
+             "settings_path": str(self.private / "L1.settings.json"),
+             "session_id": SESSION_ID},
+            str(self.views), home=str(self.home))
 
-    def write_launch(self, capability="c" * 64, mode=0o600, **overrides):
-        directory = self.home / "runtime" / "profiles"
-        directory.mkdir(parents=True, exist_ok=True)
-        capability_file = directory / "L1.capability"
-        capability_file.write_text(capability)
-        capability_file.chmod(mode)
+    def write(self, name, text, mode=0o600):
+        path = self.private / name
+        path.write_text(text)
+        path.chmod(mode)
+        return path
+
+    def write_launch(self, capability="c" * 64, mode=0o600, settings=None,
+                     profile=None, **overrides):
+        """Write a complete, valid launch and return its environment."""
+
+        body = profile if profile is not None else profiles.plain(self.profile)
+        capability_file = self.write("L1.capability", capability, mode)
+        self.write("L1.profile.json", json.dumps(body))
+        self.write("L1.settings.json",
+                   settings if settings is not None
+                   else json.dumps(body["settings"]))
         record = {
             "kind": "restricted", "launch_id": "L1",
             "company_dir": str(self.home), "repo": "demo/company",
             "role": "chief-of-staff",
-            "profile_path": str(directory / "L1.settings.json"),
-            "profile_digest": "d" * 64, "session_id": SESSION_ID,
+            "profile_path": str(self.private / "L1.settings.json"),
+            "profile_body_path": str(self.private / "L1.profile.json"),
+            "profile_digest": profiles.digest_of(body),
+            "session_id": SESSION_ID,
+            "host_pid": self.parent,
+            "host_process_start": self.parent_start,
+            "lease_generation": None,
             "capability_sha256": self.module.sha256_of(capability),
         }
         record.update(overrides)
-        launch_file = directory / "L1.launch.json"
-        launch_file.write_text(json.dumps(record))
-        launch_file.chmod(0o600)
+        launch_file = self.write("L1.launch.json", json.dumps(record))
         return {"CABINET_LAUNCH_FILE": str(launch_file),
                 "CABINET_CAPABILITY_FILE": str(capability_file)}
 
-    def test_a_matching_capability_yields_a_context_without_the_secret(self):
+    def refuse(self, environ):
+        with self.assertRaises(CabinetError) as caught:
+            self.module.verify_launch(environ)
+        return caught.exception.code
+
+    # --- the capability ---------------------------------------------------
+
+    def test_a_matching_launch_yields_a_context_without_the_secret(self):
         context = self.module.verify_launch(self.write_launch())
         self.assertEqual(context["kind"], "restricted")
-        self.assertNotIn("capability", context)
-        self.assertNotIn("capability_sha256", context)
         self.assertEqual(sorted(context),
                          sorted(self.module.LAUNCH_CONTEXT_FIELDS))
+        for absent in ("capability", "capability_sha256", "host_pid",
+                       "host_process_start", "lease_generation"):
+            self.assertNotIn(absent, context)
 
     def test_a_mismatched_capability_is_refused(self):
         environ = self.write_launch()
         Path(environ["CABINET_CAPABILITY_FILE"]).write_text("guessed")
-        with self.assertRaises(CabinetError) as caught:
-            self.module.verify_launch(environ)
-        self.assertEqual(caught.exception.code, "CAPABILITY_INVALID")
+        self.assertEqual(self.refuse(environ), "CAPABILITY_INVALID")
 
     def test_a_readable_capability_file_is_refused(self):
-        environ = self.write_launch(mode=0o644)
-        with self.assertRaises(CabinetError) as caught:
-            self.module.verify_launch(environ)
-        self.assertEqual(caught.exception.code, "UNSAFE_PATH")
+        self.assertEqual(self.refuse(self.write_launch(mode=0o644)),
+                         "UNSAFE_PATH")
 
     def test_a_symlinked_capability_file_is_refused(self):
         environ = self.write_launch()
@@ -414,15 +504,18 @@ class EntrypointTest(unittest.TestCase):
         link = real.parent / "L1.link"
         link.symlink_to(real)
         environ["CABINET_CAPABILITY_FILE"] = str(link)
-        with self.assertRaises(CabinetError) as caught:
-            self.module.verify_launch(environ)
-        self.assertEqual(caught.exception.code, "UNSAFE_PATH")
+        self.assertEqual(self.refuse(environ), "UNSAFE_PATH")
 
     def test_a_record_naming_another_company_is_refused(self):
-        environ = self.write_launch(company_dir="/tmp/elsewhere")
-        with self.assertRaises(CabinetError) as caught:
-            self.module.verify_launch(environ)
-        self.assertEqual(caught.exception.code, "LAUNCH_CONTEXT_INVALID")
+        self.assertEqual(self.refuse(self.write_launch(
+            company_dir="/tmp/elsewhere")), "LAUNCH_CONTEXT_INVALID")
+
+    def test_a_profile_outside_the_private_directory_is_refused(self):
+        outside = self.home / "L1.profile.json"
+        outside.write_text(json.dumps(profiles.plain(self.profile)))
+        outside.chmod(0o600)
+        self.assertEqual(self.refuse(self.write_launch(
+            profile_body_path=str(outside))), "LAUNCH_CONTEXT_INVALID")
 
     def test_no_launcher_variables_means_no_context(self):
         self.assertIsNone(self.module.verify_launch({}))
@@ -430,9 +523,89 @@ class EntrypointTest(unittest.TestCase):
     def test_half_a_launch_context_is_refused_rather_than_downgraded(self):
         environ = self.write_launch()
         del environ["CABINET_CAPABILITY_FILE"]
+        self.assertEqual(self.refuse(environ), "LAUNCH_CONTEXT_INVALID")
+
+    def test_a_record_missing_a_field_is_refused(self):
+        environ = self.write_launch()
+        record = json.loads(Path(environ["CABINET_LAUNCH_FILE"]).read_text())
+        del record["profile_digest"]
+        self.write("L1.launch.json", json.dumps(record))
+        self.assertEqual(self.refuse(environ), "LAUNCH_CONTEXT_INVALID")
+
+    # --- the profile binding ----------------------------------------------
+
+    def test_a_wrong_profile_digest_is_refused(self):
+        self.assertEqual(self.refuse(self.write_launch(
+            profile_digest="d" * 64)), "LAUNCH_PROFILE_MISMATCH")
+
+    def test_settings_swapped_under_the_profile_are_refused(self):
+        self.assertEqual(self.refuse(self.write_launch(
+            settings=json.dumps({"permissions": {"defaultMode": "auto"}}))),
+            "LAUNCH_PROFILE_MISMATCH")
+
+    def test_a_profile_widened_after_the_record_was_written_is_refused(self):
+        body = profiles.plain(self.profile)
+        body["tools"] = list(body["tools"]) + ["Bash"]
+        environ = self.write_launch()
+        self.write("L1.profile.json", json.dumps(body))
+        # `verify_profile` refuses the shell before the digest is even reached.
+        self.assertIn(self.refuse(environ),
+                      ("PROFILE_TOOLS_FORBIDDEN", "LAUNCH_PROFILE_MISMATCH"))
+
+    def test_a_profile_naming_another_session_is_refused(self):
+        body = profiles.plain(self.profile)
+        environ = self.write_launch(profile=body,
+                                    session_id="00000000-0000-4000-8000-000000000000")
+        self.assertEqual(self.refuse(environ), "LAUNCH_PROFILE_MISMATCH")
+
+    def test_an_unparsable_profile_is_refused(self):
+        environ = self.write_launch()
+        self.write("L1.profile.json", "{not json")
+        self.assertEqual(self.refuse(environ), "LAUNCH_PROFILE_MISMATCH")
+
+    # --- the host binding --------------------------------------------------
+
+    def test_a_record_written_by_another_process_is_refused(self):
+        self.assertEqual(self.refuse(self.write_launch(
+            host_pid=os.getpid())), "LAUNCH_HOST_MISMATCH")
+
+    def test_a_reused_process_identifier_is_refused(self):
+        self.assertEqual(self.refuse(self.write_launch(
+            host_process_start="lstart:Thu Jan  1 00:00:00 1970")),
+            "LAUNCH_HOST_MISMATCH")
+
+    # --- the generation binding -------------------------------------------
+
+    def test_an_unbound_record_passes_the_generation_check(self):
+        self.module.check_generation({"lease_generation": None}, None)
+
+    def test_a_record_bound_to_the_current_generation_passes(self):
+        self.module.check_generation({"lease_generation": 2},
+                                     _FakeLease(2))
+
+    def test_a_record_another_lead_overtook_is_refused(self):
         with self.assertRaises(CabinetError) as caught:
-            self.module.verify_launch(environ)
-        self.assertEqual(caught.exception.code, "LAUNCH_CONTEXT_INVALID")
+            self.module.check_generation({"lease_generation": 2}, _FakeLease(3))
+        self.assertEqual(caught.exception.code, "LAUNCH_GENERATION_STALE")
+
+    def test_a_record_bound_to_a_company_with_no_lead_is_refused(self):
+        with self.assertRaises(CabinetError) as caught:
+            self.module.check_generation({"lease_generation": 2},
+                                         _FakeLease(None))
+        self.assertEqual(caught.exception.code, "LAUNCH_GENERATION_STALE")
+
+    def test_renewal_binds_the_record_and_keeps_it_private(self):
+        environ = self.write_launch()
+        launch_file = environ["CABINET_LAUNCH_FILE"]
+        record = self.module.renew_launch(launch_file, 7)
+        self.assertEqual(record["lease_generation"], 7)
+        self.assertEqual(
+            json.loads(Path(launch_file).read_text())["lease_generation"], 7)
+        self.assertEqual(stat.S_IMODE(os.stat(launch_file).st_mode), 0o600)
+        # The renewed record still verifies, so a reconnect works.
+        self.module.verify_launch(environ)
+
+    # --- ordinary identity -------------------------------------------------
 
     def test_the_repository_is_read_from_the_origin_remote(self):
         for url, expected in (
@@ -449,6 +622,18 @@ class EntrypointTest(unittest.TestCase):
         directory = self.module.company_directory("amitbaz/cabinet",
                                                   {"CABINET_HOME": "/c"})
         self.assertEqual(str(directory), "/c/repos/amitbaz-cabinet")
+
+
+class _FakeLease:
+    """A store stand-in whose only fact is the current lease generation."""
+
+    def __init__(self, generation):
+        self._generation = generation
+
+    def get_lease(self):
+        if self._generation is None:
+            return None
+        return {"generation": self._generation}
 
 
 class PackagedConnectionTest(unittest.TestCase):
@@ -534,7 +719,7 @@ class LauncherTest(unittest.TestCase):
 
     def test_the_private_files_are_owner_only(self):
         for key in ("settings_path", "mcp_config", "capability_file",
-                    "launch_file", "peer_registry"):
+                    "launch_file", "peer_registry", "profile_body_path"):
             with self.subTest(file=key):
                 mode = stat.S_IMODE(os.stat(self.report[key]).st_mode)
                 self.assertEqual(mode, 0o600)
@@ -542,7 +727,7 @@ class LauncherTest(unittest.TestCase):
     def test_the_private_files_live_under_the_company_runtime(self):
         runtime = str(Path(self.report["company_dir"]) / "runtime" / "profiles")
         for key in ("settings_path", "mcp_config", "capability_file",
-                    "launch_file"):
+                    "launch_file", "profile_body_path"):
             with self.subTest(file=key):
                 self.assertTrue(self.report[key].startswith(runtime))
 
@@ -574,14 +759,32 @@ class LauncherTest(unittest.TestCase):
         self.assertNotIn(capability, json.dumps(record))
         self.assertEqual(len(record["capability_sha256"]), 64)
 
-    def test_the_service_accepts_the_record_the_launcher_wrote(self):
+    def test_the_record_binds_the_process_that_would_have_run_claude(self):
+        record = json.loads(Path(self.report["launch_file"]).read_text())
+        self.assertEqual(record["host_pid"], self.report["host_pid"])
+        self.assertTrue(record["host_process_start"])
+        self.assertIsNone(record["lease_generation"])
+
+    def test_the_profile_the_launcher_wrote_verifies_against_its_record(self):
         module = load_script(SERVICE_SCRIPT, "cabinet_service_launched")
-        context = module.verify_launch(
-            {"CABINET_LAUNCH_FILE": self.report["launch_file"],
-             "CABINET_CAPABILITY_FILE": self.report["capability_file"]})
-        self.assertEqual(context["company_dir"], self.report["company_dir"])
-        self.assertEqual(context["profile_digest"],
+        record = json.loads(Path(self.report["launch_file"]).read_text())
+        body = module.check_profile(record)
+        self.assertEqual(profiles.digest_of(body),
                          self.report["profile_digest"])
+
+    def test_a_dry_run_record_cannot_start_a_writing_service(self):
+        """A dry run never exec'd Claude, so nothing was bound to it.
+
+        This is the host binding doing its job rather than a gap: the record
+        names a launcher process that exited, and no live parent matches it.
+        """
+
+        module = load_script(SERVICE_SCRIPT, "cabinet_service_launched")
+        with self.assertRaises(CabinetError) as caught:
+            module.verify_launch(
+                {"CABINET_LAUNCH_FILE": self.report["launch_file"],
+                 "CABINET_CAPABILITY_FILE": self.report["capability_file"]})
+        self.assertEqual(caught.exception.code, "LAUNCH_HOST_MISMATCH")
 
 
 if __name__ == "__main__":

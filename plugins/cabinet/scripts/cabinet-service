@@ -29,12 +29,12 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 
-from cabinet_runtime import processes                        # noqa: E402
+from cabinet_runtime import contracts, processes, profiles   # noqa: E402
 from cabinet_runtime.errors import CabinetError              # noqa: E402
 from cabinet_runtime.profiles import build_profile           # noqa: E402
 from cabinet_runtime.rpc import RpcServer, StdioElicitor     # noqa: E402
 from cabinet_runtime.service import CabinetService           # noqa: E402
-from cabinet_runtime.store import Store                      # noqa: E402
+from cabinet_runtime.store import Store, process_start_marker  # noqa: E402
 
 ENV_LAUNCH_FILE = "CABINET_LAUNCH_FILE"
 ENV_CAPABILITY_FILE = "CABINET_CAPABILITY_FILE"
@@ -43,13 +43,16 @@ ENV_REPO = "CABINET_REPO"
 
 #: Fields the launch record on disk must carry.
 LAUNCH_RECORD_FIELDS = ("kind", "launch_id", "company_dir", "repo", "role",
-                        "profile_path", "profile_digest", "session_id",
-                        "capability_sha256")
+                        "profile_path", "profile_body_path", "profile_digest",
+                        "session_id", "host_pid", "host_process_start",
+                        "lease_generation", "capability_sha256")
 
-#: Fields handed to the service. `capability_sha256` is deliberately absent:
-#: the service holds facts about the launch, never anything secret.
-LAUNCH_CONTEXT_FIELDS = tuple(field for field in LAUNCH_RECORD_FIELDS
-                              if field != "capability_sha256")
+#: Fields handed to the service: facts about the launch and nothing else. The
+#: capability digest, the host identity and the bound generation stay here,
+#: because they are this file's checks to make and the service has no use for
+#: them beyond the answer.
+LAUNCH_CONTEXT_FIELDS = ("kind", "launch_id", "company_dir", "repo", "role",
+                         "profile_path", "profile_digest", "session_id")
 
 MAX_PRIVATE_BYTES = 64 * 1024
 GIT_TIMEOUT = 10
@@ -97,7 +100,20 @@ def read_private(path, label):
 
 
 def verify_launch(environ):
-    """Return the verified launch context, or None for an ordinary session.
+    """Return the verified launch context, or None for an ordinary session."""
+
+    record = verified_record(environ)
+    return launch_context(record) if record is not None else None
+
+
+def launch_context(record):
+    """The facts a verified record hands to the service, and nothing else."""
+
+    return {field: record[field] for field in LAUNCH_CONTEXT_FIELDS}
+
+
+def verified_record(environ):
+    """Return the whole verified launch record, or None for an ordinary session.
 
     A half-supplied context is an error rather than a downgrade: a launch that
     lost its capability must not quietly become a read-only session that looks
@@ -133,12 +149,130 @@ def verify_launch(environ):
     if not company.is_absolute() or not company.is_dir():
         raise CabinetError("LAUNCH_CONTEXT_INVALID",
                            "the launch record names no company directory")
-    if Path(capability_file).resolve().parent != \
-            (company / "runtime" / "profiles").resolve():
-        raise CabinetError("LAUNCH_CONTEXT_INVALID",
-                           "the capability does not live under this company's "
-                           "private runtime directory")
-    return {field: record[field] for field in LAUNCH_CONTEXT_FIELDS}
+    private = (company / "runtime" / "profiles").resolve()
+    for label, path in (("capability", capability_file),
+                        ("launch record", launch_file),
+                        ("profile", record["profile_body_path"]),
+                        ("settings", record["profile_path"])):
+        if Path(path).resolve().parent != private:
+            raise CabinetError(
+                "LAUNCH_CONTEXT_INVALID",
+                "the %s file does not live under this company's private "
+                "runtime directory" % label)
+    check_profile(record)
+    check_host(record)
+    return record
+
+
+def check_profile(record):
+    """Require the profile on disk to be the one the record was written for.
+
+    The digest in the record used to be carried and never compared, which made
+    it read as verified when it was not. Three things are checked here: the
+    profile still passes `verify_profile`, its digest is the recorded one, and
+    the settings file the session is actually launched with is the settings
+    that profile describes. A profile edited after the record was written, or
+    a settings file swapped underneath it, fails all the same.
+    """
+
+    try:
+        body = json.loads(read_private(record["profile_body_path"],
+                                       "the launch profile"))
+    except ValueError as problem:
+        raise CabinetError("LAUNCH_PROFILE_MISMATCH",
+                           "the launch profile is not JSON: %s" % problem)
+    if not isinstance(body, dict):
+        raise CabinetError("LAUNCH_PROFILE_MISMATCH",
+                           "the launch profile must be an object")
+    profiles.verify_profile(body)
+    if profiles.digest_of(body) != record["profile_digest"]:
+        raise CabinetError("LAUNCH_PROFILE_MISMATCH",
+                           "the profile on disk is not the one this launch "
+                           "record was written for")
+    if body.get("role") != record["role"] or \
+            body.get("session_id") != record["session_id"]:
+        raise CabinetError("LAUNCH_PROFILE_MISMATCH",
+                           "the profile names another role or session")
+    try:
+        written = json.loads(read_private(record["profile_path"],
+                                          "the launch settings"))
+    except ValueError as problem:
+        raise CabinetError("LAUNCH_PROFILE_MISMATCH",
+                           "the launch settings are not JSON: %s" % problem)
+    if contracts.canonical_json(written) != \
+            contracts.canonical_json(body.get("settings")):
+        raise CabinetError("LAUNCH_PROFILE_MISMATCH",
+                           "the settings this session launched with are not "
+                           "the settings the verified profile describes")
+    return body
+
+
+def check_host(record):
+    """Require this process to be a child of the process that launched Claude.
+
+    `cabinet-launch` replaces its own image with Claude through `os.execve`,
+    which keeps the identifier and the start time, so the process that spawned
+    this server is the process that wrote the record. Without this, two
+    environment variables pointing at two readable files are the whole of the
+    check, and a stale export in a shell profile would silently promote every
+    ordinary session on the machine to a writing one.
+    """
+
+    parent = os.getppid()
+    if parent != record["host_pid"]:
+        raise CabinetError(
+            "LAUNCH_HOST_MISMATCH",
+            "this server was started by process %d, not by the launched "
+            "session %s" % (parent, record["host_pid"]))
+    recorded = record["host_process_start"]
+    if recorded:
+        observed = process_start_marker(parent)
+        if not observed:
+            raise CabinetError(
+                "LAUNCH_HOST_MISMATCH",
+                "this platform did not report a start time for process %d, so "
+                "the launch cannot be bound to it" % parent)
+        if observed != recorded:
+            raise CabinetError(
+                "LAUNCH_HOST_MISMATCH",
+                "process %d is not the process that wrote this launch record"
+                % parent)
+
+
+def check_generation(record, store):
+    """Refuse a launch record another lead has since overtaken.
+
+    A record is bound to a generation the first time its session takes the
+    lead, and `renew_launch` writes that back. A later start under the same
+    record must find the same generation still current: if another lead has
+    taken the company, this record is spent, and the capability does not renew
+    itself. `None` means this launch has not led yet, which the host check
+    already covers.
+    """
+
+    bound = record.get("lease_generation")
+    if bound is None:
+        return
+    lease = store.get_lease()
+    current = lease["generation"] if lease else 0
+    if current != bound:
+        raise CabinetError(
+            "LAUNCH_GENERATION_STALE",
+            "this launch was bound to generation %s and the company is now at "
+            "generation %s" % (bound, current))
+
+
+def renew_launch(launch_file, generation):
+    """Bind the launch record to the generation its session just acquired."""
+
+    record = json.loads(read_private(launch_file, "the launch record"))
+    record["lease_generation"] = generation
+    descriptor = os.open(str(launch_file),
+                         os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600)
+    with os.fdopen(descriptor, "w", encoding="utf-8") as stream:
+        stream.write(json.dumps(record, indent=2, sort_keys=True))
+    os.chmod(str(launch_file), 0o600)
+    return record
 
 
 # --- ordinary identity ------------------------------------------------------
@@ -217,10 +351,27 @@ class PendingAdapter:
 # --- entry ------------------------------------------------------------------
 
 def build_service(environ, cwd, launch=None):
-    """Open the company this connection belongs to and wrap it in a service."""
+    """Open the company this connection belongs to and wrap it in a service.
 
+    A launch context that fails verification does not stop the server: it
+    becomes an ordinary read-only connection whose `doctor` says why. Failing
+    to start would leave the operator with a session that does nothing and no
+    way to ask it what went wrong, and a read-only connection is the same
+    refusal `RESTRICTED_SESSION_REQUIRED` gives anyway. The company it then
+    opens is the one the working directory names, never the one the rejected
+    record named.
+    """
+
+    record = None
+    refusal = None
     if launch is None:
-        launch = verify_launch(environ)
+        try:
+            record = verified_record(environ)
+        except CabinetError as problem:
+            log("%s: %s" % (problem.code, problem.message))
+            refusal = problem
+        if record is not None:
+            launch = launch_context(record)
     if launch is not None:
         repo = launch["repo"]
         company = Path(launch["company_dir"])
@@ -235,10 +386,23 @@ def build_service(environ, cwd, launch=None):
         company.mkdir(parents=True, exist_ok=True)
         company.chmod(0o700)
     store = Store(company, utc_now, repo=repo).open()
+    renewer = None
+    if record is not None:
+        try:
+            check_generation(record, store)
+        except CabinetError as problem:
+            log("%s: %s" % (problem.code, problem.message))
+            refusal = problem
+            launch = None
+        else:
+            launch_file = environ[ENV_LAUNCH_FILE]
+            renewer = lambda generation: renew_launch(launch_file, generation)
     elicitor = StdioElicitor()
-    service = CabinetService(store, PendingAdapter("GitHub", "O3"),
-                             PendingAdapter("Superset", "O4"), utc_now,
-                             elicitor, build_profile, launch=launch)
+    service = CabinetService(
+        store, PendingAdapter("GitHub", "O3"), PendingAdapter("Superset", "O4"),
+        utc_now, elicitor, build_profile, launch=launch,
+        launch_refusal=refusal.to_dict()["error"] if refusal else None,
+        launch_renewer=renewer)
     return service, elicitor, store
 
 

@@ -31,8 +31,9 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 
-from cabinet_runtime import processes, profiles               # noqa: E402
+from cabinet_runtime import contracts, processes, profiles    # noqa: E402
 from cabinet_runtime.errors import CabinetError               # noqa: E402
+from cabinet_runtime.store import own_process_identity        # noqa: E402
 
 #: Whether the chief's `--tools` value also names the Cabinet MCP tools.
 #: Settled by the F4b live smoke and recorded in
@@ -41,7 +42,13 @@ INCLUDE_SERVICE_TOOLS_IN_TOOLS_FLAG = False
 
 ENV_HOME = "CABINET_HOME"
 CAPABILITY_BYTES = 32
-INHERITED = ("PATH", "HOME", "LANG", "LC_ALL", "TERM", "TMPDIR")
+#: The only variables the launched session inherits. `USER` and `LOGNAME` are
+#: here because without them Claude cannot reach its own credentials and
+#: reports "Not logged in" — measured, not assumed. They name the account,
+#: they are not the credential: that stays where the profile's deny rules
+#: already keep it out of every file tool's reach.
+INHERITED = ("PATH", "HOME", "USER", "LOGNAME", "LANG", "LC_ALL", "TERM",
+             "TMPDIR")
 
 
 def parse_arguments(argv):
@@ -105,14 +112,21 @@ def company_directory(repo, environ):
 
 
 def write_private(path, text):
-    """Write an owner-only file, replacing whatever was there."""
+    """Write an owner-only file, replacing whatever was there.
+
+    The mode is set by `os.open` rather than by a later `chmod`, so the
+    content is never on disk under the process umask even briefly. The service
+    refuses a file readable beyond its owner, and the two halves should agree
+    by construction rather than by timing.
+    """
 
     path = Path(path)
     if path.is_symlink():
         raise CabinetError("UNSAFE_PATH", "%s is a symlink" % path)
-    with open(str(path), "w", encoding="utf-8") as stream:
+    descriptor = os.open(str(path), os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600)
+    with os.fdopen(descriptor, "w", encoding="utf-8") as stream:
         stream.write(text)
-    path.chmod(0o600)
+    os.chmod(str(path), 0o600)
     return str(path)
 
 
@@ -152,6 +166,7 @@ def build_launch(options, environ, cwd):
     paths = {name: str(private / ("%s.%s" % (launch_id, suffix)))
              for name, suffix in (("settings_path", "settings.json"),
                                   ("mcp_config", "mcp.json"),
+                                  ("profile_body_path", "profile.json"),
                                   ("capability_file", "capability"),
                                   ("launch_file", "launch.json"))}
     peer_registry = str(views / "peers.json")
@@ -166,12 +181,22 @@ def build_launch(options, environ, cwd):
         include_service_tools_in_tools_flag=options.include_service_tools)
     profiles.verify_profile(profile)
 
+    # The process that runs Claude is this one: `os.execve` replaces the
+    # image and keeps the identifier and the start time, so what is recorded
+    # here is exactly what the service will see as its parent.
+    host_pid, host_start = own_process_identity()
+
     write_private(paths["capability_file"], capability)
+    write_private(paths["profile_body_path"],
+                  contracts.canonical_json(profiles.plain(profile)))
     write_private(paths["launch_file"], json.dumps({
         "kind": "restricted", "launch_id": launch_id,
         "company_dir": str(company), "repo": repo,
         "role": profiles.CHIEF_ROLE, "profile_path": paths["settings_path"],
+        "profile_body_path": paths["profile_body_path"],
         "profile_digest": profile["digest"], "session_id": session_id,
+        "host_pid": host_pid, "host_process_start": host_start,
+        "lease_generation": None,
         "capability_sha256": hashlib.sha256(
             capability.encode("utf-8")).hexdigest()}, indent=2, sort_keys=True))
     write_private(paths["settings_path"], profiles.settings_json(profile))
@@ -192,7 +217,8 @@ def build_launch(options, environ, cwd):
               "profile_digest": profile["digest"],
               "public_context": str(views), "peer_registry": peer_registry,
               "plugin_root": plugin_root, "claude_path": claude_path,
-              "argv": list(profile["argv"]), "env": environment}
+              "argv": list(profile["argv"]), "env": environment,
+              "host_pid": host_pid}
     report.update(paths)
     _refuse_to_reveal(capability, report)
     return report, environment, capability

@@ -74,6 +74,12 @@ ERROR_CODES = {
                               "secret, or names another company.",
     "CAPABILITY_INVALID": "The per-launch capability does not match its "
                           "launch record.",
+    "LAUNCH_PROFILE_MISMATCH": "The profile on disk is not the one the launch "
+                               "record was written for.",
+    "LAUNCH_HOST_MISMATCH": "This process was not started by the launcher that "
+                            "wrote the launch record.",
+    "LAUNCH_GENERATION_STALE": "Another lead has taken the company since this "
+                               "launch record was bound.",
     "ELICITATION_UNSUPPORTED": "The connected client cannot show the owner a "
                                "form dialog.",
     "NOT_IMPLEMENTED_YET": "That operation has no executor in this release.",

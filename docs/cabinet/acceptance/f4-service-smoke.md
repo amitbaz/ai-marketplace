@@ -198,3 +198,97 @@ synthetic batch, and the owner answering it in the dialog. That is an approval
 Until that runs, the approval path is `unit_verified` and its transport is
 `native_verified` only up to the point where the client refuses. The ledger
 records it as awaiting the owner.
+
+---
+
+# Fix round 1 — the launch binding, proved through a real exec
+
+Recorded 2026-09-10, same machine and same synthetic `demo/company`.
+
+The first F4b smoke never ran `cabinet-launch` for real: it used `--dry-run`
+and then started Claude by hand. Binding the launch to the process that made it
+meant that shortcut no longer proves anything, so the launcher was run for
+real, with `--claude` pointing at a wrapper that `exec`s Claude with print mode
+and a permission allowlist. **Both of those flags are the harness's, not the
+launcher's.** `exec` keeps the process identifier, which is the whole point.
+
+| Item | What was probed | Status |
+| --- | --- | --- |
+| f | A real `os.execve` launch reaches a working chief | supported |
+| g | The launch binds to the process that made it | supported |
+| h | A spent record replayed elsewhere | refused, read-only |
+| i | Claude authenticating under an allowlisted environment | supported — needs `USER` and `LOGNAME` |
+
+## i. The environment defect a real launch found first
+
+The first real launch failed:
+
+```
+{"subtype":"success","is_error":true,"result":"Not logged in · Please run /login"}
+```
+
+The launcher hands the child an allowlisted environment, and that allowlist was
+`PATH, HOME, LANG, LC_ALL, TERM, TMPDIR`. Measured directly, one variable set
+per run, from a scratch directory:
+
+```
+('PATH','HOME')                    -> is_error=True   'Not logged in · Please run /login'
+('PATH','HOME','USER','LOGNAME')   -> is_error=False  'OK'
+```
+
+`USER` and `LOGNAME` are now in the launcher's `INHERITED` tuple. They name the
+account; the credential itself stays where the profile's deny rules already
+keep it out of every file tool's reach. Every earlier probe in this document ran
+Claude with the full inherited environment, so none of them could have found
+this — the launcher's own exec path had never been exercised.
+
+## f and g. The real launch
+
+```
+cd <scratch>/work
+CABINET_HOME=<scratch>/cabinet cabinet-launch --repo demo/company \
+  --assignment smoke --claude <scratch>/claude-print-wrapper \
+  --plugin-root <repo>/plugins/cabinet
+```
+
+`subtype: success`, `num_turns: 6`, `duration_ms: 13540`. The chief called
+`cabinet_doctor`, `cabinet_acquire_lead`, then `cabinet_doctor` again:
+
+```json
+{"check":"launch","status":"restricted","detail":"role chief-of-staff"}
+generation from acquire_lead: 1
+{"check":"lease","status":"held","detail":"generation 1"}
+```
+
+`launch: restricted` is the host binding passing: the spawned MCP server's
+parent process was the process that wrote the launch record, matched on both
+its identifier and its start time, across `cabinet-launch` → `execve` wrapper →
+`exec` Claude → spawned server. The record on disk afterwards read
+`lease_generation = 1`, so the generation renewal works and a reconnect under
+the same record will still verify.
+
+Before the harness added `--allowedTools`, the same launch answered: `the tool
+permission for cabinet_doctor hasn't been granted in this session`. That
+confirms item (b)'s finding on the real chief profile, and it is O1's decision.
+
+## h. The spent record, replayed
+
+After the launched session exited, its record and capability were pointed at a
+new `cabinet-service` started from an ordinary shell:
+
+```
+cabinet-service: LAUNCH_HOST_MISMATCH: this server was started by process 92250, not by the launched session 91180
+{'check': 'launch',  'status': 'refused',  'detail': 'LAUNCH_HOST_MISMATCH: …'}
+{'check': 'lease',   'status': 'elsewhere','detail': 'another lead holds generation 1'}
+{'check': 'tools',   'status': 'ok',       'detail': '4 of 19 operations exposed'}
+```
+
+Refused, degraded to the read-only surface, and `doctor` names the check that
+failed. Possession of the two file paths is no longer sufficient to obtain a
+writing connection.
+
+## What is still not proved
+
+The owner-dialog gate is unchanged and still **awaiting the owner**. Nothing in
+this round approached it: print mode still advertises no form elicitation, and
+no dialog answer was simulated.

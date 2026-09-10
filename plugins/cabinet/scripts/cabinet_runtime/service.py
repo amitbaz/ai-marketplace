@@ -27,6 +27,7 @@ Operations whose adapters land in later tasks refuse with a stable
 allowed" from "not built" without reading this file.
 """
 
+import contextlib
 import time
 import uuid
 
@@ -217,7 +218,8 @@ class CabinetService:
 
     def __init__(self, store, github=None, superset=None, clock=None,
                  elicitor=None, profile_builder=None, launch=None,
-                 sleeper=None, monotonic=None):
+                 sleeper=None, monotonic=None, launch_refusal=None,
+                 launch_renewer=None):
         self.store = store
         self.github = github
         self.superset = superset
@@ -225,6 +227,13 @@ class CabinetService:
         self.elicitor = elicitor
         self.profile_builder = profile_builder
         self.launch = validate_launch(launch, store)
+        #: Why a launch context that was offered was refused, if one was. The
+        #: connection is read-only either way; this is what `doctor` reports
+        #: so a broken launch is diagnosable instead of merely silent.
+        self.launch_refusal = dict(launch_refusal) if launch_refusal else None
+        #: Called with the generation this session acquires, so the launch
+        #: record it was started from stays bound to the current lead.
+        self._renew = launch_renewer
         self._sleep = sleeper or time.sleep
         self._monotonic = monotonic or time.monotonic
 
@@ -258,11 +267,14 @@ class CabinetService:
         """Validate, authorize and run one named operation.
 
         The store's lock is held for the whole operation, because tool calls
-        run on worker threads while the protocol thread keeps reading. An
-        owner dialog is the one thing that gives the lock back while it waits:
-        a question the owner has not answered must not stop the company being
-        read, and F3 already treats state that moved during a dialog as a
-        reason to refuse the grant rather than a race to prevent.
+        run on worker threads while the protocol thread keeps reading.
+
+        Anything that *waits* gives the lock back for the duration of the
+        wait: an owner dialog, and `wait_events` between polls. Both would
+        otherwise stop every other tool for as long as they sit there, and
+        neither is holding the database open while it waits. F3 already treats
+        state that moved during a dialog as a reason to refuse the grant
+        rather than a race to prevent.
         """
 
         if not self.has_tool(name):
@@ -332,9 +344,15 @@ class CabinetService:
                  "another lead holds generation %d" % lease["generation"])
         note("pause", "paused" if self.store.is_paused() else "running",
              lease["paused_reason"] if lease and lease["paused"] else "")
-        note("launch", "restricted" if self.launch else "ordinary",
-             "role %s" % self.launch["role"] if self.launch
-             else "reads only; mutation needs a verified launch")
+        if self.launch:
+            note("launch", "restricted", "role %s" % self.launch["role"])
+        elif self.launch_refusal:
+            note("launch", "refused",
+                 "%s: %s" % (self.launch_refusal.get("code"),
+                             self.launch_refusal.get("message")))
+        else:
+            note("launch", "ordinary",
+                 "reads only; mutation needs a verified launch")
         note("dialog", "wired" if self.elicitor is not None else "absent",
              "owner approval needs a client that can show a form")
         note("tools", "ok", "%d of %d operations exposed"
@@ -381,7 +399,11 @@ class CabinetService:
             remaining = deadline - self._monotonic()
             if events or due or remaining <= 0:
                 break
-            self._sleep(min(WAIT_POLL_SECONDS, remaining))
+            # The lock is this connection's, not the database's. Holding it
+            # across the sleep would make one parked wait serialize every
+            # other tool call for up to thirty seconds.
+            with released(self.store.lock):
+                self._sleep(min(WAIT_POLL_SECONDS, remaining))
         return {"after_seq": after_seq, "events": events, "handoffs_due": due,
                 "timeout_seconds": timeout,
                 "max_event_seq": self.store.max_event_seq()}
@@ -393,6 +415,8 @@ class CabinetService:
             or uuid.uuid4().hex
         pid, marker = own_process_identity()
         lease = self.store.acquire_lease(session, pid, marker)
+        if self._renew is not None:
+            self._renew(lease["generation"])
         return {"acquired": True, "generation": lease["generation"],
                 "paused": lease["paused"], "session_id": session}
 
@@ -512,6 +536,29 @@ class CabinetService:
         }
 
 
+@contextlib.contextmanager
+def released(lock):
+    """Give a re-entrant lock back for the duration of a wait.
+
+    Used wherever this module blocks on something that is not the database:
+    an owner dialog, and the poll in `wait_events`. A caller that does not
+    hold the lock is not an error, so a service method called directly in a
+    test behaves the same as one called through `call`.
+    """
+
+    try:
+        lock.release()
+    except RuntimeError:
+        holding = False
+    else:
+        holding = True
+    try:
+        yield
+    finally:
+        if holding:
+            lock.acquire()
+
+
 class _WaitingElicitor:
     """Hands the store's lock back while the owner is being asked.
 
@@ -526,17 +573,8 @@ class _WaitingElicitor:
         self._lock = lock
 
     def request(self, message, schema):
-        try:
-            self._lock.release()
-        except RuntimeError:
-            released = False
-        else:
-            released = True
-        try:
+        with released(self._lock):
             return self._elicitor.request(message, schema)
-        finally:
-            if released:
-                self._lock.acquire()
 
 
 def _deferred(method, task):
