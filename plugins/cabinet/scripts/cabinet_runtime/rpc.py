@@ -71,6 +71,13 @@ def elicitation_form_supported(capabilities, protocol):
     if not isinstance(declared, dict):
         return False
     if protocol in FORM_MODE_VERSIONS:
+        # 2025-11-25 lets a client name its modes (`form`, `url`). An empty
+        # object is the backwards-compatible declaration of form support, and
+        # it is what Claude Code 2.1.267 sends (observed live: the client
+        # negotiates 2025-11-25 with `"elicitation": {}`). Only a client that
+        # names modes without `form` is refused.
+        if not declared:
+            return True
         return isinstance(declared.get("form"), dict)
     return True
 

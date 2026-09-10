@@ -151,3 +151,20 @@ above, not a missing command.
    settle it: a plain `--bg` peer is still a child of the shell that started
    it, and the Superset-launched worker that would settle it needs
    authentication the machine does not have. Carried to O4.
+
+## Addendum 2026-09-10 — interactive client elicitation capability (native_verified)
+
+Probe: a `claude --bg --model haiku --strict-mcp-config --mcp-config <capture>` session
+against a capture MCP server that records the client's `initialize` params. Observed:
+
+```json
+{"protocolVersion": "2025-11-25",
+ "capabilities": {"roots": {"listChanged": true}, "elicitation": {}},
+ "clientInfo": {"name": "claude-code", "version": "2.1.267"}}
+```
+
+Claude Code 2.1.267 declares `"elicitation": {}` (no `form`/`url` sub-keys) while
+negotiating 2025-11-25. The service originally required `form` under that version and
+refused the owner's first interactive dialog attempt with `ELICITATION_UNSUPPORTED`;
+the empty object is now accepted as the backwards-compatible form declaration.
+Print mode (`-p`) still advertises no elicitation at all.

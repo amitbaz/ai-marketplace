@@ -395,8 +395,12 @@ class ElicitorUnitTest(unittest.TestCase):
     def test_form_support_is_read_per_protocol_version(self):
         self.assertTrue(rpc.elicitation_form_supported(
             {"elicitation": {"form": {}}}, "2025-11-25"))
-        self.assertFalse(rpc.elicitation_form_supported(
+        # Claude Code 2.1.267 negotiates 2025-11-25 and declares `{}`, the
+        # backwards-compatible form-only declaration (observed live).
+        self.assertTrue(rpc.elicitation_form_supported(
             {"elicitation": {}}, "2025-11-25"))
+        self.assertFalse(rpc.elicitation_form_supported(
+            {"elicitation": {"url": {}}}, "2025-11-25"))
         self.assertTrue(rpc.elicitation_form_supported(
             {"elicitation": {}}, "2025-06-18"))
         self.assertFalse(rpc.elicitation_form_supported({}, "2025-06-18"))
