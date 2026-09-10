@@ -33,26 +33,36 @@ from .contracts import (
     ACTION_TRANSITIONS,
     BATCH_TRANSITIONS,
     DOCUMENT_NAME_PATTERN,
+    DUE_HANDOFF_STATES,
+    HANDOFF_TRANSITIONS,
     LIVE_ASSIGNMENT_STATES,
     LIVE_BATCH_STATES,
     SCHEMA_VERSION,
+    VERDICT_OUTCOMES,
     action_identity,
     canonical_json,
     check_transition,
     digest,
     is_owner_acceptance,
+    not_after,
     parse_repo,
     validate_action_envelope,
     validate_batch_body,
     validate_setup_scope,
 )
 from .errors import CabinetError
+from .profiles import CHIEF_ROLE as CHIEF_ROLE_NAME
+from .profiles import STAFF_AGENT_TYPES as STAFF_ROLE_NAMES
 
 RUNTIME_DIRECTORY = "runtime"
 VIEWS_DIRECTORY = "views"
 DATABASE_NAME = "cabinet.sqlite3"
 IDENTITY_NAME = "identity.json"
 BACKUPS_DIRECTORY = "backups"
+#: The dispatch hook reads this file to check a SendMessage recipient. It sits
+#: beside the database because it is company runtime state, and the hook is a
+#: process rather than a tool, so the private mode does not put it out of reach.
+PEER_REGISTRY_NAME = "peers.json"
 PRIVATE_FILE_MODE = 0o600
 PRIVATE_DIR_MODE = 0o700
 
@@ -115,11 +125,26 @@ CREATE TABLE handoffs (
     to_role       TEXT NOT NULL,
     body_json     TEXT NOT NULL,
     digest        TEXT NOT NULL,
+    kind          TEXT NOT NULL DEFAULT 'question',
     state         TEXT NOT NULL,
     attempts      INTEGER NOT NULL DEFAULT 0,
     next_retry_at TEXT,
+    reason        TEXT,
+    evidence_json TEXT,
+    truncated     INTEGER NOT NULL DEFAULT 0,
     created_seq   INTEGER NOT NULL,
     updated_seq   INTEGER NOT NULL
+);
+
+CREATE TABLE addresses (
+    role              TEXT PRIMARY KEY,
+    native_address    TEXT NOT NULL,
+    kind              TEXT NOT NULL,
+    assignment_id     TEXT,
+    native_session_id TEXT,
+    generation        INTEGER NOT NULL,
+    time              TEXT NOT NULL,
+    registered_seq    INTEGER NOT NULL
 );
 
 CREATE TABLE actions (
@@ -186,6 +211,23 @@ CREATE TABLE documents (
     PRIMARY KEY (name, revision)
 );
 """
+
+#: Version -> the statements that bring a database of the previous version up
+#: to it. A fresh database is created from SCHEMA at the current version and
+#: never runs these; an existing one runs each step in order, in one
+#: transaction, so a half-applied upgrade cannot be left behind.
+SCHEMA_UPGRADES = {
+    2: (
+        "ALTER TABLE handoffs ADD COLUMN kind TEXT NOT NULL DEFAULT 'question'",
+        "ALTER TABLE handoffs ADD COLUMN reason TEXT",
+        "ALTER TABLE handoffs ADD COLUMN evidence_json TEXT",
+        "ALTER TABLE handoffs ADD COLUMN truncated INTEGER NOT NULL DEFAULT 0",
+        "CREATE TABLE addresses ("
+        "role TEXT PRIMARY KEY, native_address TEXT NOT NULL, kind TEXT NOT NULL,"
+        " assignment_id TEXT, native_session_id TEXT, generation INTEGER NOT NULL,"
+        " time TEXT NOT NULL, registered_seq INTEGER NOT NULL)",
+    ),
+}
 
 LIVE_ASSIGNMENT_INDEX = (
     "CREATE UNIQUE INDEX assignments_live_work ON assignments(work_key) "
@@ -478,6 +520,8 @@ class Store:
                     conn.close()
                     raise
             self._secure_sidecars()
+        elif version < SCHEMA_VERSION:
+            self._upgrade_schema(conn, version)
         elif version > SCHEMA_VERSION:
             # Folding the write-ahead log into the main file is what makes the
             # read-only reopen below possible. The log format is fixed by
@@ -491,6 +535,29 @@ class Store:
             self.read_only = True
         self._conn = conn
         return conn
+
+    def _upgrade_schema(self, conn, version):
+        """Bring an older database forward one version at a time.
+
+        Every step runs inside one transaction with the version stamp, so a
+        database is either wholly at the old version or wholly at the new one.
+        A version this runtime has no upgrade for is a gap in the table rather
+        than something to guess at, and it says so.
+        """
+
+        statements = ["BEGIN IMMEDIATE"]
+        for target in range(version + 1, SCHEMA_VERSION + 1):
+            steps = SCHEMA_UPGRADES.get(target)
+            if steps is None:
+                conn.close()
+                raise CabinetError(
+                    "SCHEMA_TOO_NEW",
+                    "this runtime knows schema %d but has no upgrade from %d "
+                    "to %d" % (SCHEMA_VERSION, target - 1, target))
+            statements.extend(steps)
+        statements.append("PRAGMA user_version = %d" % SCHEMA_VERSION)
+        statements.append("COMMIT")
+        conn.executescript(";\n".join(statements) + ";")
 
     def _secure_sidecars(self):
         """Hold the write-ahead log files to the same mode as the database."""
@@ -1380,9 +1447,273 @@ class Store:
 
         conn = self._require_open()
         rows = conn.execute(
-            "SELECT handoff_id, batch_id, revision, from_role, to_role, state, "
-            "attempts FROM handoffs ORDER BY created_seq")
+            "SELECT handoff_id, batch_id, revision, from_role, to_role, kind, "
+            "state, attempts, next_retry_at, reason FROM handoffs "
+            "ORDER BY created_seq")
         return [dict(row) for row in rows]
+
+    # --- handoffs -----------------------------------------------------------
+
+    def record_handoff(self, envelope, truncated=False):
+        """Persist a handoff envelope before anything is delivered.
+
+        Re-recording the identical envelope returns the stored record and adds
+        no event, so a chief that retries after losing its reply does not
+        create a second obligation. The same ID with different content is a
+        conflict rather than an overwrite: the ID is what a recipient
+        acknowledges, and it must go on meaning one thing.
+        """
+
+        self._require_writable()
+        self._check_not_paused()
+        frozen = digest(envelope)
+
+        with self._transaction() as conn:
+            existing = conn.execute(
+                "SELECT * FROM handoffs WHERE handoff_id = ?",
+                (envelope["handoff_id"],)).fetchone()
+            if existing is not None:
+                if existing["digest"] != frozen:
+                    raise CabinetError(
+                        "IDEMPOTENCY_CONFLICT",
+                        "handoff %s already exists with different content; a "
+                        "changed question is a new handoff, not an edit"
+                        % envelope["handoff_id"])
+                return self._handoff_row(existing)
+            event = self._append_event_locked(
+                conn, "handoff.recorded", envelope["handoff_id"],
+                envelope["revision"],
+                {"digest": frozen, "envelope": envelope,
+                 "truncated": bool(truncated)})
+            conn.execute(
+                "INSERT INTO handoffs (handoff_id, batch_id, revision, "
+                "from_role, to_role, kind, body_json, digest, state, attempts, "
+                "next_retry_at, reason, evidence_json, truncated, created_seq, "
+                "updated_seq) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, 0, NULL, NULL, "
+                "NULL, ?, ?, ?)",
+                (envelope["handoff_id"], envelope["batch_id"],
+                 envelope["revision"], envelope["from_role"],
+                 envelope["to_role"], envelope["kind"],
+                 canonical_json(envelope), frozen, "recorded",
+                 1 if truncated else 0, event["seq"], event["seq"]))
+        return self.get_handoff(envelope["handoff_id"])
+
+    def get_handoff(self, handoff_id):
+        conn = self._require_open()
+        row = conn.execute("SELECT * FROM handoffs WHERE handoff_id = ?",
+                           (handoff_id,)).fetchone()
+        if row is None:
+            raise CabinetError("HANDOFF_NOT_FOUND", "no handoff %s" % handoff_id)
+        return self._handoff_row(row)
+
+    def advance_handoff(self, handoff_id, state, evidence=None, attempts=None,
+                        next_retry_at=None, reason=None):
+        """Move a handoff and record the event that moved it, in one commit.
+
+        The caller decides *whether* the move is allowed on the company's
+        terms — who replied, at what generation, with what verdict behind it.
+        This method enforces the state machine itself and makes the change
+        durable, so a projection that disagrees with the event log is not
+        reachable through an interrupted write.
+        """
+
+        with self._transaction() as conn:
+            row = conn.execute("SELECT * FROM handoffs WHERE handoff_id = ?",
+                               (handoff_id,)).fetchone()
+            if row is None:
+                raise CabinetError("HANDOFF_NOT_FOUND",
+                                   "no handoff %s" % handoff_id)
+            if state != row["state"] or not HANDOFF_TRANSITIONS.get(
+                    row["state"], ()):
+                # A same-state write is one more attempt at the same
+                # obligation, not a transition. A finished handoff has nowhere
+                # to go, including back to where it already is, so it goes
+                # through the machine and is refused there.
+                check_transition(HANDOFF_TRANSITIONS, row["state"], state,
+                                 "handoff %s" % handoff_id)
+            event = self._append_event_locked(
+                conn, "handoff.state_changed", handoff_id, row["revision"],
+                {"from": row["state"], "to": state, "evidence": evidence,
+                 "attempts": attempts if attempts is not None else row["attempts"],
+                 "next_retry_at": next_retry_at, "reason": reason})
+            conn.execute(
+                "UPDATE handoffs SET state = ?, attempts = ?, "
+                "next_retry_at = ?, reason = ?, evidence_json = ?, "
+                "updated_seq = ? WHERE handoff_id = ?",
+                (state,
+                 row["attempts"] if attempts is None else attempts,
+                 next_retry_at, reason,
+                 canonical_json(evidence) if evidence is not None else None,
+                 event["seq"], handoff_id))
+        return self.get_handoff(handoff_id)
+
+    def pending_handoffs(self, now):
+        """Return handoffs needing action at `now`, advancing nothing.
+
+        Due is narrower than open. A handoff that has been acknowledged is
+        still an open obligation, but nothing about it is due: the recipient
+        replied and is working on it, and probing it again would be chasing
+        somebody who already answered. What is due is a handoff nobody has
+        delivered yet, or one whose acknowledgment probe has come round.
+
+        Reading this list is an observation, and an observation never changes
+        what it observed.
+        """
+
+        due = []
+        for row in self.get_handoffs():
+            if row["state"] not in DUE_HANDOFF_STATES:
+                continue
+            scheduled = row["next_retry_at"]
+            if scheduled is None:
+                if row["state"] == "recorded":
+                    due.append(row)
+            elif not_after(scheduled, now):
+                due.append(row)
+        return due
+
+    @staticmethod
+    def _handoff_row(row):
+        return {"handoff_id": row["handoff_id"], "batch_id": row["batch_id"],
+                "revision": row["revision"], "from_role": row["from_role"],
+                "to_role": row["to_role"], "kind": row["kind"],
+                "state": row["state"], "digest": row["digest"],
+                "attempts": row["attempts"],
+                "next_retry_at": row["next_retry_at"], "reason": row["reason"],
+                "truncated": bool(row["truncated"]),
+                "envelope": json.loads(row["body_json"]),
+                "evidence": json.loads(row["evidence_json"])
+                if row["evidence_json"] else None,
+                "created_seq": row["created_seq"],
+                "updated_seq": row["updated_seq"]}
+
+    # --- native addresses ---------------------------------------------------
+
+    def register_address(self, role, native_address, kind,
+                         assignment_id=None, native_session_id=None):
+        """Bind one role to the native address its messages actually come from.
+
+        One live address per role. Re-registering replaces it, which is what a
+        restarted role needs: the obligation is recorded against the role, and
+        the session is the replaceable part.
+        """
+
+        with self._transaction() as conn:
+            event = self._append_event_locked(
+                conn, "session.registered", role, None,
+                {"role": role, "native_address": native_address, "kind": kind,
+                 "assignment_id": assignment_id,
+                 "native_session_id": native_session_id,
+                 "generation": self._generation or 0})
+            conn.execute(
+                "INSERT INTO addresses (role, native_address, kind, "
+                "assignment_id, native_session_id, generation, time, "
+                "registered_seq) VALUES (?, ?, ?, ?, ?, ?, ?, ?) "
+                "ON CONFLICT(role) DO UPDATE SET native_address = excluded."
+                "native_address, kind = excluded.kind, assignment_id = "
+                "excluded.assignment_id, native_session_id = excluded."
+                "native_session_id, generation = excluded.generation, "
+                "time = excluded.time, registered_seq = excluded.registered_seq",
+                (role, native_address, kind, assignment_id, native_session_id,
+                 self._generation or 0, self._clock(), event["seq"]))
+        self.write_peer_registry()
+        return self.get_address(role)
+
+    def get_address(self, role):
+        conn = self._require_open()
+        row = conn.execute("SELECT * FROM addresses WHERE role = ?",
+                           (role,)).fetchone()
+        return dict(row) if row is not None else None
+
+    def get_addresses(self):
+        conn = self._require_open()
+        return [dict(row) for row in
+                conn.execute("SELECT * FROM addresses ORDER BY role")]
+
+    @property
+    def peer_registry_path(self):
+        return self.runtime_dir / PEER_REGISTRY_NAME
+
+    def write_peer_registry(self):
+        """Rewrite the file the dispatch hook checks recipients against.
+
+        The hook runs as its own process and cannot ask the service anything,
+        so the registry is how a registration reaches it. The packaged role
+        names stay in the list because the chief has to be able to reach a
+        teammate it just spawned; registration is what adds the addresses
+        nothing could have predicted, such as a launched worker's session name.
+        """
+
+        path = self.peer_registry_path
+        existing = {}
+        if path.exists() and not path.is_symlink():
+            try:
+                existing = json.loads(path.read_text(encoding="utf-8"))
+            except (OSError, ValueError):
+                existing = {}
+        chief = existing.get("chief") if isinstance(existing, dict) else None
+        addresses = self.get_addresses()
+        peers = set(STAFF_ROLE_NAMES)
+        for row in addresses:
+            peers.add(row["native_address"])
+            if row["role"] == CHIEF_ROLE_NAME and not chief:
+                chief = row["native_address"]
+        if chief:
+            peers.add(chief)
+        body = {"generated": self._clock(), "chief": chief,
+                "peers": sorted(peers),
+                "addresses": {row["role"]: row["native_address"]
+                              for row in addresses}}
+        _write_private(path, json.dumps(body, indent=2, sort_keys=True))
+        return str(path)
+
+    # --- verdicts -----------------------------------------------------------
+
+    def record_verdict(self, assignment_id, revision_sha, reviewer_role,
+                       outcome, evidence=None):
+        """Record one reviewer's verdict at one exact revision.
+
+        The key is the triple, so a later verdict at the same revision by the
+        same reviewer replaces it and an earlier revision's verdict is never
+        silently reused for a newer one.
+        """
+
+        if outcome not in VERDICT_OUTCOMES:
+            raise CabinetError("FIELD_INVALID",
+                               "a verdict outcome is one of %s"
+                               % (VERDICT_OUTCOMES,))
+        with self._transaction() as conn:
+            event = self._append_event_locked(
+                conn, "verdict.recorded", assignment_id, None,
+                {"assignment_id": assignment_id, "revision_sha": revision_sha,
+                 "reviewer_role": reviewer_role, "outcome": outcome,
+                 "evidence": evidence or []})
+            conn.execute(
+                "INSERT INTO verdicts (assignment_id, revision_sha, "
+                "reviewer_role, outcome, evidence_json, time, recorded_seq) "
+                "VALUES (?, ?, ?, ?, ?, ?, ?) "
+                "ON CONFLICT(assignment_id, revision_sha, reviewer_role) DO "
+                "UPDATE SET outcome = excluded.outcome, evidence_json = "
+                "excluded.evidence_json, time = excluded.time, "
+                "recorded_seq = excluded.recorded_seq",
+                (assignment_id, revision_sha, reviewer_role, outcome,
+                 canonical_json(evidence or []), self._clock(), event["seq"]))
+        return self.get_verdict(assignment_id, revision_sha, reviewer_role)
+
+    def get_verdict(self, assignment_id, revision_sha, reviewer_role):
+        conn = self._require_open()
+        row = conn.execute(
+            "SELECT * FROM verdicts WHERE assignment_id = ? AND "
+            "revision_sha = ? AND reviewer_role = ?",
+            (assignment_id, revision_sha, reviewer_role)).fetchone()
+        if row is None:
+            return None
+        return {"assignment_id": row["assignment_id"],
+                "revision_sha": row["revision_sha"],
+                "reviewer_role": row["reviewer_role"],
+                "outcome": row["outcome"],
+                "evidence": json.loads(row["evidence_json"]),
+                "time": row["time"], "recorded_seq": row["recorded_seq"]}
 
     def get_lease(self):
         row = self._lease_row()

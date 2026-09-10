@@ -63,6 +63,10 @@ def parse_arguments(argv):
     parser.add_argument("--include-service-tools", action="store_true",
                         default=INCLUDE_SERVICE_TOOLS_IN_TOOLS_FLAG,
                         help="also name the Cabinet tools in --tools")
+    parser.add_argument("--prompt-file",
+                        help="file holding the chief's opening instruction")
+    parser.add_argument("--bg", "--background", dest="bg", action="store_true",
+                        help="start the chief detached; needs --prompt-file")
     parser.add_argument("--dry-run", action="store_true",
                         help="write the launch and print it instead of running")
     return parser.parse_args(argv)
@@ -149,6 +153,11 @@ def build_launch(options, environ, cwd):
     if not claude_path:
         raise CabinetError("ARGV_INVALID",
                            "no Claude executable found; pass --claude")
+    if options.bg and not options.prompt_file:
+        raise CabinetError(
+            "FIELD_MISSING",
+            "a detached chief has nobody at the keyboard to instruct it; "
+            "--bg needs --prompt-file")
     repo = options.repo or resolve_repo(environ, cwd)
     # The deny rules are computed from the launching user's own home, not from
     # whatever `$HOME` the child ends up with. F4a left this implicit.
@@ -169,7 +178,7 @@ def build_launch(options, environ, cwd):
                                   ("profile_body_path", "profile.json"),
                                   ("capability_file", "capability"),
                                   ("launch_file", "launch.json"))}
-    peer_registry = str(views / "peers.json")
+    peer_registry = str(company / "runtime" / "peers.json")
 
     profile = profiles.build_profile(
         profiles.CHIEF_ROLE,
@@ -180,6 +189,8 @@ def build_launch(options, environ, cwd):
         str(views), home=home,
         include_service_tools_in_tools_flag=options.include_service_tools)
     profiles.verify_profile(profile)
+    launch = profiles.chief_launch(profile, options.prompt_file,
+                                   background=options.bg)
 
     # The process that runs Claude is this one: `os.execve` replaces the
     # image and keeps the identifier and the start time, so what is recorded
@@ -217,7 +228,9 @@ def build_launch(options, environ, cwd):
               "profile_digest": profile["digest"],
               "public_context": str(views), "peer_registry": peer_registry,
               "plugin_root": plugin_root, "claude_path": claude_path,
-              "argv": list(profile["argv"]), "env": environment,
+              "argv": list(launch["argv"]), "env": environment,
+              "background": launch["background"],
+              "prompt_bytes": launch["prompt_bytes"],
               "host_pid": host_pid}
     report.update(paths)
     _refuse_to_reveal(capability, report)

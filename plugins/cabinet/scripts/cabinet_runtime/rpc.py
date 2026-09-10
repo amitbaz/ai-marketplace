@@ -170,18 +170,28 @@ class RpcServer:
     # --- reading -----------------------------------------------------------
 
     def _read_line(self):
-        """Return one bounded line, `None` at end of stream, or `_OVERSIZE`."""
+        """Return one bounded line, `None` at end of stream, or `_OVERSIZE`.
 
-        chunk = self.reader.readline(MAX_MESSAGE_BYTES + 2)
-        if not chunk:
+        A reader closed underneath this thread is end of stream, not an error.
+        It happens whenever the other side goes away while a read is parked —
+        the ordinary way a client disconnects, and the ordinary way a test
+        tears its harness down. Letting the exception escape would leave a
+        traceback on stderr for a shutdown that worked.
+        """
+
+        try:
+            chunk = self.reader.readline(MAX_MESSAGE_BYTES + 2)
+            if not chunk:
+                return None
+            if len(chunk.rstrip(b"\r\n")) > MAX_MESSAGE_BYTES:
+                while not chunk.endswith(b"\n"):
+                    chunk = self.reader.readline(MAX_MESSAGE_BYTES + 2)
+                    if not chunk:
+                        break
+                return _OVERSIZE
+            return chunk
+        except (ValueError, OSError):
             return None
-        if len(chunk.rstrip(b"\r\n")) > MAX_MESSAGE_BYTES:
-            while not chunk.endswith(b"\n"):
-                chunk = self.reader.readline(MAX_MESSAGE_BYTES + 2)
-                if not chunk:
-                    break
-            return _OVERSIZE
-        return chunk
 
     def _handle(self, line):
         try:

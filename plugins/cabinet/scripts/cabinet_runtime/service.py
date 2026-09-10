@@ -31,7 +31,7 @@ import contextlib
 import time
 import uuid
 
-from . import contracts
+from . import contracts, profiles
 from .approval import ApprovalService
 from .errors import CabinetError
 from .exports import VIEW_NAMES
@@ -52,7 +52,20 @@ MAX_EVENT_LIMIT = 200
 CHECKPOINT_KINDS = ("session_open", "session_close", "batch_end")
 HANDOFF_TRANSITIONS = ("sent", "acknowledged", "resolved", "failed",
                        "superseded")
-DUE_HANDOFF_STATES = ("recorded", "sent", "acknowledged")
+DUE_HANDOFF_STATES = contracts.DUE_HANDOFF_STATES
+
+#: How often a running company re-reads the board, in seconds. An idle or
+#: closed company is not a daemon: nothing polls between sessions, and the
+#: next opening reconciles whatever changed while it was shut.
+BOARD_INTERVAL_SECONDS = 300
+
+#: Kinds a role may register itself under. A worker's address arrives through
+#: `register_session` with its assignment; a teammate's through
+#: `register_staff`, because a teammate has no assignment of its own.
+ADDRESS_KINDS = ("staff", "worker")
+
+#: Roles that may be given a native address at all.
+REGISTERABLE_ROLES = (profiles.STAFF_AGENT_TYPES + profiles.WORKER_TYPES)
 
 #: Fields of the launch record the entrypoint hands over. The capability is
 #: verified before this point and is deliberately not one of them.
@@ -120,9 +133,13 @@ TOOL_SPECS = {
         "write", _schema({"envelope": _OBJECT}, ("envelope",)),
         "Record a handoff envelope durably before anything is sent."),
     "update_handoff": (
+        # The evidence for a transition is a keyed record of what actually
+        # happened — the transport and its result, or the session that
+        # replied and the generation it replied at — so it is an object
+        # rather than the list of artifact references an action carries.
         "write", _schema({"handoff_id": _STRING,
                           "transition": _enum(HANDOFF_TRANSITIONS),
-                          "evidence": _ARRAY},
+                          "evidence": _OBJECT},
                          ("handoff_id", "transition")),
         "Move a recorded handoff through its state machine with evidence."),
     "prepare_action": (
@@ -137,6 +154,11 @@ TOOL_SPECS = {
         "write", _schema({"assignment_id": _STRING, "registration": _OBJECT},
                          ("assignment_id", "registration")),
         "Bind a launched worker's own session identity to its assignment."),
+    "register_staff": (
+        "write", _schema({"role": _STRING, "native_address": _STRING},
+                         ("role", "native_address")),
+        "Bind a staff role to the native address its messages come from, so "
+        "a sender or recipient can be checked against something registered."),
     "record_verdict": (
         "write", _schema({"assignment_id": _STRING, "revision_sha": _STRING,
                           "reviewer_role": _STRING, "outcome": _STRING,
@@ -219,7 +241,8 @@ class CabinetService:
     def __init__(self, store, github=None, superset=None, clock=None,
                  elicitor=None, profile_builder=None, launch=None,
                  sleeper=None, monotonic=None, launch_refusal=None,
-                 launch_renewer=None):
+                 launch_renewer=None, board_reader=None,
+                 board_interval_seconds=BOARD_INTERVAL_SECONDS):
         self.store = store
         self.github = github
         self.superset = superset
@@ -236,6 +259,12 @@ class CabinetService:
         self._renew = launch_renewer
         self._sleep = sleeper or time.sleep
         self._monotonic = monotonic or time.monotonic
+        #: Reads changed issues since a timestamp. O3 injects the real board
+        #: adapter; with none configured the company simply does not poll.
+        self.board_reader = board_reader
+        self.board_interval_seconds = float(board_interval_seconds)
+        self._board_last_read = None
+        self._board_cursor = None
 
     # --- the exposed surface -----------------------------------------------
 
@@ -383,19 +412,29 @@ class CabinetService:
                 "views": list(VIEW_NAMES)}
 
     def wait_events(self, after_seq=0, timeout_seconds=0):
-        """Return events after a cursor, waiting briefly for the first.
+        """Return what has actually changed, waiting briefly for the first thing.
 
-        This is the minimal form. O2 extends it with the handoff and message
-        wake-ups the operating loop needs.
+        Three sources, and the difference between them is the point:
+
+        * **Durable events** are facts this company recorded.
+        * **Due handoffs** are obligations whose acknowledgment probe has come
+          round. Reading them advances nothing.
+        * **The board** is an outside observation, taken at most once every
+          `board_interval_seconds` and recorded as its own event when it
+          differs.
+
+        What it does *not* return is any claim that a native session finished
+        something. Liveness comes from the injected adapter and means a
+        process is running, never that the work it was given is complete.
         """
 
         after_seq = max(0, int(after_seq or 0))
         timeout = min(max(float(timeout_seconds or 0), 0.0), MAX_WAIT_SECONDS)
         deadline = self._monotonic() + timeout
+        board = self._poll_board()
         while True:
             events = self.store.get_events(after_seq=after_seq)
-            due = [row for row in self.store.get_handoffs()
-                   if row["state"] in DUE_HANDOFF_STATES]
+            due = self.store.pending_handoffs(self.clock())
             remaining = deadline - self._monotonic()
             if events or due or remaining <= 0:
                 break
@@ -404,9 +443,57 @@ class CabinetService:
             # other tool call for up to thirty seconds.
             with released(self.store.lock):
                 self._sleep(min(WAIT_POLL_SECONDS, remaining))
+            board = self._poll_board() or board
         return {"after_seq": after_seq, "events": events, "handoffs_due": due,
-                "timeout_seconds": timeout,
+                "board": board, "liveness": self._liveness(),
+                "timeout_seconds": timeout, "observed": self.clock(),
                 "max_event_seq": self.store.max_event_seq()}
+
+    def _poll_board(self):
+        """Read the board at most once per interval; record a real change.
+
+        Nothing is recorded when nothing changed, because a poll is not an
+        event and a company that narrates its own polling has recreated the
+        volume problem the one-channel rule exists to prevent.
+        """
+
+        if self.board_reader is None:
+            return None
+        now = self._monotonic()
+        if self._board_last_read is not None \
+                and now - self._board_last_read < self.board_interval_seconds:
+            return None
+        self._board_last_read = now
+        issues = list(self.board_reader.read_changed_issues(self._board_cursor))
+        checked = self.clock()
+        if not issues:
+            return {"checked": checked, "changed": 0, "since": self._board_cursor}
+        numbers = [item["number"] for item in issues]
+        stamps = [item.get("updated_at") for item in issues
+                  if item.get("updated_at")]
+        event = self.store.append_event(
+            "board.changed", self.store.identity["repo"] if self.store.identity
+            else "board", None,
+            {"issues": numbers, "since": self._board_cursor,
+             "checked": checked, "changed": len(numbers)})
+        if stamps:
+            self._board_cursor = max(stamps)
+        return {"checked": checked, "changed": len(numbers),
+                "issues": numbers, "since": event["payload"]["since"],
+                "event_id": event["event_id"]}
+
+    def _liveness(self):
+        """What the workspace adapter can see, and nothing more.
+
+        A running process is not a finished task. This deliberately reports no
+        completion field of any kind, so there is nothing here for a caller to
+        misread as one.
+        """
+
+        observe = getattr(self.superset, "observe_liveness", None)
+        if not callable(observe):
+            return {"source": "none", "observations": []}
+        return {"source": "adapter", "observations": list(observe())}
 
     # --- lease, approval and batches ---------------------------------------
 
@@ -476,20 +563,320 @@ class CabinetService:
             "release: O3 lands the board adapter and O4 the workspace adapter"
             % (stored["kind"], grant["grant_id"]))
 
-    # --- operations later tasks own ----------------------------------------
+    # --- handoffs -----------------------------------------------------------
 
     def record_handoff(self, envelope):
-        raise _deferred("record_handoff", "O2")
+        """Make one obligation durable before anybody tries to deliver it.
+
+        A crash between here and the send loses a delivery attempt, never the
+        obligation, which is the whole reason the record comes first.
+        """
+
+        envelope = contracts.validate_handoff_envelope(envelope,
+                                                       REGISTERABLE_ROLES)
+        self.store.get_batch(envelope["batch_id"], envelope["revision"])
+        bounded, truncated = contracts.bound_handoff(envelope)
+        return self.store.record_handoff(bounded, truncated=truncated)
 
     def update_handoff(self, handoff_id, transition, evidence=None):
-        raise _deferred("update_handoff", "O2")
+        """Move a handoff, on evidence about what actually happened.
+
+        Each transition asks a different question, and each one refuses on a
+        different code, so a caller can tell "you are not the recipient" from
+        "the work behind this is not verified":
+
+        * `sent` — did the transport succeed, and was the address the one this
+          recipient is registered at? A result that is not `sent` counts a
+          delivery attempt and leaves the handoff where it was.
+        * `acknowledged` — is the replying session the registered recipient,
+          at the current generation, naming this batch revision?
+        * `resolved` — for a correction, is there a passing QA verdict at the
+          revision the correction produced? Engineering reporting a fix is not
+          one.
+        """
+
+        stored = self.store.get_handoff(handoff_id)
+        evidence = self._handoff_evidence(evidence)
+        handler = {"sent": self._handoff_sent,
+                   "acknowledged": self._handoff_acknowledged,
+                   "resolved": self._handoff_resolved,
+                   "failed": self._handoff_failed,
+                   "superseded": self._handoff_superseded}[transition]
+        return handler(stored, evidence)
+
+    @staticmethod
+    def _handoff_evidence(evidence):
+        if evidence is None:
+            return {}
+        if not isinstance(evidence, dict):
+            raise CabinetError(
+                "FIELD_INVALID",
+                "handoff evidence is an object describing what happened")
+        return dict(evidence)
+
+    def _registered(self, role, code, note):
+        address = self.store.get_address(role)
+        if address is None:
+            raise CabinetError(
+                code,
+                "%s (%s) has no registered native address, so nothing can be "
+                "checked against it" % (role, note))
+        return address["native_address"]
+
+    def _handoff_sent(self, stored, evidence):
+        for field in ("transport", "recipient", "result"):
+            if field not in evidence:
+                raise CabinetError("FIELD_MISSING",
+                                   "a send result states its %r" % field)
+        result = evidence["result"]
+        if result not in contracts.DELIVERY_RESULTS:
+            raise CabinetError("FIELD_INVALID",
+                               "a delivery result is one of %s"
+                               % (contracts.DELIVERY_RESULTS,))
+        expected = self._registered(stored["to_role"], "UNKNOWN_RECIPIENT",
+                                    "the recipient")
+        if evidence["recipient"] != expected:
+            raise CabinetError(
+                "RECIPIENT_MISMATCH",
+                "handoff %s is addressed to %s at %r, not to %r"
+                % (stored["handoff_id"], stored["to_role"], expected,
+                   evidence["recipient"]))
+        if "native_sender" in evidence:
+            sender = self._registered(stored["from_role"],
+                                      "ADDRESS_NOT_REGISTERED", "the sender")
+            if evidence["native_sender"] != sender:
+                raise CabinetError(
+                    "SENDER_MISMATCH",
+                    "handoff %s was raised by %s at %r; %r cannot report its "
+                    "send result" % (stored["handoff_id"], stored["from_role"],
+                                     sender, evidence["native_sender"]))
+        attempts = stored["attempts"] + 1
+        now = self.clock()
+        if result == "sent":
+            return self.store.advance_handoff(
+                stored["handoff_id"], "sent", evidence, attempts=attempts,
+                next_retry_at=contracts.retry_at(now, attempts))
+        if attempts >= contracts.MAX_DELIVERY_ATTEMPTS:
+            failed = self.store.advance_handoff(
+                stored["handoff_id"], "failed", evidence, attempts=attempts,
+                next_retry_at=None, reason=contracts.TRANSPORT_BLOCKED)
+            failed["delivery_diagnosis"] = self._delivery_diagnosis(stored,
+                                                                    attempts)
+            return failed
+        # The delivery did not happen, so the state does not move. Only the
+        # attempt count and the next probe do.
+        return self.store.advance_handoff(
+            stored["handoff_id"], stored["state"], evidence, attempts=attempts,
+            next_retry_at=contracts.retry_at(now, attempts))
+
+    def _delivery_diagnosis(self, stored, attempts):
+        """A handoff for Delivery to diagnose a blocked channel. Not sent.
+
+        The service proposes it and stops there. Recording and delivering it
+        is the chief's call, because a company that silently creates its own
+        obligations is one nobody is accountable for.
+        """
+
+        return {
+            "handoff_id": "%s-delivery" % stored["handoff_id"],
+            "batch_id": stored["batch_id"], "revision": stored["revision"],
+            "from_role": "chief-of-staff", "to_role": "delivery-lead",
+            "kind": "diagnosis",
+            "question": "Handoff %s to %s failed %d delivery attempts; the "
+                        "transport is blocked. Diagnose it and say whether "
+                        "the recipient is offline or the channel is."
+                        % (stored["handoff_id"], stored["to_role"], attempts),
+            "evidence": [], "reply_to": stored["handoff_id"],
+            "expected_response": "The cause of the blocked transport and the "
+                                 "recovery it needs",
+        }
+
+    def _handoff_acknowledged(self, stored, evidence):
+        recipient = self._registered(stored["to_role"], "UNKNOWN_RECIPIENT",
+                                     "the recipient")
+        sender = evidence.get("native_sender")
+        if sender is None:
+            raise CabinetError(
+                "FIELD_MISSING",
+                "an acknowledgment names the session that replied; the "
+                "sender's guess is not one")
+        if sender != recipient:
+            raise CabinetError(
+                "RECIPIENT_MISMATCH",
+                "handoff %s is owed by %s at %r; %r cannot acknowledge it"
+                % (stored["handoff_id"], stored["to_role"], recipient, sender))
+        self._check_revision(stored, evidence)
+        self._check_generation(stored, evidence)
+        if stored["state"] == "acknowledged":
+            # The same reply arriving twice is one obligation, not two.
+            return stored
+        return self.store.advance_handoff(stored["handoff_id"], "acknowledged",
+                                          evidence,
+                                          attempts=stored["attempts"],
+                                          next_retry_at=None)
+
+    def _check_generation(self, stored, evidence):
+        """Refuse a reply from a session working off a superseded assignment.
+
+        The generation compared against is the one the recipient's address was
+        registered at, not the one this connection happens to hold. A role
+        that was restarted re-registers, and everything it says afterwards
+        carries the newer number; a reply still carrying the older one came
+        from a session that has not been told the company moved.
+        """
+
+        claimed = evidence.get("assignment_generation")
+        if claimed is None:
+            return
+        address = self.store.get_address(stored["to_role"])
+        current = address["generation"] if address is not None \
+            else (self.store.generation or 0)
+        if claimed != current:
+            raise CabinetError(
+                "GENERATION_STALE",
+                "the reply carries generation %r; %s is registered at "
+                "generation %d, so the session that replied is working from a "
+                "superseded assignment"
+                % (claimed, stored["to_role"], current))
+
+    @staticmethod
+    def _check_revision(stored, evidence):
+        claimed = evidence.get("revision")
+        if claimed is not None and claimed != stored["revision"]:
+            raise CabinetError(
+                "REVISION_MISMATCH",
+                "handoff %s belongs to revision %d; the reply names %r"
+                % (stored["handoff_id"], stored["revision"], claimed))
+
+    def _handoff_resolved(self, stored, evidence):
+        self._check_revision(stored, evidence)
+        sender = evidence.get("native_sender")
+        if stored["kind"] == "correction":
+            self._check_correction(stored, evidence, sender)
+        elif sender is not None:
+            allowed = {self._address_of(stored["from_role"]),
+                       self._address_of(stored["to_role"])} - {None}
+            if sender not in allowed:
+                raise CabinetError(
+                    "SENDER_MISMATCH",
+                    "%r is neither party to handoff %s"
+                    % (sender, stored["handoff_id"]))
+        return self.store.advance_handoff(stored["handoff_id"], "resolved",
+                                          evidence,
+                                          attempts=stored["attempts"],
+                                          next_retry_at=None)
+
+    def _check_correction(self, stored, evidence, sender):
+        """A correction is closed by QA accepting its evidence, or not at all.
+
+        Two separate things are checked, because they fail for different
+        reasons: who is reporting the resolution, and whether a verdict exists
+        at the revision the correction actually produced.
+        """
+
+        reviewer = self._address_of("qa")
+        if sender is not None and sender != reviewer:
+            raise CabinetError(
+                "SENDER_MISMATCH",
+                "a correction is resolved by QA at %r accepting its evidence, "
+                "not by %r reporting a fix" % (reviewer, sender))
+        assignment_id = evidence.get("assignment_id")
+        revision_sha = evidence.get("revision_sha")
+        if not assignment_id or not revision_sha:
+            raise CabinetError(
+                "VERDICT_REQUIRED",
+                "resolving correction %s needs the assignment and the exact "
+                "revision its verdict was recorded at"
+                % stored["handoff_id"])
+        verdict = self.store.get_verdict(assignment_id, revision_sha, "qa")
+        if verdict is None or verdict["outcome"] != "pass":
+            raise CabinetError(
+                "VERDICT_REQUIRED",
+                "no passing QA verdict exists for %s at %s, so correction %s "
+                "is still open however it was reported"
+                % (assignment_id, revision_sha, stored["handoff_id"]))
+
+    def _address_of(self, role):
+        address = self.store.get_address(role)
+        return address["native_address"] if address else None
+
+    def _handoff_failed(self, stored, evidence):
+        return self.store.advance_handoff(
+            stored["handoff_id"], "failed", evidence,
+            attempts=stored["attempts"], next_retry_at=None,
+            reason=evidence.get("reason"))
+
+    def _handoff_superseded(self, stored, evidence):
+        return self.store.advance_handoff(
+            stored["handoff_id"], "superseded", evidence,
+            attempts=stored["attempts"], next_retry_at=None,
+            reason=evidence.get("reason"))
+
+    # --- registration and verdicts -----------------------------------------
+
+    def register_staff(self, role, native_address):
+        """Bind one teammate role to the address its messages come from."""
+
+        return self._register(role, native_address, "staff")
 
     def register_session(self, assignment_id, registration):
-        raise _deferred("register_session", "O4")
+        """Bind a launched worker's own session identity to its assignment.
+
+        This is the minimal form O2 needs: it makes the worker's address
+        checkable and writes it into the registry the dispatch hook reads. The
+        assignment state machine is O4's, and nothing here touches it.
+        """
+
+        if not isinstance(registration, dict):
+            raise CabinetError("FIELD_INVALID", "a registration is an object")
+        allowed = ("role", "native_address", "native_session_id", "terminal_id")
+        for field in registration:
+            if field not in allowed:
+                raise CabinetError("FIELD_UNKNOWN",
+                                   "a registration has no %r field" % field)
+        for field in ("role", "native_address"):
+            if field not in registration:
+                raise CabinetError("FIELD_MISSING",
+                                   "a registration states its %r" % field)
+        return self._register(registration["role"],
+                              registration["native_address"], "worker",
+                              assignment_id=assignment_id,
+                              native_session_id=registration.get(
+                                  "native_session_id"))
+
+    def _register(self, role, native_address, kind, assignment_id=None,
+                  native_session_id=None):
+        if role not in REGISTERABLE_ROLES:
+            raise CabinetError("ROLE_UNKNOWN",
+                               "%r is not a packaged Cabinet role" % (role,))
+        if not isinstance(native_address, str) or not native_address.strip():
+            raise CabinetError("FIELD_INVALID",
+                               "a native address is non-empty text")
+        return self.store.register_address(
+            role, native_address, kind, assignment_id=assignment_id,
+            native_session_id=native_session_id)
 
     def record_verdict(self, assignment_id, revision_sha, reviewer_role,
                        outcome, evidence=None):
-        raise _deferred("record_verdict", "O5")
+        """Record one reviewer's verdict at one exact revision.
+
+        O5 adds the acceptance-criteria mapping. What lands here is the part
+        O2 depends on: a correction cannot be resolved unless a verdict for
+        its assignment and revision actually exists.
+        """
+
+        if not contracts.SHA_PATTERN.match(revision_sha or ""):
+            raise CabinetError(
+                "FIELD_INVALID",
+                "a verdict names 40 lowercase hex characters of revision")
+        if reviewer_role not in REGISTERABLE_ROLES:
+            raise CabinetError("ROLE_UNKNOWN",
+                               "%r is not a packaged Cabinet role"
+                               % (reviewer_role,))
+        return self.store.record_verdict(assignment_id, revision_sha,
+                                         reviewer_role, outcome, evidence)
+
+    # --- operations later tasks own ----------------------------------------
 
     def reconcile(self, observations):
         raise _deferred("reconcile", "A1")

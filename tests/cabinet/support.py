@@ -37,6 +37,27 @@ def action(key="create-12"):
             "expected_before":{}, "payload":{"issue_number":12}}
 
 
+def handoff_envelope(**overrides):
+    """The contracts' H001 QA correction, with any field replaced."""
+
+    envelope = {
+        "handoff_id":"H001", "batch_id":"B001", "revision":1,
+        "from_role":"qa", "to_role":"engineering", "kind":"correction",
+        "question":"The uninvited account entered; correct AC1",
+        "evidence":[{"ref":"artifact:E001", "sha256":"a" * 64}],
+        "reply_to":"H001",
+        "expected_response":"Correction SHA and verification evidence"
+    }
+    envelope.update(overrides)
+    return envelope
+
+
+#: Every packaged role that runs as one of the chief's in-process teammates
+#: addresses its peers by its own role name, which is what the chief registers.
+ROLE_ADDRESSES = ("chief-of-staff", "product", "engineering", "qa",
+                  "delivery-lead")
+
+
 class FakeClock:
     def __call__(self):
         return "2026-09-09T12:00:00Z"
@@ -320,6 +341,10 @@ class ServiceCase(unittest.TestCase):
 
     repo = "demo/company"
     restricted = True
+    #: Set on a subclass whose tests check a sender or recipient against the
+    #: registered native addresses. Off by default so a suite that does not
+    #: care about addressing keeps a company with no registrations in it.
+    register_addresses = False
 
     def setUp(self):
         from cabinet_runtime import profiles
@@ -344,6 +369,20 @@ class ServiceCase(unittest.TestCase):
         self.service = CabinetService(
             self.store, self.github, self.superset, self.clock, self.elicitor,
             profiles.build_profile, launch=self.launch, sleeper=lambda _: None)
+        self.qa_correction = handoff_envelope()
+        if self.register_addresses:
+            self.register_role_addresses()
+
+    def register_role_addresses(self, roles=ROLE_ADDRESSES):
+        """Bind each role's native address the way the chief does at startup.
+
+        A message-body `from_role` is a claim. These registrations are what it
+        is checked against, so a suite that tests sender or recipient identity
+        needs them present before the first handoff is recorded.
+        """
+
+        for role in roles:
+            self.call("register_staff", {"role": role, "native_address": role})
 
     def call(self, method, arguments=None):
         """Call a tool the way the protocol layer does."""
@@ -376,6 +415,40 @@ class ServiceCase(unittest.TestCase):
                                   "content": {"approve": True}}
         kwargs.setdefault("repo", self.repo)
         return self.call("setup", {"scope": setup_scope(**kwargs)})
+
+
+class FixtureBuilder:
+    """Seeds stored records together with the events that produced them.
+
+    Nothing here writes a row behind the service's back: each fixture drives
+    the same operations production uses, so a record that could not be reached
+    through the service cannot be reached through a fixture either.
+    """
+
+    def __init__(self, case):
+        self.case = case
+
+    def handoff(self, handoff_id="H001", state="recorded", **overrides):
+        """Seed the contracts' QA correction and walk it to `state`."""
+
+        envelope = handoff_envelope(handoff_id=handoff_id, **overrides)
+        service = self.case.service
+        service.record_handoff(envelope)
+        if state == "recorded":
+            return envelope
+        service.update_handoff(handoff_id, "sent",
+                               {"transport": "native",
+                                "recipient": envelope["to_role"],
+                                "result": "sent"})
+        if state == "sent":
+            return envelope
+        service.update_handoff(handoff_id, "acknowledged",
+                               {"native_sender": envelope["to_role"]})
+        if state == "acknowledged":
+            return envelope
+        raise AssertionError("FixtureBuilder.handoff cannot seed %r; resolving "
+                             "a correction needs a QA verdict the test owns"
+                             % (state,))
 
 
 class RpcHarness:
@@ -416,20 +489,35 @@ class RpcHarness:
         return self
 
     def close(self):
-        for stream in (self._client_out, self._server_in, self._server_out,
-                       self._client_in):
+        """Shut down the way a client does: close the write end, then wait.
+
+        Order matters. Closing the server's own reader underneath a parked
+        `readline` is a torn-down file, not a disconnect; closing the client's
+        write end gives the server a genuine end of stream and lets `serve`
+        return on its own.
+        """
+
+        try:
+            self._client_out.close()
+        except OSError:
+            pass
+        self._serve.join(timeout=3)
+        self.server.stop()
+        for stream in (self._server_out, self._server_in, self._client_in):
             try:
                 stream.close()
             except OSError:
                 pass
-        self.server.stop()
-        self._serve.join(timeout=3)
+        self._receive.join(timeout=3)
 
     def _read_forever(self):
         import json as json_module
 
         while True:
-            line = self._client_in.readline()
+            try:
+                line = self._client_in.readline()
+            except (ValueError, OSError):
+                return                     # the harness closed underneath us
             if not line:
                 return
             try:

@@ -94,7 +94,9 @@ class OrdinaryConnectionTest(ServiceCase):
             "prepare_action": {"envelope": action()},
             "execute_action": {"action_id": "A001"},
             "register_session": {"assignment_id": "W001",
-                                 "registration": {"terminal_id": "T1"}},
+                                 "registration": {"role": "implementer",
+                                                  "native_address": "w1"}},
+            "register_staff": {"role": "qa", "native_address": "qa"},
             "record_verdict": {"assignment_id": "W001", "revision_sha": "a" * 40,
                                "reviewer_role": "qa", "outcome": "pass"},
             "pause": {"reason": "owner asked"},
@@ -206,13 +208,6 @@ class DeferredOperationTest(ServiceCase):
 
     def test_each_deferred_operation_names_its_owning_task(self):
         cases = {
-            "record_handoff": {"envelope": {"handoff_id": "H001"}},
-            "update_handoff": {"handoff_id": "H001", "transition": "sent"},
-            "register_session": {"assignment_id": "W001",
-                                 "registration": {"terminal_id": "T1"}},
-            "record_verdict": {"assignment_id": "W001",
-                               "revision_sha": "a" * 40,
-                               "reviewer_role": "qa", "outcome": "pass"},
             "reconcile": {"observations": {}},
         }
         for method, arguments in cases.items():

@@ -4,13 +4,17 @@ The digest is the freeze: a record's canonical JSON hash identifies exactly the
 bytes that were agreed, independent of key order in the caller's dictionary.
 """
 
+import datetime
 import hashlib
 import json
 import re
 
 from .errors import CabinetError
 
-SCHEMA_VERSION = 1
+#: 2 adds the `addresses` projection and the handoff columns O2 needs. A
+#: version-1 database is upgraded in place by `store.SCHEMA_UPGRADES`; a newer
+#: one still opens read-only with SCHEMA_TOO_NEW.
+SCHEMA_VERSION = 2
 
 SHA_PATTERN = re.compile(r"^[0-9a-f]{40}$")
 REPO_PATTERN = re.compile(r"^[A-Za-z0-9._-]+/[A-Za-z0-9._-]+$")
@@ -187,6 +191,167 @@ def validate_action_envelope(envelope):
     _require_mapping(envelope["expected_before"], "action.expected_before")
     _require_mapping(envelope["payload"], "action.payload")
     return json.loads(canonical_json(envelope))
+
+
+# --- handoffs ---------------------------------------------------------------
+
+HANDOFF_FIELDS = (
+    "handoff_id", "batch_id", "revision", "from_role", "to_role", "kind",
+    "question", "evidence", "reply_to", "expected_response",
+)
+
+#: What a handoff is for. The distinction that matters is `correction`: it is
+#: the only kind whose resolution needs a verdict from someone other than the
+#: role that reported the work done.
+HANDOFF_KINDS = ("clarification", "correction", "question", "request",
+                 "report", "diagnosis")
+
+#: States in which a handoff is still an open obligation somebody owes an
+#: answer for. `resolved`, `failed` and `superseded` are finished.
+DUE_HANDOFF_STATES = ("recorded", "sent", "acknowledged")
+
+#: Envelopes are small on purpose. Anything larger is referenced by artifact
+#: ID, and evidence that arrives inline anyway is cut with a visible marker.
+MAX_HANDOFF_BYTES = 8192
+TRUNCATION_MARKER = "[cabinet: content omitted"
+
+#: Seconds after a delivery attempt at which the chief probes for an
+#: acknowledgment. These are implementation defaults, not promised response
+#: times, and they are what `next_retry_at` is computed from.
+HANDOFF_RETRY_SCHEDULE = (30, 90, 210)
+MAX_DELIVERY_ATTEMPTS = len(HANDOFF_RETRY_SCHEDULE)
+
+#: Recorded as the reason on a handoff whose transport never worked. It is a
+#: state of the channel, never a statement about the work behind it.
+TRANSPORT_BLOCKED = "TRANSPORT_BLOCKED"
+
+#: Delivery results a sender may report. Only `sent` advances the state; the
+#: rest count an attempt and leave the handoff where it was, because a send
+#: that did not happen is not a send.
+DELIVERY_RESULTS = ("sent", "failed", "blocked", "held", "unknown")
+
+VERDICT_OUTCOMES = ("pass", "fail")
+
+TIME_FORMAT = "%Y-%m-%dT%H:%M:%SZ"
+
+
+def parse_time(text, label="time"):
+    """Read one stored UTC ISO reading, or raise FIELD_INVALID."""
+
+    if not isinstance(text, str):
+        raise CabinetError("FIELD_INVALID", "%s must be a UTC ISO reading" % label)
+    try:
+        return datetime.datetime.strptime(text, TIME_FORMAT).replace(
+            tzinfo=datetime.timezone.utc)
+    except ValueError as problem:
+        raise CabinetError("FIELD_INVALID",
+                           "%s is not %s: %r" % (label, TIME_FORMAT, text)
+                           ) from problem
+
+
+def format_time(moment):
+    return moment.strftime(TIME_FORMAT)
+
+
+def add_seconds(text, seconds, label="time"):
+    """Return the stored reading `seconds` after `text`."""
+
+    return format_time(parse_time(text, label)
+                       + datetime.timedelta(seconds=seconds))
+
+
+def not_after(first, second):
+    """True when the first stored reading is at or before the second."""
+
+    return parse_time(first) <= parse_time(second)
+
+
+def validate_handoff_envelope(envelope, known_roles=()):
+    """Return a validated copy of a handoff envelope, or raise CabinetError."""
+
+    _check_fields(envelope, HANDOFF_FIELDS, "handoff")
+    _text(envelope["handoff_id"], "handoff.handoff_id")
+    _text(envelope["batch_id"], "handoff.batch_id")
+    if isinstance(envelope["revision"], bool) \
+            or not isinstance(envelope["revision"], int) \
+            or envelope["revision"] < 1:
+        raise CabinetError("FIELD_INVALID", "handoff.revision must be 1 or more")
+    for field in ("from_role", "to_role"):
+        role = _text(envelope[field], "handoff.%s" % field)
+        if known_roles and role not in known_roles:
+            raise CabinetError(
+                "FIELD_INVALID",
+                "handoff.%s is %r, which is not a packaged Cabinet role"
+                % (field, role))
+    if envelope["kind"] not in HANDOFF_KINDS:
+        raise CabinetError("FIELD_INVALID",
+                           "handoff.kind must be one of %s" % (HANDOFF_KINDS,))
+    _text(envelope["question"], "handoff.question")
+    _text(envelope["expected_response"], "handoff.expected_response")
+    if envelope["reply_to"] is not None:
+        _text(envelope["reply_to"], "handoff.reply_to")
+
+    if not isinstance(envelope["evidence"], list):
+        raise CabinetError("FIELD_INVALID", "handoff.evidence must be a list")
+    for index, item in enumerate(envelope["evidence"]):
+        label = "handoff.evidence[%d]" % index
+        _check_fields(item, ("ref", "sha256"), label)
+        _text(item["ref"], "%s.ref" % label)
+        if not isinstance(item["sha256"], str) \
+                or not re.match(r"^[0-9a-f]{64}$", item["sha256"]):
+            raise CabinetError(
+                "FIELD_INVALID",
+                "%s.sha256 must be 64 lowercase hex characters" % label)
+    return json.loads(canonical_json(envelope))
+
+
+def handoff_bytes(envelope):
+    return len(canonical_json(envelope).encode("utf-8"))
+
+
+def bound_handoff(envelope):
+    """Return the envelope cut to the size limit, plus whether it was cut.
+
+    The two long free-text fields are the only ones cut. Evidence references
+    are kept whole and named in the marker, because the reference *is* the
+    retrieval path: dropping it would leave a reader with missing content and
+    no way to ask for it.
+    """
+
+    if handoff_bytes(envelope) <= MAX_HANDOFF_BYTES:
+        return envelope, False
+    refs = [item["ref"] for item in envelope["evidence"]]
+    retrieval = ("retrieve the full text from %s" % ", ".join(refs)) if refs \
+        else ("no artifact reference was supplied; re-record this handoff "
+              "with the evidence as an artifact reference")
+    bounded = dict(envelope)
+    for field in ("question", "expected_response"):
+        text = bounded[field]
+        marker = "%s from handoff.%s; %s]" % (TRUNCATION_MARKER, field, retrieval)
+        room = MAX_HANDOFF_BYTES - (handoff_bytes(bounded) - len(text.encode("utf-8")))
+        room -= len(marker.encode("utf-8")) + 1
+        if room >= len(text.encode("utf-8")):
+            continue
+        keep = text.encode("utf-8")[:max(0, room)].decode("utf-8", "ignore")
+        bounded[field] = "%s %s" % (keep.rstrip(), marker)
+        if handoff_bytes(bounded) <= MAX_HANDOFF_BYTES:
+            break
+    if handoff_bytes(bounded) > MAX_HANDOFF_BYTES:
+        raise CabinetError(
+            "FIELD_INVALID",
+            "a handoff envelope must fit in %d bytes once its free text is "
+            "cut; this one does not, so its evidence list is the part to "
+            "shorten" % MAX_HANDOFF_BYTES)
+    return bounded, True
+
+
+def retry_at(now, attempts):
+    """When the next acknowledgment probe for this attempt comes due."""
+
+    if attempts < 1:
+        return None
+    index = min(attempts, len(HANDOFF_RETRY_SCHEDULE)) - 1
+    return add_seconds(now, HANDOFF_RETRY_SCHEDULE[index], "clock reading")
 
 
 def action_identity(envelope):
@@ -401,7 +566,10 @@ ACTION_TRANSITIONS = {
 
 HANDOFF_TRANSITIONS = {
     "recorded": ("sent", "failed", "superseded"),
-    "sent": ("acknowledged", "failed", "superseded"),
+    # `sent -> sent` is a redelivery of the same obligation under the same ID,
+    # which is what the retry rule asks for: retry the delivery, never
+    # duplicate the work behind it.
+    "sent": ("sent", "acknowledged", "failed", "superseded"),
     "acknowledged": ("resolved", "failed", "superseded"),
     "resolved": (),
     "failed": ("recorded", "superseded"),

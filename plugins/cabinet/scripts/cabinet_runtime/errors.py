@@ -29,6 +29,21 @@ ERROR_CODES = {
     "ASSIGNMENT_CONFLICT": "Another live assignment already owns that work item.",
     "ASSIGNMENT_NOT_FOUND": "No assignment exists with that identifier.",
     "INVALID_TRANSITION": "That state change is not in the recorded machine.",
+    # Handoffs and native addressing
+    "HANDOFF_NOT_FOUND": "No handoff exists with that identifier.",
+    "ADDRESS_NOT_REGISTERED": "No native address is registered for that role.",
+    "UNKNOWN_RECIPIENT": "The handoff's recipient has no registered address.",
+    "RECIPIENT_MISMATCH": "The replying session is not the registered "
+                          "recipient of that handoff.",
+    "SENDER_MISMATCH": "The reporting session is not the registered sender "
+                       "of that handoff.",
+    "GENERATION_STALE": "The reply carries a superseded assignment generation.",
+    "REVISION_MISMATCH": "The reply names a batch revision other than the "
+                         "handoff's.",
+    "VERDICT_REQUIRED": "Resolving a correction needs a passing QA verdict at "
+                        "the revision the correction produced.",
+    "VERDICT_NOT_FOUND": "No verdict exists for that assignment, revision and "
+                         "reviewer.",
     # Lease and fencing
     "LEAD_ACTIVE": "Another lead process holds the company lease.",
     "LEASE_REQUIRED": "The operation needs an acquired lease.",

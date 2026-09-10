@@ -52,9 +52,9 @@ WORKER_TYPES = ("implementer", "test-runner")
 SERVICE_METHODS = (
     "snapshot", "doctor", "context", "acquire_lead", "setup", "propose_batch",
     "request_owner_approval", "record_handoff", "update_handoff",
-    "prepare_action", "execute_action", "register_session", "record_verdict",
-    "pause", "reconcile", "checkpoint", "export_company", "backup",
-    "wait_events",
+    "prepare_action", "execute_action", "register_session", "register_staff",
+    "record_verdict", "pause", "reconcile", "checkpoint", "export_company",
+    "backup", "wait_events",
 )
 SERVICE_TOOLS = tuple("mcp__cabinet__cabinet_%s" % name
                       for name in SERVICE_METHODS)
@@ -103,7 +103,13 @@ CLAUDE_PRIVATE_DIRS = (
 )
 
 SETTINGS_KEYS = ("crossSessionInbound", "permissions", "sandbox", "hooks")
-PERMISSION_KEYS = ("defaultMode", "deny", "disableBypassPermissionsMode")
+PERMISSION_KEYS = ("allow", "defaultMode", "deny",
+                   "disableBypassPermissionsMode")
+
+#: The wildcard that covers this company's own MCP tools. It sits beside the
+#: explicit names rather than replacing them, so the allowlist still works if
+#: a client matches only literal tool names.
+SERVICE_TOOL_PATTERN = "mcp__cabinet__*"
 WIDENING_MODES = ("bypassPermissions", "auto", "dontAsk")
 INBOUND_VALUES = ("accept", "refuse")
 WRITE_TOOLS = ("Edit", "Write", "NotebookEdit")
@@ -334,6 +340,24 @@ def expected_tools(role):
     return IMPLEMENTER_TOOLS if role == "implementer" else TEST_RUNNER_TOOLS
 
 
+def expected_allow(role):
+    """The permission rules a role's own tools need, and no others.
+
+    `defaultMode: manual` prompts per tool call, which would stop the chief's
+    loop on every read it makes. The answer is not a wider mode: owner
+    authority lives in the approval dialog, and a prompt in front of a tool
+    the profile already granted asks the owner to re-approve a decision the
+    profile made. So the allowlist names exactly what the profile granted —
+    nothing here can reach a tool the `--tools` flag did not hand over.
+    """
+
+    kind = role_kind(role)
+    if kind != "chief":
+        return ()
+    return tuple(expected_tools(role)) + (SERVICE_TOOL_PATTERN,) \
+        + tuple(expected_service_tools(role))
+
+
 def expected_service_tools(role):
     kind = role_kind(role)
     if kind == "chief":
@@ -499,6 +523,9 @@ def build_profile(role, workspace, public_context, check_profiles=(),
     permissions = {"defaultMode": "acceptEdits" if kind == "worker" else "manual",
                    "disableBypassPermissionsMode": "disable",
                    "deny": list(deny)}
+    allow = expected_allow(role)
+    if allow:
+        permissions["allow"] = list(allow)
     settings = {"permissions": permissions}
     if kind in ("chief", "worker"):
         settings["crossSessionInbound"] = "accept"
@@ -784,6 +811,21 @@ def _verify_settings(kind, body, settings):
     if mode not in ("manual", "acceptEdits", "plan"):
         raise CabinetError("PROFILE_SETTINGS_WIDENING",
                            "defaultMode=%r is not a mode Cabinet sets" % (mode,))
+    wanted_allow = set(expected_allow(body.get("role")))
+    declared_allow = set(permissions.get("allow") or ())
+    wider = sorted(declared_allow - wanted_allow)
+    if wider:
+        raise CabinetError(
+            "PROFILE_SETTINGS_WIDENING",
+            "a permission allowlist may only name tools the profile already "
+            "granted; these are not among them: %s" % ", ".join(wider[:3]))
+    if wanted_allow and not wanted_allow.issubset(declared_allow):
+        missing = sorted(wanted_allow - declared_allow)[:3]
+        raise CabinetError(
+            "PROFILE_SETTINGS_WIDENING",
+            "a chief running in manual mode stops on a prompt for every tool "
+            "its allowlist omits: %s" % ", ".join(missing))
+
     if permissions.get("disableBypassPermissionsMode") != "disable":
         raise CabinetError(
             "PROFILE_SETTINGS_WIDENING",
@@ -850,6 +892,34 @@ def _verify_sandbox(kind, body, settings):
 
 
 # --- launching --------------------------------------------------------------
+
+def chief_launch(profile, prompt_file=None, background=False):
+    """Return the argv for one chief session. Runs nothing.
+
+    The profile's own argv is the whole command line; this adds only the two
+    things that describe *this* start rather than the profile: whether it runs
+    detached, and the instruction it opens with. A background chief needs an
+    opening instruction because nobody is at the keyboard to give it one.
+    """
+
+    body = plain(profile)
+    if body.get("kind") != "chief":
+        raise CabinetError("ROLE_UNKNOWN",
+                           "only the chief profile launches a company session; "
+                           "%r is a %s profile"
+                           % (body.get("role"), body.get("kind")))
+    verify_profile(body)
+    argv = list(build_argv(body))
+    if background:
+        argv.append("--bg")
+    prompt = None
+    if prompt_file is not None:
+        prompt = _read_prompt(prompt_file)
+        argv.append(prompt)
+    return {"argv": argv, "env": body["env"],
+            "session_name": body["session_name"], "background": bool(background),
+            "prompt_bytes": len(prompt.encode("utf-8")) if prompt else 0}
+
 
 def worker_launch(profile, prompt_file, session_id):
     """Return the argv, settings and environment for one worker. Runs nothing."""
