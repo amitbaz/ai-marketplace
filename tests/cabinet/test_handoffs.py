@@ -700,11 +700,16 @@ class ChiefLaunchTest(unittest.TestCase):
         launch = profiles.chief_launch(self.profile)
         self.assertEqual(launch["argv"], list(self.profile["argv"]))
 
-    def test_background_mode_adds_the_flag_before_the_prompt(self):
-        launch = profiles.chief_launch(self.profile, str(self.prompt),
-                                       background=True)
-        self.assertEqual(launch["argv"][-2:],
-                         ["--bg", "Run the clarification exchange."])
+    def test_background_launch_is_refused(self):
+        # Measured 2026-09-10 against Claude Code 2.1.267: a --bg spawn does
+        # not resolve --agent/--agents/--plugin-dir at all and silently runs
+        # the default template instead of cabinet:chief-of-staff. Until the
+        # CLI supports it, cabinet-launch refuses rather than launching an
+        # unrestricted session under the chief's capability.
+        with self.assertRaises(CabinetError) as caught:
+            profiles.chief_launch(self.profile, str(self.prompt),
+                                  background=True)
+        self.assertEqual(caught.exception.code, "BG_AGENT_UNSUPPORTED")
 
     def test_a_prompt_is_never_read_through_a_symlink(self):
         link = self.root / "link.txt"

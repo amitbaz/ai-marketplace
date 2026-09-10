@@ -915,10 +915,25 @@ def chief_launch(profile, prompt_file=None, background=False):
                            "only the chief profile launches a company session; "
                            "%r is a %s profile"
                            % (body.get("role"), body.get("kind")))
+    if background:
+        # Measured live against Claude Code 2.1.267 on 2026-09-10: a `--bg`
+        # spawn does not resolve `--agent`, inline `--agents` JSON, or
+        # `--plugin-dir` at all — it always prints "no agent named ... —
+        # spawning with default template" and runs the unrestricted default
+        # agent, regardless of argv order. That agent has none of the
+        # chief's tool allowlist or disallowedTools, so a silent fallback
+        # here would hand a detached session broad tool access under the
+        # chief's capability file. Until the CLI supports agent resolution
+        # under `--bg`, a background chief is refused rather than launched
+        # wrong. See docs/cabinet/acceptance/environment.md (2026-09-10).
+        raise CabinetError(
+            "BG_AGENT_UNSUPPORTED",
+            "a detached (--bg) chief cannot be launched: this Claude Code "
+            "build does not resolve --agent/--agents/--plugin-dir under "
+            "--bg and would silently run the default template instead of "
+            "cabinet:chief-of-staff; run the chief attended instead")
     verify_profile(body)
     argv = list(build_argv(body))
-    if background:
-        argv.append("--bg")
     prompt = None
     if prompt_file is not None:
         prompt = _read_prompt(prompt_file)
