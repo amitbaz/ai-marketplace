@@ -131,6 +131,15 @@ a **claim**, checked against the registered sender. It is never a credential.
 A forwarded denied action stays denied, even when the forwarding agent holds a
 wider grant of its own.
 
+**Be exact about what that check proves.** The chief supplies both halves: the
+address a role is registered at, and the address it later reports a message
+came from. So the check proves the chief said the same thing twice, and it
+catches a mixed-up recipient, a stale session and an ordinary mistake. It does
+not prove identity, because nothing here verifies a session against the address
+it claims. The contract says so too — these are claims, not credentials — and
+the reason it is worth stating is that "checked against the registered address"
+reads stronger than it is.
+
 ## When it does not arrive
 
 - **Retry delivery. Never duplicate the action behind it.** The same ID

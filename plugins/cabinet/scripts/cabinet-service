@@ -34,6 +34,7 @@ from cabinet_runtime import contracts, processes, profiles   # noqa: E402
 from cabinet_runtime.errors import CabinetError              # noqa: E402
 from cabinet_runtime.profiles import build_profile           # noqa: E402
 from cabinet_runtime.rpc import RpcServer, StdioElicitor     # noqa: E402
+from cabinet_runtime import service as service_module         # noqa: E402
 from cabinet_runtime.service import CabinetService           # noqa: E402
 from cabinet_runtime.store import Store, process_start_marker  # noqa: E402
 
@@ -50,7 +51,41 @@ LAUNCH_RECORD_FIELDS = ("kind", "launch_id", "company_dir", "repo", "role",
 
 #: Fields a record may carry. A record written without them is a foreground
 #: launch, which is the checked case, so their absence never widens anything.
-OPTIONAL_RECORD_FIELDS = ("background", "written_epoch")
+OPTIONAL_RECORD_FIELDS = ("background", "written_epoch", "record_sha256")
+
+#: The part of a launch record that is bound to the capability. Editing any of
+#: it after the launcher wrote it invalidates `record_sha256`, which is what
+#: stops a foreground record being turned into a background one by flipping a
+#: single boolean. `lease_generation` is deliberately outside it, because
+#: `renew_launch` rewrites that field by design after the lease is taken.
+BOUND_RECORD_FIELDS = ("kind", "launch_id", "company_dir", "repo", "role",
+                       "profile_path", "profile_body_path", "profile_digest",
+                       "session_id", "host_pid", "host_process_start",
+                       "background", "written_epoch")
+
+
+def record_binding(record, capability):
+    """The digest that ties a launch record's own claims to its capability.
+
+    `capability_sha256` proves the file beside the record is the capability
+    this launch minted. It says nothing about the rest of the record, so a
+    field such as `background` — which decides *which* host check runs — could
+    be edited afterwards with no other change.
+
+    This covers both together. Recomputing it needs the capability, so editing
+    the record now means reading a second owner-only file as well as this one.
+
+    Be precise about what that is worth: both files are 0600 and owned by the
+    same user, so an attacker who already has that user can still read the
+    capability and recompute this digest. What it removes is the one-field
+    edit, not the same-uid threat. The parent-process check is the binding that
+    survives that threat, and it is exactly the one a detached launch cannot
+    have.
+    """
+
+    material = {field: record.get(field) for field in BOUND_RECORD_FIELDS}
+    return sha256_of(contracts.canonical_json(
+        {"capability": capability, "record": material}))
 
 #: Fields handed to the service: facts about the launch and nothing else. The
 #: capability digest, the host identity and the bound generation stay here,
@@ -163,6 +198,17 @@ def verified_record(environ):
     if not capability or sha256_of(capability) != record["capability_sha256"]:
         raise CabinetError("CAPABILITY_INVALID",
                            "the capability does not match its launch record")
+    bound = record.get("record_sha256")
+    if not bound:
+        raise CabinetError(
+            "LAUNCH_RECORD_TAMPERED",
+            "this launch record carries no binding digest, so its own claims "
+            "— including whether it is a detached launch — are unverifiable")
+    if bound != record_binding(record, capability):
+        raise CabinetError(
+            "LAUNCH_RECORD_TAMPERED",
+            "this launch record was changed after it was written; its claims "
+            "no longer match the capability they were bound to")
     company = Path(record["company_dir"])
     if not company.is_absolute() or not company.is_dir():
         raise CabinetError("LAUNCH_CONTEXT_INVALID",
@@ -440,8 +486,14 @@ def build_service(environ, cwd, launch=None):
                 "no repository identity: run this from a checkout with an "
                 "origin remote, or set %s" % ENV_REPO)
         company = company_directory(repo, environ)
-        company.mkdir(parents=True, exist_ok=True)
-        company.chmod(0o700)
+        if not (company / "runtime" / "cabinet.sqlite3").exists():
+            # A connection that may only read does not bring a company into
+            # existence. This path is reached by every ordinary session in
+            # every checkout on the machine, and by a *refused* restricted
+            # launch — which is how it created an empty company under the
+            # owner's real ~/.cabinet during the O2 live run. Diagnosis is
+            # still available; storage is not created to provide it.
+            return absent_company_service(repo, company, refusal), None, None
     store = Store(company, utc_now, repo=repo).open()
     renewer = None
     if record is not None:
@@ -463,6 +515,72 @@ def build_service(environ, cwd, launch=None):
     return service, elicitor, store
 
 
+class AbsentCompanyService:
+    """The surface a session gets when no company exists to open.
+
+    It answers the one question worth asking — what is missing and what would
+    create it — and refuses everything else by a stable code. It holds no
+    store, creates no directory, and has no writing path at all, so there is
+    nothing here that could become a company by being called.
+    """
+
+    def __init__(self, repo, company, refusal=None):
+        self.repo = repo
+        self.company = str(company)
+        self.refusal = refusal
+        self.launch = None
+
+    def tool_names(self):
+        return list(service_module.TOOL_NAMES)
+
+    def has_tool(self, name):
+        return name in service_module.TOOL_NAMES
+
+    def tools(self):
+        return [definition for definition in _read_only_definitions()
+                if definition["name"] == "cabinet_doctor"]
+
+    def call(self, name, arguments):
+        if not self.has_tool(name):
+            raise CabinetError("TOOL_UNKNOWN", "no Cabinet tool named %s" % name)
+        if name != "cabinet_doctor":
+            raise CabinetError(
+                "COMPANY_NOT_FOUND",
+                "no company state exists for %s at %s. Start one with "
+                "`cabinet-launch --repo %s` and the setup dialog; this "
+                "connection creates nothing."
+                % (self.repo, self.company, self.repo))
+        checks = [{"check": "store", "status": "absent",
+                   "detail": "no company state for %s at %s"
+                             % (self.repo, self.company)},
+                  {"check": "identity", "status": "unbound",
+                   "detail": self.repo},
+                  {"check": "launch", "status": "refused" if self.refusal
+                   else "ordinary",
+                   "detail": "%s: %s" % (self.refusal.code, self.refusal.message)
+                   if self.refusal else
+                   "reads only; mutation needs a verified launch"},
+                  {"check": "next", "status": "ok",
+                   "detail": "run `cabinet-launch --repo %s`, or /cabinet:hire "
+                             "in an ordinary session, to create this company"
+                             % self.repo}]
+        return {"ok": False, "generated": utc_now(), "checks": checks}
+
+
+def _read_only_definitions():
+    """The read tool definitions, borrowed from the real service's table."""
+
+    return [{"name": name,
+             "description": service_module.TOOL_SPECS[name[len("cabinet_"):]][2],
+             "inputSchema": service_module.TOOL_SPECS[name[len("cabinet_"):]][1],
+             "annotations": {"readOnlyHint": True, "openWorldHint": False}}
+            for name in service_module.READ_TOOLS]
+
+
+def absent_company_service(repo, company, refusal=None):
+    return AbsentCompanyService(repo, company, refusal)
+
+
 def main(argv=None, environ=None, cwd=None):
     argv = list(sys.argv[1:] if argv is None else argv)
     environ = dict(os.environ if environ is None else environ)
@@ -474,14 +592,17 @@ def main(argv=None, environ=None, cwd=None):
         return 1
     try:
         if "--doctor" in argv:
-            json.dump(service.doctor(), sys.stdout, indent=2, sort_keys=True)
+            report = service.doctor() if hasattr(service, "doctor") \
+                else service.call("cabinet_doctor", {})
+            json.dump(report, sys.stdout, indent=2, sort_keys=True)
             sys.stdout.write("\n")
             return 0
         RpcServer(sys.stdin.buffer, sys.stdout.buffer, service, elicitor,
                   log=log).serve()
         return 0
     finally:
-        store.close()
+        if store is not None:
+            store.close()
 
 
 if __name__ == "__main__":

@@ -44,6 +44,12 @@ ERROR_CODES = {
                         "the revision the correction produced.",
     "VERDICT_NOT_FOUND": "No verdict exists for that assignment, revision and "
                          "reviewer.",
+    "HANDOFF_SETTLED": "The handoff is past delivery; a transport report "
+                       "cannot change it.",
+    "COMPANY_NOT_FOUND": "No company state exists for that repository, and a "
+                         "read-only connection does not create one.",
+    "LAUNCH_RECORD_TAMPERED": "A launch record's own claims no longer match "
+                              "the capability they were bound to.",
     # Lease and fencing
     "LEAD_ACTIVE": "Another lead process holds the company lease.",
     "LEASE_REQUIRED": "The operation needs an acquired lease.",

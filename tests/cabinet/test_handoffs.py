@@ -20,8 +20,8 @@ from cabinet_runtime.service import (BOARD_INTERVAL_SECONDS, TOOL_NAMES,
                                      CabinetService)
 from cabinet_runtime.store import Store
 
-from support import (PLUGIN_ROOT, FixtureBuilder, ServiceCase,
-                     handoff_envelope, load_script)
+from support import (PLUGIN_ROOT, FakeClock, FixtureBuilder,
+                     ServiceCase, handoff_envelope, load_script)
 
 
 class HandoffCase(ServiceCase):
@@ -37,7 +37,8 @@ class AcknowledgmentTest(HandoffCase):
     def test_send_is_not_acknowledgment(self):
         saved = self.service.record_handoff(self.qa_correction)
         self.service.update_handoff(saved["handoff_id"], "sent",
-            {"transport":"native", "recipient":"engineering", "result":"sent"})
+            {"transport":"native", "recipient":"engineering", "result":"sent",
+             "native_sender":"qa"})
         item = self.store.get_handoff(saved["handoff_id"])
         self.assertEqual(item["state"], "sent")
         self.assertIn(item["handoff_id"],
@@ -46,10 +47,12 @@ class AcknowledgmentTest(HandoffCase):
     def test_wrong_registered_sender_cannot_ack(self):
         saved = self.service.record_handoff(self.qa_correction)
         self.service.update_handoff(saved["handoff_id"], "sent",
-            {"transport":"native", "recipient":"engineering", "result":"sent"})
+            {"transport":"native", "recipient":"engineering", "result":"sent",
+             "native_sender":"qa"})
         with self.assertRaises(CabinetError) as caught:
             self.service.update_handoff(saved["handoff_id"], "acknowledged",
-                {"native_sender":"product", "assignment_generation":1})
+                {"native_sender":"product", "assignment_generation":1,
+                 "revision":1})
         self.assertEqual(caught.exception.code, "RECIPIENT_MISMATCH")
 
 
@@ -145,7 +148,7 @@ class DeliveryTest(HandoffCase):
 
     def send(self, result="sent", **extra):
         evidence = {"transport": "native", "recipient": "engineering",
-                    "result": result}
+                    "result": result, "native_sender": "qa"}
         evidence.update(extra)
         return self.service.update_handoff("H001", "sent", evidence)
 
@@ -211,7 +214,8 @@ class DeliveryTest(HandoffCase):
             self.service.update_handoff("H001", "sent",
                                         {"transport": "native",
                                          "recipient": "product",
-                                         "result": "sent"})
+                                         "result": "sent",
+                                         "native_sender": "qa"})
         self.assertEqual(caught.exception.code, "RECIPIENT_MISMATCH")
 
     def test_an_unregistered_recipient_cannot_be_sent_to(self):
@@ -222,13 +226,18 @@ class DeliveryTest(HandoffCase):
             self.service.update_handoff("H003", "sent",
                                         {"transport": "native",
                                          "recipient": "design",
-                                         "result": "sent"})
+                                         "result": "sent",
+                                         "native_sender": "qa"})
         self.assertEqual(caught.exception.code, "UNKNOWN_RECIPIENT")
 
     def test_an_unknown_handoff_is_refused(self):
         self.assertEqual(
             self.refuse("update_handoff",
-                        {"handoff_id": "H404", "transition": "sent"}),
+                        {"handoff_id": "H404", "transition": "sent",
+                         "evidence": {"transport": "native",
+                                      "recipient": "engineering",
+                                      "result": "sent",
+                                      "native_sender": "qa"}}),
             "HANDOFF_NOT_FOUND")
 
 
@@ -240,10 +249,16 @@ class AcknowledgeTest(HandoffCase):
         self.service.update_handoff("H001", "sent",
                                     {"transport": "native",
                                      "recipient": "engineering",
-                                     "result": "sent"})
+                                     "result": "sent",
+                                     "native_sender": "qa"})
+
+    def live(self, role="engineering"):
+        """The generation `role`'s address is currently registered at."""
+
+        return self.store.get_address(role)["generation"]
 
     def ack(self, **extra):
-        evidence = {"native_sender": "engineering",
+        evidence = {"native_sender": "engineering", "revision": 1,
                     "assignment_generation":
                         self.store.get_address("engineering")["generation"]}
         evidence.update(extra)
@@ -272,7 +287,9 @@ class AcknowledgeTest(HandoffCase):
         self.service.record_handoff(envelope)
         with self.assertRaises(CabinetError) as caught:
             self.service.update_handoff("H004", "acknowledged",
-                                        {"native_sender": "engineering"})
+                                        {"native_sender": "engineering",
+                                         "revision": 1,
+                                         "assignment_generation": self.live()})
         self.assertEqual(caught.exception.code, "INVALID_TRANSITION")
 
     def test_a_stale_assignment_generation_is_refused(self):
@@ -293,10 +310,13 @@ class AcknowledgeTest(HandoffCase):
         self.service.record_handoff(envelope)
         self.service.update_handoff("H005", "sent",
                                     {"transport": "native", "recipient": "qa",
-                                     "result": "sent"})
+                                     "result": "sent",
+                                     "native_sender": "engineering"})
         with self.assertRaises(CabinetError) as caught:
             self.service.update_handoff("H005", "acknowledged",
-                                        {"native_sender": "engineering"})
+                                        {"native_sender": "engineering",
+                                         "revision": 1,
+                                         "assignment_generation": self.live()})
         self.assertEqual(caught.exception.code, "RECIPIENT_MISMATCH")
 
 
@@ -311,6 +331,7 @@ class ResolutionTest(HandoffCase):
         with self.assertRaises(CabinetError) as caught:
             self.service.update_handoff("H001", "resolved",
                                         {"native_sender": "qa",
+                                         "revision": 1,
                                          "assignment_id": "W001",
                                          "revision_sha": "c" * 40})
         self.assertEqual(caught.exception.code, "VERDICT_REQUIRED")
@@ -320,7 +341,7 @@ class ResolutionTest(HandoffCase):
                                     [{"ref": "artifact:E002",
                                       "sha256": "d" * 64}])
         resolved = self.service.update_handoff(
-            "H001", "resolved", {"native_sender": "qa",
+            "H001", "resolved", {"native_sender": "qa", "revision": 1,
                                  "assignment_id": "W001",
                                  "revision_sha": "c" * 40})
         self.assertEqual(resolved["state"], "resolved")
@@ -334,6 +355,7 @@ class ResolutionTest(HandoffCase):
         with self.assertRaises(CabinetError) as caught:
             self.service.update_handoff("H001", "resolved",
                                         {"native_sender": "qa",
+                                         "revision": 1,
                                          "assignment_id": "W001",
                                          "revision_sha": "f" * 40})
         self.assertEqual(caught.exception.code, "VERDICT_REQUIRED")
@@ -344,6 +366,7 @@ class ResolutionTest(HandoffCase):
         with self.assertRaises(CabinetError) as caught:
             self.service.update_handoff("H001", "resolved",
                                         {"native_sender": "engineering",
+                                         "revision": 1,
                                          "assignment_id": "W001",
                                          "revision_sha": "c" * 40})
         self.assertEqual(caught.exception.code, "SENDER_MISMATCH")
@@ -356,23 +379,30 @@ class ResolutionTest(HandoffCase):
         self.service.update_handoff("H010", "sent",
                                     {"transport": "native",
                                      "recipient": "engineering",
-                                     "result": "sent"})
-        self.service.update_handoff("H010", "acknowledged",
-                                    {"native_sender": "engineering"})
+                                     "result": "sent",
+                                     "native_sender": "product"})
+        self.service.update_handoff(
+            "H010", "acknowledged",
+            {"native_sender": "engineering", "revision": 1,
+             "assignment_generation":
+                 self.store.get_address("engineering")["generation"]})
         resolved = self.service.update_handoff(
-            "H010", "resolved", {"native_sender": "engineering",
+            "H010", "resolved", {"native_sender": "engineering", "revision": 1,
                                  "response": "The rule applies per account."})
         self.assertEqual(resolved["state"], "resolved")
 
     def test_a_resolved_handoff_is_terminal(self):
         self.service.record_verdict("W001", "c" * 40, "qa", "pass", [])
         self.service.update_handoff("H001", "resolved",
-                                    {"native_sender": "qa",
+                                    {"native_sender": "qa", "revision": 1,
                                      "assignment_id": "W001",
                                      "revision_sha": "c" * 40})
         with self.assertRaises(CabinetError) as caught:
-            self.service.update_handoff("H001", "acknowledged",
-                                        {"native_sender": "engineering"})
+            self.service.update_handoff(
+                "H001", "acknowledged",
+                {"native_sender": "engineering", "revision": 1,
+                 "assignment_generation":
+                     self.store.get_address("engineering")["generation"]})
         self.assertEqual(caught.exception.code, "INVALID_TRANSITION")
 
 
@@ -384,7 +414,8 @@ class RestartTest(HandoffCase):
         self.service.update_handoff("H001", "sent",
                                     {"transport": "native",
                                      "recipient": "engineering",
-                                     "result": "sent"})
+                                     "result": "sent",
+                                     "native_sender": "qa"})
         self.store.close()
         reopened = Store(self.root, self.clock, repo=self.repo).open()
         self.addCleanup(reopened.close)
@@ -703,6 +734,309 @@ class ChiefLaunchTest(unittest.TestCase):
             environ, str(self.root))
         self.assertTrue(report["peer_registry"].startswith(
             str(Path(report["company_dir"]) / "runtime")))
+
+
+class SettledHandoffTest(HandoffCase):
+    """A sender's transport report cannot unmake a recipient's reply.
+
+    The reviewer's probe: after a valid acknowledgment, three `result: failed`
+    reports re-armed a probe on an acknowledged handoff, then drove it to
+    `failed`/`TRANSPORT_BLOCKED`, then rewrote it without limit.
+    """
+
+    def setUp(self):
+        super().setUp()
+        self.builder = FixtureBuilder(self)
+
+    def report(self, handoff_id="H001", result="failed"):
+        return self.service.update_handoff(
+            handoff_id, "sent",
+            {"transport": "native", "recipient": "engineering",
+             "result": result, "native_sender": "qa"})
+
+    def test_the_reviewers_sequence_is_refused_three_times_over(self):
+        self.builder.handoff("H001", "acknowledged")
+        for attempt in range(3):
+            with self.subTest(attempt=attempt + 1):
+                with self.assertRaises(CabinetError) as caught:
+                    self.report()
+                self.assertEqual(caught.exception.code, "HANDOFF_SETTLED")
+        stored = self.store.get_handoff("H001")
+        self.assertEqual(stored["state"], "acknowledged")
+        self.assertIsNone(stored["reason"])
+        self.assertIsNone(stored["next_retry_at"])
+
+    def test_a_successful_send_report_after_an_acknowledgment_is_refused(self):
+        self.builder.handoff("H001", "acknowledged")
+        with self.assertRaises(CabinetError) as caught:
+            self.report(result="sent")
+        self.assertEqual(caught.exception.code, "HANDOFF_SETTLED")
+
+    def test_an_acknowledged_handoff_is_never_re_armed(self):
+        self.builder.handoff("H001", "acknowledged")
+        try:
+            self.report()
+        except CabinetError:
+            pass
+        due = [row["handoff_id"]
+               for row in self.store.pending_handoffs("2030-01-01T00:00:00Z")]
+        self.assertNotIn("H001", due)
+
+    def test_a_failed_handoff_cannot_be_rewritten(self):
+        self.builder.handoff("H001", "sent")
+        self.service.update_handoff("H001", "failed",
+                                    {"reason": "recipient never launched"})
+        for transition, evidence in (
+                ("sent", {"transport": "native", "recipient": "engineering",
+                          "result": "failed", "native_sender": "qa"}),
+                ("failed", {"reason": "again"}),
+                ("acknowledged",
+                 {"native_sender": "engineering", "revision": 1,
+                  "assignment_generation":
+                      self.store.get_address("engineering")["generation"]})):
+            with self.subTest(transition=transition):
+                with self.assertRaises(CabinetError) as caught:
+                    self.service.update_handoff("H001", transition, evidence)
+                self.assertIn(caught.exception.code,
+                              ("HANDOFF_SETTLED", "INVALID_TRANSITION"))
+        self.assertEqual(self.store.get_handoff("H001")["reason"],
+                         "recipient never launched")
+
+    def test_every_terminal_state_refuses_every_transition(self):
+        for state, seed in (("resolved", self.resolved), ("superseded",
+                                                          self.superseded)):
+            for transition in ("sent", "acknowledged", "resolved", "failed",
+                               "superseded"):
+                with self.subTest(state=state, transition=transition):
+                    case = seed()
+                    with self.assertRaises(CabinetError):
+                        self.service.update_handoff(case, transition,
+                                                    self.any_evidence())
+                    self.assertEqual(self.store.get_handoff(case)["state"],
+                                     state)
+
+    _next = [100]
+
+    def fresh(self, kind="clarification"):
+        self._next[0] += 1
+        handoff_id = "H%d" % self._next[0]
+        FixtureBuilder(self).handoff(handoff_id, "acknowledged", kind=kind)
+        return handoff_id
+
+    def resolved(self):
+        handoff_id = self.fresh()
+        self.service.update_handoff(handoff_id, "resolved",
+                                    {"native_sender": "engineering",
+                                     "revision": 1, "response": "answered"})
+        return handoff_id
+
+    def superseded(self):
+        handoff_id = self.fresh()
+        self.service.update_handoff(handoff_id, "superseded",
+                                    {"reason": "revision replaced"})
+        return handoff_id
+
+    @staticmethod
+    def any_evidence():
+        return {"transport": "native", "recipient": "engineering",
+                "result": "sent", "native_sender": "qa",
+                "assignment_generation": 1, "revision": 1,
+                "reason": "whatever"}
+
+
+class RequiredClaimTest(HandoffCase):
+    """A check that runs only when the caller volunteers the claim is not one."""
+
+    def setUp(self):
+        super().setUp()
+        FixtureBuilder(self).handoff("H001", "sent")
+        FixtureBuilder(self).handoff("H002", "acknowledged",
+                                     kind="clarification")
+
+    def omit(self, handoff_id, transition, evidence, field):
+        pruned = {key: value for key, value in evidence.items() if key != field}
+        with self.assertRaises(CabinetError) as caught:
+            self.service.update_handoff(handoff_id, transition, pruned)
+        return caught.exception.code
+
+    def test_a_send_report_must_name_the_reporting_sender(self):
+        evidence = {"transport": "native", "recipient": "engineering",
+                    "result": "sent", "native_sender": "qa"}
+        for field in ("transport", "recipient", "result", "native_sender"):
+            with self.subTest(field=field):
+                self.assertEqual(self.omit("H001", "sent", evidence, field),
+                                 "FIELD_MISSING")
+
+    def test_an_acknowledgment_must_name_its_sender_generation_and_revision(self):
+        evidence = {"native_sender": "engineering", "revision": 1,
+                    "assignment_generation": self.store.get_address(
+                        "engineering")["generation"]}
+        for field in ("native_sender", "revision", "assignment_generation"):
+            with self.subTest(field=field):
+                self.assertEqual(
+                    self.omit("H001", "acknowledged", evidence, field),
+                    "FIELD_MISSING")
+
+    def test_a_resolution_must_name_a_party(self):
+        evidence = {"native_sender": "engineering", "revision": 1}
+        for field in ("native_sender", "revision"):
+            with self.subTest(field=field):
+                self.assertEqual(self.omit("H002", "resolved", evidence, field),
+                                 "FIELD_MISSING")
+
+    def test_a_resolution_with_no_evidence_at_all_is_refused(self):
+        """The reviewer's exact call: `update_handoff(id, "resolved")`."""
+
+        with self.assertRaises(CabinetError) as caught:
+            self.service.update_handoff("H002", "resolved")
+        self.assertEqual(caught.exception.code, "FIELD_MISSING")
+        self.assertEqual(self.store.get_handoff("H002")["state"],
+                         "acknowledged")
+
+    def test_a_failure_must_state_a_reason(self):
+        self.assertEqual(self.omit("H001", "failed", {"reason": "x"}, "reason"),
+                         "FIELD_MISSING")
+
+
+class PauseFenceTest(HandoffCase):
+    """A pause fences new work; it never stops recording what already happened."""
+
+    def setUp(self):
+        super().setUp()
+        FixtureBuilder(self).handoff("H001", "sent")
+
+    def test_a_paused_company_refuses_a_new_delivery_attempt(self):
+        self.call("pause", {"reason": "owner asked"})
+        self.assertEqual(
+            self.refuse("update_handoff",
+                        {"handoff_id": "H001", "transition": "sent",
+                         "evidence": {"transport": "native",
+                                      "recipient": "engineering",
+                                      "result": "sent",
+                                      "native_sender": "qa"}}),
+            "PAUSED")
+
+    def test_a_paused_company_still_records_an_acknowledgment_that_arrived(self):
+        self.call("pause", {"reason": "owner asked"})
+        acknowledged = self.service.update_handoff(
+            "H001", "acknowledged",
+            {"native_sender": "engineering", "revision": 1,
+             "assignment_generation":
+                 self.store.get_address("engineering")["generation"]})
+        self.assertEqual(acknowledged["state"], "acknowledged")
+
+
+class AbsentCompanyTest(unittest.TestCase):
+    """A read-only connection never brings a company into existence.
+
+    This is the path that created an empty company under the owner's real
+    `~/.cabinet` during the O2 live run: a refused restricted launch falls back
+    to the working directory's git origin, and opening a company used to create
+    it.
+    """
+
+    def setUp(self):
+        self.module = load_script(PLUGIN_ROOT / "scripts" / "cabinet-service",
+                                  "cabinet_service_absent")
+        self.tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(self.tmp.cleanup)
+        self.home = Path(self.tmp.name) / "home"
+        self.home.mkdir()
+        self.environ = {"HOME": str(self.home), "CABINET_HOME": str(self.home),
+                        "CABINET_REPO": "demo/absent",
+                        "PATH": os.environ["PATH"]}
+
+    def build(self):
+        return self.module.build_service(self.environ, str(self.tmp.name))
+
+    def test_no_company_directory_is_created(self):
+        self.build()
+        self.assertEqual(sorted(path.name for path in self.home.iterdir()), [])
+
+    def test_doctor_still_explains_what_is_missing(self):
+        service, _elicitor, store = self.build()
+        self.assertIsNone(store)
+        checks = {check["check"]: check
+                  for check in service.call("cabinet_doctor", {})["checks"]}
+        self.assertEqual(checks["store"]["status"], "absent")
+        self.assertIn("demo/absent", checks["next"]["detail"])
+        self.assertIn("cabinet-launch", checks["next"]["detail"])
+
+    def test_every_other_tool_refuses_by_a_stable_code(self):
+        service, _elicitor, _store = self.build()
+        for name in ("cabinet_snapshot", "cabinet_context",
+                     "cabinet_wait_events", "cabinet_propose_batch",
+                     "cabinet_record_handoff"):
+            with self.subTest(tool=name):
+                with self.assertRaises(CabinetError) as caught:
+                    service.call(name, {})
+                self.assertEqual(caught.exception.code, "COMPANY_NOT_FOUND")
+        self.assertEqual(sorted(path.name for path in self.home.iterdir()), [])
+
+    def test_an_existing_company_is_still_opened(self):
+        company = self.home / "repos" / "demo-absent"
+        Store(company, FakeClock(), repo="demo/absent").open().close()
+        service, _elicitor, store = self.build()
+        self.addCleanup(store.close)
+        self.assertEqual(service.doctor()["checks"][0]["status"], "open")
+
+
+class LaunchRecordBindingTest(unittest.TestCase):
+    """The record's own claims are bound to the capability it was minted with.
+
+    `background` decides which host check runs. Without this it is a boolean
+    anyone who can read the record can flip, which removes the parent-process
+    binding from a foreground launch.
+    """
+
+    def setUp(self):
+        self.module = load_script(PLUGIN_ROOT / "scripts" / "cabinet-service",
+                                  "cabinet_service_binding")
+        self.launcher = load_script(PLUGIN_ROOT / "scripts" / "cabinet-launch",
+                                    "cabinet_launch_binding")
+
+    def record(self, **overrides):
+        body = {"kind": "restricted", "launch_id": "L1",
+                "company_dir": "/tmp/x", "repo": "demo/company",
+                "role": "chief-of-staff", "profile_path": "/tmp/x/s.json",
+                "profile_body_path": "/tmp/x/p.json",
+                "profile_digest": "0" * 64, "session_id": "S1",
+                "host_pid": 1, "host_process_start": "x",
+                "background": False, "written_epoch": 1.0}
+        body.update(overrides)
+        return body
+
+    def test_the_launcher_and_the_service_bind_the_same_fields(self):
+        self.assertEqual(self.launcher.BOUND_RECORD_FIELDS,
+                         self.module.BOUND_RECORD_FIELDS)
+
+    def test_the_launcher_and_the_service_compute_the_same_digest(self):
+        record = self.record()
+        self.assertEqual(self.launcher.bind_record(record, "cap"),
+                         self.module.record_binding(record, "cap"))
+
+    def test_flipping_background_invalidates_the_binding(self):
+        original = self.module.record_binding(self.record(), "cap")
+        flipped = self.module.record_binding(self.record(background=True), "cap")
+        self.assertNotEqual(original, flipped)
+
+    def test_moving_the_written_time_invalidates_the_binding(self):
+        original = self.module.record_binding(self.record(), "cap")
+        moved = self.module.record_binding(self.record(written_epoch=99.0),
+                                           "cap")
+        self.assertNotEqual(original, moved)
+
+    def test_the_binding_covers_every_field_that_decides_a_check(self):
+        for field in ("kind", "company_dir", "repo", "role", "profile_digest",
+                      "session_id", "host_pid", "host_process_start",
+                      "background", "written_epoch"):
+            with self.subTest(field=field):
+                self.assertIn(field, self.module.BOUND_RECORD_FIELDS)
+
+    def test_the_renewed_generation_is_not_bound(self):
+        """`renew_launch` rewrites it by design, so binding it would self-break."""
+
+        self.assertNotIn("lease_generation", self.module.BOUND_RECORD_FIELDS)
 
 
 class BackgroundLaunchBindingTest(unittest.TestCase):

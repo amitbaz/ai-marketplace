@@ -564,17 +564,26 @@ ACTION_TRANSITIONS = {
     "failed": (),
 }
 
+# The two self-transitions are declared rather than inferred. A delivery
+# attempt that did not deliver leaves the handoff where it was and moves only
+# the attempt count, so it is a write at the same state; a redelivery of an
+# already-sent obligation is the same under the same ID. Everything else must
+# name a different state, which is what stops a stale transport report writing
+# over an acknowledgment.
 HANDOFF_TRANSITIONS = {
-    "recorded": ("sent", "failed", "superseded"),
-    # `sent -> sent` is a redelivery of the same obligation under the same ID,
-    # which is what the retry rule asks for: retry the delivery, never
-    # duplicate the work behind it.
+    "recorded": ("recorded", "sent", "failed", "superseded"),
     "sent": ("sent", "acknowledged", "failed", "superseded"),
     "acknowledged": ("resolved", "failed", "superseded"),
     "resolved": (),
     "failed": ("recorded", "superseded"),
     "superseded": (),
 }
+
+#: States in which a handoff is still waiting to be delivered. A transport
+#: report about anything past these is refused: the recipient has already
+#: replied, or the obligation is closed, and a sender's stale receipt must not
+#: be able to unmake either.
+DELIVERABLE_HANDOFF_STATES = ("recorded", "sent")
 
 ASSIGNMENT_TRANSITIONS = {
     "reserved": ("starting", "cancelled", "blocked", "lost"),

@@ -440,17 +440,11 @@ class EntrypointTest(unittest.TestCase):
         path.chmod(mode)
         return path
 
-    def write_launch(self, capability="c" * 64, mode=0o600, settings=None,
-                     profile=None, **overrides):
-        """Write a complete, valid launch and return its environment."""
+    def launch_record(self, capability="c" * 64, body=None):
+        """The record a launcher would write for this fixture's profile."""
 
-        body = profile if profile is not None else profiles.plain(self.profile)
-        capability_file = self.write("L1.capability", capability, mode)
-        self.write("L1.profile.json", json.dumps(body))
-        self.write("L1.settings.json",
-                   settings if settings is not None
-                   else json.dumps(body["settings"]))
-        record = {
+        body = body if body is not None else profiles.plain(self.profile)
+        return {
             "kind": "restricted", "launch_id": "L1",
             "company_dir": str(self.home), "repo": "demo/company",
             "role": "chief-of-staff",
@@ -463,7 +457,25 @@ class EntrypointTest(unittest.TestCase):
             "lease_generation": None,
             "capability_sha256": self.module.sha256_of(capability),
         }
+
+    def write_launch(self, capability="c" * 64, mode=0o600, settings=None,
+                     profile=None, **overrides):
+        """Write a complete, valid launch and return its environment."""
+
+        body = profile if profile is not None else profiles.plain(self.profile)
+        capability_file = self.write("L1.capability", capability, mode)
+        self.write("L1.profile.json", json.dumps(body))
+        self.write("L1.settings.json",
+                   settings if settings is not None
+                   else json.dumps(body["settings"]))
+        record = self.launch_record(capability=capability, body=body)
         record.update(overrides)
+        # The binding is computed after the overrides, so a test that changes
+        # one field still models a record its launcher wrote and exercises the
+        # check it is about. A test that wants a record edited *afterwards*
+        # passes `record_sha256` explicitly.
+        record.setdefault("record_sha256",
+                          self.module.record_binding(record, capability))
         launch_file = self.write("L1.launch.json", json.dumps(record))
         return {"CABINET_LAUNCH_FILE": str(launch_file),
                 "CABINET_CAPABILITY_FILE": str(capability_file)}
@@ -494,6 +506,50 @@ class EntrypointTest(unittest.TestCase):
     def test_a_readable_capability_file_is_refused(self):
         self.assertEqual(self.refuse(self.write_launch(mode=0o644)),
                          "UNSAFE_PATH")
+
+    # --- the record's own claims ------------------------------------------
+
+    def test_a_record_edited_after_it_was_written_is_refused(self):
+        """`background` decides which host check runs, so it must not be
+        editable on its own. Flipping it with the original digest left in
+        place is exactly the edit that would remove the parent binding."""
+
+        untouched = self.module.record_binding(self.launch_record(), "c" * 64)
+        environ = self.write_launch(background=True,
+                                    record_sha256=untouched)
+        self.assertEqual(self.refuse(environ), "LAUNCH_RECORD_TAMPERED")
+
+    def test_moving_the_written_time_is_refused(self):
+        untouched = self.module.record_binding(self.launch_record(), "c" * 64)
+        environ = self.write_launch(written_epoch=1.0,
+                                    record_sha256=untouched)
+        self.assertEqual(self.refuse(environ), "LAUNCH_RECORD_TAMPERED")
+
+    def test_a_record_with_no_binding_digest_says_so_distinctly(self):
+        """An unbound record and an edited one fail for different reasons.
+
+        Both are refused, so the code alone cannot tell them apart. The
+        message can, and that difference is the whole value of the separate
+        guard: "this was written by something that did not bind it" is a
+        different problem from "this was changed afterwards".
+        """
+
+        environ = self.write_launch(record_sha256="")
+        with self.assertRaises(CabinetError) as caught:
+            self.module.verify_launch(environ)
+        self.assertEqual(caught.exception.code, "LAUNCH_RECORD_TAMPERED")
+        self.assertIn("carries no binding digest", caught.exception.message)
+
+    def test_an_edited_record_says_it_was_changed(self):
+        untouched = self.module.record_binding(self.launch_record(), "c" * 64)
+        environ = self.write_launch(background=True, record_sha256=untouched)
+        with self.assertRaises(CabinetError) as caught:
+            self.module.verify_launch(environ)
+        self.assertIn("changed after it was written", caught.exception.message)
+
+    def test_an_unedited_record_still_verifies(self):
+        context = self.module.verify_launch(self.write_launch())
+        self.assertEqual(context["kind"], "restricted")
 
     def test_a_symlinked_capability_file_is_refused(self):
         environ = self.write_launch()

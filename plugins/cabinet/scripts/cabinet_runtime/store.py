@@ -1507,7 +1507,7 @@ class Store:
         return self._handoff_row(row)
 
     def advance_handoff(self, handoff_id, state, evidence=None, attempts=None,
-                        next_retry_at=None, reason=None):
+                        next_retry_at=None, reason=None, fence=False):
         """Move a handoff and record the event that moved it, in one commit.
 
         The caller decides *whether* the move is allowed on the company's
@@ -1515,22 +1515,30 @@ class Store:
         This method enforces the state machine itself and makes the change
         durable, so a projection that disagrees with the event log is not
         reachable through an interrupted write.
+
+        `fence` asks for the pause check, and the caller passes it for a
+        transition that *starts* something. A pause fences new work; it must
+        not stop the company writing down something that already happened. A
+        delivery attempt is new work and is fenced. An acknowledgment that has
+        already arrived is a fact, and refusing to record it would lose it.
         """
 
+        if fence:
+            self._check_not_paused()
         with self._transaction() as conn:
             row = conn.execute("SELECT * FROM handoffs WHERE handoff_id = ?",
                                (handoff_id,)).fetchone()
             if row is None:
                 raise CabinetError("HANDOFF_NOT_FOUND",
                                    "no handoff %s" % handoff_id)
-            if state != row["state"] or not HANDOFF_TRANSITIONS.get(
-                    row["state"], ()):
-                # A same-state write is one more attempt at the same
-                # obligation, not a transition. A finished handoff has nowhere
-                # to go, including back to where it already is, so it goes
-                # through the machine and is refused there.
-                check_transition(HANDOFF_TRANSITIONS, row["state"], state,
-                                 "handoff %s" % handoff_id)
+            # Every write goes through the declared machine, including a
+            # same-state one. The two self-transitions a delivery attempt
+            # needs are named in the table; inferring them from "this state
+            # has somewhere to go" instead let a stale transport report write
+            # over an acknowledgment and rewrite a failed handoff without
+            # limit.
+            check_transition(HANDOFF_TRANSITIONS, row["state"], state,
+                             "handoff %s" % handoff_id)
             event = self._append_event_locked(
                 conn, "handoff.state_changed", handoff_id, row["revision"],
                 {"from": row["state"], "to": state, "evidence": evidence,

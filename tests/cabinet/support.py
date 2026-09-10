@@ -439,11 +439,16 @@ class FixtureBuilder:
         service.update_handoff(handoff_id, "sent",
                                {"transport": "native",
                                 "recipient": envelope["to_role"],
-                                "result": "sent"})
+                                "result": "sent",
+                                "native_sender": envelope["from_role"]})
         if state == "sent":
             return envelope
+        recipient = self.case.store.get_address(envelope["to_role"])
         service.update_handoff(handoff_id, "acknowledged",
-                               {"native_sender": envelope["to_role"]})
+                               {"native_sender": envelope["to_role"],
+                                "revision": envelope["revision"],
+                                "assignment_generation":
+                                    recipient["generation"]})
         if state == "acknowledged":
             return envelope
         raise AssertionError("FixtureBuilder.handoff cannot seed %r; resolving "

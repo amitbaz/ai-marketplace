@@ -67,6 +67,21 @@ ADDRESS_KINDS = ("staff", "worker")
 #: Roles that may be given a native address at all.
 REGISTERABLE_ROLES = (profiles.STAFF_AGENT_TYPES + profiles.WORKER_TYPES)
 
+#: The claims each transition is checked against, required rather than
+#: volunteered. A check that runs only when the caller supplies the thing it
+#: would check is not a check: it makes the caller who says least the caller
+#: who is trusted most. The correction gate already worked this way, and these
+#: now follow it. Extra keys are still allowed — `message_id`, `response`,
+#: `assignment_id`, `revision_sha` all carry real information — but the named
+#: ones must be there.
+REQUIRED_EVIDENCE = {
+    "sent": ("transport", "recipient", "result", "native_sender"),
+    "acknowledged": ("native_sender", "assignment_generation", "revision"),
+    "resolved": ("native_sender", "revision"),
+    "failed": ("reason",),
+    "superseded": ("reason",),
+}
+
 #: Fields of the launch record the entrypoint hands over. The capability is
 #: verified before this point and is deliberately not one of them.
 LAUNCH_FIELDS = ("kind", "launch_id", "company_dir", "repo", "role",
@@ -607,7 +622,7 @@ class CabinetService:
         """
 
         stored = self.store.get_handoff(handoff_id)
-        evidence = self._handoff_evidence(evidence)
+        evidence = self._handoff_evidence(evidence, transition)
         handler = {"sent": self._handoff_sent,
                    "acknowledged": self._handoff_acknowledged,
                    "resolved": self._handoff_resolved,
@@ -616,13 +631,22 @@ class CabinetService:
         return handler(stored, evidence)
 
     @staticmethod
-    def _handoff_evidence(evidence):
+    def _handoff_evidence(evidence, transition):
         if evidence is None:
-            return {}
+            evidence = {}
         if not isinstance(evidence, dict):
             raise CabinetError(
                 "FIELD_INVALID",
                 "handoff evidence is an object describing what happened")
+        missing = [field for field in REQUIRED_EVIDENCE.get(transition, ())
+                   if field not in evidence]
+        if missing:
+            raise CabinetError(
+                "FIELD_MISSING",
+                "a %r transition is checked against %s, so the evidence must "
+                "state %s" % (transition,
+                              ", ".join(REQUIRED_EVIDENCE[transition]),
+                              ", ".join(missing)))
         return dict(evidence)
 
     def _registered(self, role, code, note):
@@ -635,10 +659,13 @@ class CabinetService:
         return address["native_address"]
 
     def _handoff_sent(self, stored, evidence):
-        for field in ("transport", "recipient", "result"):
-            if field not in evidence:
-                raise CabinetError("FIELD_MISSING",
-                                   "a send result states its %r" % field)
+        if stored["state"] not in contracts.DELIVERABLE_HANDOFF_STATES:
+            raise CabinetError(
+                "HANDOFF_SETTLED",
+                "handoff %s is %s; a transport report cannot change it. The "
+                "recipient has already replied or the obligation is closed, "
+                "and a sender's receipt must not be able to unmake either."
+                % (stored["handoff_id"], stored["state"]))
         result = evidence["result"]
         if result not in contracts.DELIVERY_RESULTS:
             raise CabinetError("FIELD_INVALID",
@@ -652,25 +679,25 @@ class CabinetService:
                 "handoff %s is addressed to %s at %r, not to %r"
                 % (stored["handoff_id"], stored["to_role"], expected,
                    evidence["recipient"]))
-        if "native_sender" in evidence:
-            sender = self._registered(stored["from_role"],
-                                      "ADDRESS_NOT_REGISTERED", "the sender")
-            if evidence["native_sender"] != sender:
-                raise CabinetError(
-                    "SENDER_MISMATCH",
-                    "handoff %s was raised by %s at %r; %r cannot report its "
-                    "send result" % (stored["handoff_id"], stored["from_role"],
-                                     sender, evidence["native_sender"]))
+        sender = self._registered(stored["from_role"],
+                                  "ADDRESS_NOT_REGISTERED", "the sender")
+        if evidence["native_sender"] != sender:
+            raise CabinetError(
+                "SENDER_MISMATCH",
+                "handoff %s was raised by %s at %r; %r cannot report its "
+                "send result" % (stored["handoff_id"], stored["from_role"],
+                                 sender, evidence["native_sender"]))
         attempts = stored["attempts"] + 1
         now = self.clock()
         if result == "sent":
             return self.store.advance_handoff(
                 stored["handoff_id"], "sent", evidence, attempts=attempts,
-                next_retry_at=contracts.retry_at(now, attempts))
+                next_retry_at=contracts.retry_at(now, attempts), fence=True)
         if attempts >= contracts.MAX_DELIVERY_ATTEMPTS:
             failed = self.store.advance_handoff(
                 stored["handoff_id"], "failed", evidence, attempts=attempts,
-                next_retry_at=None, reason=contracts.TRANSPORT_BLOCKED)
+                next_retry_at=None, reason=contracts.TRANSPORT_BLOCKED,
+                fence=True)
             failed["delivery_diagnosis"] = self._delivery_diagnosis(stored,
                                                                     attempts)
             return failed
@@ -678,7 +705,7 @@ class CabinetService:
         # attempt count and the next probe do.
         return self.store.advance_handoff(
             stored["handoff_id"], stored["state"], evidence, attempts=attempts,
-            next_retry_at=contracts.retry_at(now, attempts))
+            next_retry_at=contracts.retry_at(now, attempts), fence=True)
 
     def _delivery_diagnosis(self, stored, attempts):
         """A handoff for Delivery to diagnose a blocked channel. Not sent.
@@ -736,9 +763,7 @@ class CabinetService:
         from a session that has not been told the company moved.
         """
 
-        claimed = evidence.get("assignment_generation")
-        if claimed is None:
-            return
+        claimed = evidence["assignment_generation"]
         address = self.store.get_address(stored["to_role"])
         current = address["generation"] if address is not None \
             else (self.store.generation or 0)
@@ -752,8 +777,8 @@ class CabinetService:
 
     @staticmethod
     def _check_revision(stored, evidence):
-        claimed = evidence.get("revision")
-        if claimed is not None and claimed != stored["revision"]:
+        claimed = evidence["revision"]
+        if claimed != stored["revision"]:
             raise CabinetError(
                 "REVISION_MISMATCH",
                 "handoff %s belongs to revision %d; the reply names %r"
@@ -761,10 +786,10 @@ class CabinetService:
 
     def _handoff_resolved(self, stored, evidence):
         self._check_revision(stored, evidence)
-        sender = evidence.get("native_sender")
+        sender = evidence["native_sender"]
         if stored["kind"] == "correction":
             self._check_correction(stored, evidence, sender)
-        elif sender is not None:
+        else:
             allowed = {self._address_of(stored["from_role"]),
                        self._address_of(stored["to_role"])} - {None}
             if sender not in allowed:
@@ -786,7 +811,7 @@ class CabinetService:
         """
 
         reviewer = self._address_of("qa")
-        if sender is not None and sender != reviewer:
+        if sender != reviewer:
             raise CabinetError(
                 "SENDER_MISMATCH",
                 "a correction is resolved by QA at %r accepting its evidence, "

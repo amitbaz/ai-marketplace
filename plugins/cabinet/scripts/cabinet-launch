@@ -135,6 +135,24 @@ def write_private(path, text):
     return str(path)
 
 
+#: Kept in step with `cabinet-service.BOUND_RECORD_FIELDS`; a test asserts the
+#: two lists are equal, because a launcher and a service that disagree about
+#: what is bound would refuse every launch.
+BOUND_RECORD_FIELDS = ("kind", "launch_id", "company_dir", "repo", "role",
+                       "profile_path", "profile_body_path", "profile_digest",
+                       "session_id", "host_pid", "host_process_start",
+                       "background", "written_epoch")
+
+
+def bind_record(record, capability):
+    """The digest tying this record's own claims to its capability."""
+
+    material = {field: record.get(field) for field in BOUND_RECORD_FIELDS}
+    return hashlib.sha256(contracts.canonical_json(
+        {"capability": capability, "record": material}).encode("utf-8")
+    ).hexdigest()
+
+
 def mcp_configuration(plugin_root, launch_file, capability_file):
     """The chief's explicit connection: this service, and nothing else."""
 
@@ -201,7 +219,7 @@ def build_launch(options, environ, cwd):
     write_private(paths["capability_file"], capability)
     write_private(paths["profile_body_path"],
                   contracts.canonical_json(profiles.plain(profile)))
-    write_private(paths["launch_file"], json.dumps({
+    launch_record = {
         "kind": "restricted", "launch_id": launch_id,
         "company_dir": str(company), "repo": repo,
         "role": profiles.CHIEF_ROLE, "profile_path": paths["settings_path"],
@@ -211,7 +229,13 @@ def build_launch(options, environ, cwd):
         "background": bool(options.bg), "written_epoch": time.time(),
         "lease_generation": None,
         "capability_sha256": hashlib.sha256(
-            capability.encode("utf-8")).hexdigest()}, indent=2, sort_keys=True))
+            capability.encode("utf-8")).hexdigest()}
+    # Bind the record's own claims to the capability, so the field that decides
+    # which host check runs cannot be edited on its own afterwards. The service
+    # recomputes this and refuses a record that no longer matches.
+    launch_record["record_sha256"] = bind_record(launch_record, capability)
+    write_private(paths["launch_file"],
+                  json.dumps(launch_record, indent=2, sort_keys=True))
     write_private(paths["settings_path"], profiles.settings_json(profile))
     write_private(paths["mcp_config"], json.dumps(mcp_configuration(
         plugin_root, paths["launch_file"], paths["capability_file"]),
