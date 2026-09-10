@@ -128,6 +128,7 @@ CREATE TABLE handoffs (
     kind          TEXT NOT NULL DEFAULT 'question',
     state         TEXT NOT NULL,
     attempts      INTEGER NOT NULL DEFAULT 0,
+    failures      INTEGER NOT NULL DEFAULT 0,
     next_retry_at TEXT,
     reason        TEXT,
     evidence_json TEXT,
@@ -226,6 +227,9 @@ SCHEMA_UPGRADES = {
         "role TEXT PRIMARY KEY, native_address TEXT NOT NULL, kind TEXT NOT NULL,"
         " assignment_id TEXT, native_session_id TEXT, generation INTEGER NOT NULL,"
         " time TEXT NOT NULL, registered_seq INTEGER NOT NULL)",
+    ),
+    3: (
+        "ALTER TABLE handoffs ADD COLUMN failures INTEGER NOT NULL DEFAULT 0",
     ),
 }
 
@@ -1448,7 +1452,7 @@ class Store:
         conn = self._require_open()
         rows = conn.execute(
             "SELECT handoff_id, batch_id, revision, from_role, to_role, kind, "
-            "state, attempts, next_retry_at, reason FROM handoffs "
+            "state, attempts, failures, next_retry_at, reason FROM handoffs "
             "ORDER BY created_seq")
         return [dict(row) for row in rows]
 
@@ -1488,8 +1492,9 @@ class Store:
             conn.execute(
                 "INSERT INTO handoffs (handoff_id, batch_id, revision, "
                 "from_role, to_role, kind, body_json, digest, state, attempts, "
-                "next_retry_at, reason, evidence_json, truncated, created_seq, "
-                "updated_seq) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, 0, NULL, NULL, "
+                "failures, next_retry_at, reason, evidence_json, truncated, "
+                "created_seq, updated_seq) "
+                "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, 0, 0, NULL, NULL, "
                 "NULL, ?, ?, ?)",
                 (envelope["handoff_id"], envelope["batch_id"],
                  envelope["revision"], envelope["from_role"],
@@ -1507,7 +1512,8 @@ class Store:
         return self._handoff_row(row)
 
     def advance_handoff(self, handoff_id, state, evidence=None, attempts=None,
-                        next_retry_at=None, reason=None, fence=False):
+                        failures=None, next_retry_at=None, reason=None,
+                        fence=False):
         """Move a handoff and record the event that moved it, in one commit.
 
         The caller decides *whether* the move is allowed on the company's
@@ -1543,13 +1549,15 @@ class Store:
                 conn, "handoff.state_changed", handoff_id, row["revision"],
                 {"from": row["state"], "to": state, "evidence": evidence,
                  "attempts": attempts if attempts is not None else row["attempts"],
+                 "failures": failures if failures is not None else row["failures"],
                  "next_retry_at": next_retry_at, "reason": reason})
             conn.execute(
-                "UPDATE handoffs SET state = ?, attempts = ?, "
+                "UPDATE handoffs SET state = ?, attempts = ?, failures = ?, "
                 "next_retry_at = ?, reason = ?, evidence_json = ?, "
                 "updated_seq = ? WHERE handoff_id = ?",
                 (state,
                  row["attempts"] if attempts is None else attempts,
+                 row["failures"] if failures is None else failures,
                  next_retry_at, reason,
                  canonical_json(evidence) if evidence is not None else None,
                  event["seq"], handoff_id))
@@ -1586,7 +1594,7 @@ class Store:
                 "revision": row["revision"], "from_role": row["from_role"],
                 "to_role": row["to_role"], "kind": row["kind"],
                 "state": row["state"], "digest": row["digest"],
-                "attempts": row["attempts"],
+                "attempts": row["attempts"], "failures": row["failures"],
                 "next_retry_at": row["next_retry_at"], "reason": row["reason"],
                 "truncated": bool(row["truncated"]),
                 "envelope": json.loads(row["body_json"]),

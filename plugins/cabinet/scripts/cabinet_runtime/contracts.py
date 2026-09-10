@@ -11,10 +11,12 @@ import re
 
 from .errors import CabinetError
 
-#: 2 adds the `addresses` projection and the handoff columns O2 needs. A
-#: version-1 database is upgraded in place by `store.SCHEMA_UPGRADES`; a newer
-#: one still opens read-only with SCHEMA_TOO_NEW.
-SCHEMA_VERSION = 2
+#: 2 adds the `addresses` projection and the handoff columns O2 needs; 3 adds
+#: the consecutive-failure counter, which is a different number from the
+#: attempt count and could not share it. An older database is upgraded in place
+#: by `store.SCHEMA_UPGRADES`; a newer one still opens read-only with
+#: SCHEMA_TOO_NEW.
+SCHEMA_VERSION = 3
 
 SHA_PATTERN = re.compile(r"^[0-9a-f]{40}$")
 REPO_PATTERN = re.compile(r"^[A-Za-z0-9._-]+/[A-Za-z0-9._-]+$")
@@ -217,9 +219,17 @@ TRUNCATION_MARKER = "[cabinet: content omitted"
 
 #: Seconds after a delivery attempt at which the chief probes for an
 #: acknowledgment. These are implementation defaults, not promised response
-#: times, and they are what `next_retry_at` is computed from.
+#: times, and they are what `next_retry_at` is computed from. The escalation is
+#: driven by the *total* attempt count, so a second redelivery waits longer
+#: than a first.
 HANDOFF_RETRY_SCHEDULE = (30, 90, 210)
-MAX_DELIVERY_ATTEMPTS = len(HANDOFF_RETRY_SCHEDULE)
+
+#: How many *consecutive* unsuccessful attempts mark the transport blocked.
+#: Consecutive is the load-bearing word: a delivery that worked says the
+#: channel works, so the count starts again from there. Counting every report
+#: instead let one late failure after a good delivery condemn a handoff that
+#: had already arrived.
+MAX_CONSECUTIVE_FAILURES = len(HANDOFF_RETRY_SCHEDULE)
 
 #: Recorded as the reason on a handoff whose transport never worked. It is a
 #: state of the channel, never a statement about the work behind it.

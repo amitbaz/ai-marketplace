@@ -690,24 +690,35 @@ class CabinetService:
         attempts = stored["attempts"] + 1
         now = self.clock()
         if result == "sent":
+            # A delivery that worked says the channel works, so the
+            # consecutive-failure count starts again from here. The attempt
+            # count keeps rising, because it is what escalates the probe.
             return self.store.advance_handoff(
                 stored["handoff_id"], "sent", evidence, attempts=attempts,
-                next_retry_at=contracts.retry_at(now, attempts), fence=True)
-        if attempts >= contracts.MAX_DELIVERY_ATTEMPTS:
+                failures=0, next_retry_at=contracts.retry_at(now, attempts),
+                fence=True)
+        failures = stored["failures"] + 1
+        # A handoff that has been delivered is never transport-blocked by a
+        # later failed report. Once it has reached the recipient the open
+        # question is acknowledgment, not transport, and condemning it here
+        # would mark work as undelivered that demonstrably arrived.
+        delivered = stored["state"] != "recorded"
+        if failures >= contracts.MAX_CONSECUTIVE_FAILURES and not delivered:
             failed = self.store.advance_handoff(
                 stored["handoff_id"], "failed", evidence, attempts=attempts,
-                next_retry_at=None, reason=contracts.TRANSPORT_BLOCKED,
-                fence=True)
+                failures=failures, next_retry_at=None,
+                reason=contracts.TRANSPORT_BLOCKED, fence=True)
             failed["delivery_diagnosis"] = self._delivery_diagnosis(stored,
-                                                                    attempts)
+                                                                    failures)
             return failed
         # The delivery did not happen, so the state does not move. Only the
-        # attempt count and the next probe do.
+        # counts and the next probe do.
         return self.store.advance_handoff(
             stored["handoff_id"], stored["state"], evidence, attempts=attempts,
-            next_retry_at=contracts.retry_at(now, attempts), fence=True)
+            failures=failures, next_retry_at=contracts.retry_at(now, attempts),
+            fence=True)
 
-    def _delivery_diagnosis(self, stored, attempts):
+    def _delivery_diagnosis(self, stored, failures):
         """A handoff for Delivery to diagnose a blocked channel. Not sent.
 
         The service proposes it and stops there. Recording and delivering it
@@ -720,10 +731,11 @@ class CabinetService:
             "batch_id": stored["batch_id"], "revision": stored["revision"],
             "from_role": "chief-of-staff", "to_role": "delivery-lead",
             "kind": "diagnosis",
-            "question": "Handoff %s to %s failed %d delivery attempts; the "
-                        "transport is blocked. Diagnose it and say whether "
-                        "the recipient is offline or the channel is."
-                        % (stored["handoff_id"], stored["to_role"], attempts),
+            "question": "Handoff %s to %s failed %d delivery attempts in a "
+                        "row and has never been delivered; the transport is "
+                        "blocked. Diagnose it and say whether the recipient is "
+                        "offline or the channel is."
+                        % (stored["handoff_id"], stored["to_role"], failures),
             "evidence": [], "reply_to": stored["handoff_id"],
             "expected_response": "The cause of the blocked transport and the "
                                  "recovery it needs",

@@ -844,6 +844,81 @@ class SettledHandoffTest(HandoffCase):
                 "reason": "whatever"}
 
 
+class ConsecutiveFailureTest(HandoffCase):
+    """Three failures in a row block a transport; three scattered ones do not.
+
+    Counting every report instead let one late failure after a good delivery
+    condemn a handoff that had demonstrably arrived.
+    """
+
+    def setUp(self):
+        super().setUp()
+        self.service.record_handoff(self.qa_correction)
+
+    def report(self, result):
+        return self.service.update_handoff(
+            "H001", "sent",
+            {"transport": "native", "recipient": "engineering",
+             "result": result, "native_sender": "qa"})
+
+    def test_three_in_a_row_from_undelivered_still_block(self):
+        for _ in range(2):
+            self.report("blocked")
+        final = self.report("blocked")
+        self.assertEqual(final["state"], "failed")
+        self.assertEqual(final["reason"], contracts.TRANSPORT_BLOCKED)
+        self.assertEqual(final["failures"], 3)
+
+    def test_a_successful_delivery_resets_the_failure_count(self):
+        self.report("blocked")
+        self.report("blocked")
+        delivered = self.report("sent")
+        self.assertEqual(delivered["failures"], 0)
+        self.assertEqual(delivered["attempts"], 3)
+
+    def test_scattered_failures_never_reach_three_in_a_row(self):
+        for result in ("blocked", "blocked", "sent", "blocked", "blocked"):
+            row = self.report(result)
+        self.assertEqual(row["state"], "sent")
+        self.assertIsNone(row["reason"])
+        self.assertEqual(row["failures"], 2)
+        self.assertEqual(row["attempts"], 5)
+
+    def test_a_delivered_handoff_is_never_transport_blocked(self):
+        """The ruling's second half: delivery once is delivery."""
+
+        self.report("sent")
+        for _ in range(5):
+            row = self.report("failed")
+        self.assertEqual(row["state"], "sent")
+        self.assertIsNone(row["reason"])
+        self.assertNotIn("delivery_diagnosis", row)
+        self.assertGreaterEqual(row["failures"], 5)
+
+    def test_the_attempt_count_still_escalates_the_probe(self):
+        """`attempts` and `failures` are different numbers and stay so."""
+
+        stamps = [self.report("sent")["next_retry_at"] for _ in range(3)]
+        self.assertEqual(stamps, ["2026-09-09T12:00:30Z",
+                                  "2026-09-09T12:01:30Z",
+                                  "2026-09-09T12:03:30Z"])
+
+    def test_the_diagnosis_names_consecutive_failures(self):
+        for _ in range(3):
+            final = self.report("blocked")
+        self.assertIn("in a row", final["delivery_diagnosis"]["question"])
+
+    def test_the_counters_survive_a_restart(self):
+        self.report("blocked")
+        self.report("sent")
+        self.report("blocked")
+        self.store.close()
+        reopened = Store(self.root, self.clock, repo=self.repo).open()
+        self.addCleanup(reopened.close)
+        stored = reopened.get_handoff("H001")
+        self.assertEqual((stored["attempts"], stored["failures"]), (3, 1))
+
+
 class RequiredClaimTest(HandoffCase):
     """A check that runs only when the caller volunteers the claim is not one."""
 
