@@ -5,6 +5,9 @@ argument-hint: "[command or role name for detail on one]"
 
 # /cabinet:help
 
+Load `Skill(skill: "cabinet:coordination-rules")` first — it is the workflow
+this card describes, and the source of truth for what each role may do.
+
 A reference card that knows where you are. Read state, print, dispatch
 nothing — this command must stay cheap enough to run without thinking about
 it. Never call a role, never query the board.

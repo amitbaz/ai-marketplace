@@ -127,9 +127,13 @@ The constraints below describe the shipped
 design; replace them only through an explicit design change with a concrete
 enforcement mechanism.
 
-Cabinet gives one person the executive team they cannot afford to hire: six
-roles with their own remits, notebooks, and a standing question each. Its
-rules live in `plugins/cabinet/skills/coordination-rules/SKILL.md`.
+Cabinet gives one person the operating company they cannot afford to hire: a
+chief of staff, four core staff roles who own responsibilities and talk to
+each other directly, on-demand specialists, and two isolated worker types. Its
+workflow lives in `plugins/cabinet/skills/coordination-rules/SKILL.md` with
+five reference files beside it. `python3 scripts/check-cabinet.py` is the
+mechanism that keeps every role's `tools:` line equal to the registry in
+`cabinet_runtime.profiles`.
 
 Four constraints are load-bearing. Do not "simplify" them without
 understanding why:
@@ -141,8 +145,9 @@ understanding why:
   excludes tomorrow's tools by default, which is the property that makes the
   guarantee survive. The README states plainly where the guarantee stops
   (other agents on the machine), and that sentence must not be softened.
-- **Roles never write files.** Each returns `## NOTEBOOK`, `## DECISIONS` and
-  `## MONEY` sections, and the dispatching command records them. One writer
+- **Roles never write files.** Each returns `## NOTEBOOK`, `## DECISIONS`,
+  `## HANDOFFS`, `## VERDICT` (QA only), `## PROPOSALS` and `## MONEY`
+  sections, and the chief of staff records them. One writer
   means parallel roles cannot race on appends, and it means no role needs a
   write grant carved out of an otherwise read-only allowlist.
 - **State lives in `.cabinet/`, not `.claude/`.** Many repositories ignore
@@ -163,10 +168,14 @@ understanding why:
   results and blocking edges are re-derived every run. A stale copy of a
   derivable fact is worse than no copy.
 
-- **Only one-way doors reach the owner.** A decision the owner cannot walk
-  back goes to them; anything a role can reverse itself is that role's own
-  call, made and reported. Escalating a reversible decision is a defect, not
-  caution — it spends the attention the one-channel rule exists to protect.
+- **One-way doors reach the owner, and so does every batch.** A decision the
+  owner cannot walk back goes to them; anything a role can reverse itself is
+  that role's own call, made and reported. Escalating a reversible decision is
+  a defect, not caution — it spends the attention the one-channel rule exists
+  to protect. The single explicit exception is owner batch approval, which is
+  mandatory even when the implementation would be reversible: it is an
+  authority boundary, not a risk filter, and the reversibility test must never
+  be used to skip it.
 
 ### Alternatives considered and rejected
 
