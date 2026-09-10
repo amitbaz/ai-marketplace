@@ -1731,6 +1731,32 @@ class Store:
                 "evidence": json.loads(row["evidence_json"]),
                 "time": row["time"], "recorded_seq": row["recorded_seq"]}
 
+    def verdicts_for(self, assignment_id):
+        """Every recorded verdict on one assignment, oldest first."""
+
+        conn = self._require_open()
+        rows = conn.execute(
+            "SELECT * FROM verdicts WHERE assignment_id = ? "
+            "ORDER BY recorded_seq", (assignment_id,))
+        return [{"assignment_id": row["assignment_id"],
+                 "revision_sha": row["revision_sha"],
+                 "reviewer_role": row["reviewer_role"],
+                 "outcome": row["outcome"],
+                 "evidence": json.loads(row["evidence_json"]),
+                 "time": row["time"], "recorded_seq": row["recorded_seq"]}
+                for row in rows]
+
+    def in_transaction(self):
+        """Whether this connection is inside a write transaction right now.
+
+        Read by the action executor's tests: a network call made while a write
+        transaction is open holds the database for the length of somebody
+        else's outage, which is the failure the contract forbids.
+        """
+
+        conn = self._require_open()
+        return bool(conn.in_transaction)
+
     def get_lease(self):
         row = self._lease_row()
         if row is None:

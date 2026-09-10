@@ -104,6 +104,28 @@ ERROR_CODES = {
     "ELICITATION_UNSUPPORTED": "The connected client cannot show the owner a "
                                "form dialog.",
     "NOT_IMPLEMENTED_YET": "That operation has no executor in this release.",
+    # Board provider
+    "SOURCE_INCOMPLETE": "A provider collection could not be read whole.",
+    "SOURCE_CHANGED": "The live issue moved between preparing and writing.",
+    "AUTH_REQUIRED": "The provider rejected the credential (HTTP 401).",
+    "FORBIDDEN": "The provider refused the request (HTTP 403).",
+    "NOT_FOUND": "The provider has no such issue or route (HTTP 404).",
+    "RATE_LIMITED": "The provider rate-limited the request past this "
+                    "adapter's bounded backoff.",
+    "PROVIDER_ERROR": "The provider replied in a shape this adapter cannot "
+                      "read.",
+    "PROVIDER_UNCERTAIN": "A provider call timed out after it may already "
+                          "have been dispatched.",
+    "RELATIONSHIP_CYCLE": "The edge would close a hierarchy or dependency "
+                          "cycle.",
+    "ASSIGNEE_UNKNOWN": "That account cannot be assigned on this repository.",
+    "ASSIGNEE_NOT_CONFIGURED": "No owner-confirmed GitHub account is mapped "
+                               "for that assignment.",
+    "WHOLE_BODY_UNREVIEWED": "A whole-body replacement was not reviewed.",
+    "ACCEPTANCE_REQUIRED": "Closing an issue as completed needs its passing "
+                           "acceptance verdict.",
+    "OWNER_DECISION_REQUIRED": "Dropping an approved goal needs the owner's "
+                               "recorded decision.",
     # Backup and restore
     "BACKUP_DESTINATION_EXISTS": "The backup destination already exists.",
     "RESTORE_DESTINATION_EXISTS": "The restore destination already exists.",

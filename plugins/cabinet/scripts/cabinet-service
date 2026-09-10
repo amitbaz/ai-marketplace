@@ -32,6 +32,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parent))
 
 from cabinet_runtime import contracts, processes, profiles   # noqa: E402
 from cabinet_runtime.errors import CabinetError              # noqa: E402
+from cabinet_runtime.github import GithubAdapter, gh_run      # noqa: E402
 from cabinet_runtime.profiles import build_profile           # noqa: E402
 from cabinet_runtime.rpc import RpcServer, StdioElicitor     # noqa: E402
 from cabinet_runtime import service as service_module         # noqa: E402
@@ -507,12 +508,26 @@ def build_service(environ, cwd, launch=None):
             launch_file = environ[ENV_LAUNCH_FILE]
             renewer = lambda generation: renew_launch(launch_file, generation)
     elicitor = StdioElicitor()
+    board = build_board_adapter(store)
     service = CabinetService(
-        store, PendingAdapter("GitHub", "O3"), PendingAdapter("Superset", "O4"),
+        store, board, PendingAdapter("Superset", "O4"),
         utc_now, elicitor, build_profile, launch=launch,
         launch_refusal=refusal.to_dict()["error"] if refusal else None,
-        launch_renewer=renewer)
+        launch_renewer=renewer, board_reader=board)
     return service, elicitor, store
+
+
+def build_board_adapter(store):
+    """The real board adapter, or the refusing stand-in when there is no repo.
+
+    The adapter is bound to the company's own repository at construction, so
+    the repository an action operates on never comes from the action.
+    """
+
+    identity = store.identity
+    if not identity or not identity.get("repo"):
+        return PendingAdapter("GitHub", "O3")
+    return GithubAdapter(gh_run(), identity["repo"])
 
 
 class AbsentCompanyService:

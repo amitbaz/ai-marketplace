@@ -96,6 +96,27 @@ Which tool the chief calls at each step:
 | Record QA's verdict | `cabinet_record_verdict` | The fact a correction is resolved against |
 | Wait between messages | `cabinet_wait_events` | New events, due handoffs, and a board reading at most once every five minutes |
 
+### What each transition is checked against
+
+The evidence is not a note. Each transition names claims the service checks
+against something it registered earlier, and a missing claim is refused rather
+than assumed. A check that runs only when the caller volunteers the thing it
+would check is not a check: it makes the caller who says least the caller who
+is trusted most.
+
+| Transition | Required claims | What each one is checked against |
+| --- | --- | --- |
+| `sent` | `transport`, `recipient`, `result`, `native_sender` | The recipient must be the registered address for `to_role`; the sender must be the registered address for `from_role`; the result must be a real delivery outcome, and one that is not `sent` counts an attempt without moving the handoff |
+| `acknowledged` | `native_sender`, `assignment_generation`, `revision` | The replying session must be the registered recipient, at that recipient's current generation, naming this batch revision |
+| `resolved` | `native_sender`, `revision` | For a correction, a passing QA verdict at the revision the correction produced. Engineering reporting a fix is not one |
+| `failed` | `reason` | Recorded as given; it is why the obligation ended undelivered |
+| `superseded` | `reason` | Recorded as given; it is why the question stopped mattering |
+
+Extra keys are kept — `message_id`, `response`, `assignment_id` and
+`revision_sha` all carry real information — but the named ones must be there.
+`recorded` is not in this list because it is not a transition anyone calls:
+`cabinet_record_handoff` is what creates a handoff in that state.
+
 What each role does:
 
 - **A sender** proposes the envelope to the chief, waits for the persisted ID

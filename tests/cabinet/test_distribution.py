@@ -310,6 +310,51 @@ class WorkflowSkill(unittest.TestCase):
             self.assertIn("references/%s.md" % name, text)
 
 
+class AdvertisedEvidence(unittest.TestCase):
+    """What the service checks, the schema and the prose must both name.
+
+    A required claim that only appears when a caller is refused teaches the
+    contract by failure. These tests make the three places move together.
+    """
+
+    def required(self):
+        from cabinet_runtime.service import REQUIRED_EVIDENCE
+
+        return REQUIRED_EVIDENCE
+
+    def test_the_tool_schema_names_every_required_claim(self):
+        from cabinet_runtime.service import TOOL_SPECS
+
+        described = TOOL_SPECS["update_handoff"][1]["properties"]["evidence"]
+        text = described["description"]
+        for transition, fields in self.required().items():
+            self.assertIn(transition, text)
+            for field in fields:
+                self.assertIn(field, text, "%s.%s" % (transition, field))
+
+    def test_the_communication_reference_names_every_required_claim(self):
+        text = (REFERENCES / "communication.md").read_text()
+        for transition, fields in self.required().items():
+            self.assertIn("`%s`" % transition, text)
+            for field in fields:
+                self.assertIn("`%s`" % field, text,
+                              "%s.%s" % (transition, field))
+
+    def test_the_chief_names_every_required_claim(self):
+        text = (AGENTS / "chief-of-staff.md").read_text()
+        for transition, fields in self.required().items():
+            for field in fields:
+                self.assertIn("`%s`" % field, text,
+                              "%s.%s" % (transition, field))
+
+    def test_recorded_is_not_advertised_as_a_callable_transition(self):
+        from cabinet_runtime.service import HANDOFF_TRANSITIONS, TOOL_SPECS
+
+        enumerated = TOOL_SPECS["update_handoff"][1]["properties"]
+        self.assertNotIn("recorded", enumerated["transition"]["enum"])
+        self.assertNotIn("recorded", HANDOFF_TRANSITIONS)
+
+
 class RepositoryChecker(unittest.TestCase):
     """`scripts/check-cabinet.py` is the mechanism behind these claims."""
 

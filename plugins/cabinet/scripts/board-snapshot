@@ -100,6 +100,19 @@ if ! gh repo view "$REPO" --json name >/dev/null 2>&1; then
     exit 78
 fi
 
+# The standard-library reader, where it is available. It follows every page and
+# records which ones did not arrive; the jq path below cannot do either, and a
+# board that quietly stopped at a limit is the failure that matters most here.
+# Delegation is skipped, not required: a machine without python3 keeps the old
+# path, so nothing about installing this plugin changed.
+RUNTIME_DIR="$(cd "$(dirname "$0")" && pwd)"
+if command -v python3 >/dev/null 2>&1 \
+    && PYTHONPATH="$RUNTIME_DIR" python3 -c 'import cabinet_runtime.boardcli' \
+        >/dev/null 2>&1; then
+    exec env PYTHONPATH="$RUNTIME_DIR" python3 -m cabinet_runtime.boardcli \
+        board "$REPO" ${2:+"$2"} ${3:+"$3"}
+fi
+
 SINCE=""
 if [ "${2:-}" = "--since" ]; then
     SINCE="$(normalize_since "${3:-}")"

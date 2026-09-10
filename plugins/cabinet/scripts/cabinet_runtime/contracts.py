@@ -57,13 +57,21 @@ def _require_mapping(value, label):
         raise CabinetError("FIELD_INVALID", "%s must be an object" % label)
 
 
-def _check_fields(value, required, label):
+def _check_fields(value, required, label, optional=()):
+    """Every required field present, and nothing outside required+optional.
+
+    `optional` exists for a field a record may carry but need not, such as a
+    setup scope's account mapping. It is still a closed set: an unknown name is
+    refused either way, so an invented field cannot ride along.
+    """
+
     _require_mapping(value, label)
+    known = tuple(required) + tuple(optional)
     for key in required:
         if key not in value:
             raise CabinetError("FIELD_MISSING", "%s.%s is required" % (label, key))
     for key in value:
-        if key not in required:
+        if key not in known:
             raise CabinetError("FIELD_UNKNOWN", "%s.%s is not a known field"
                                % (label, key))
 
@@ -467,19 +475,54 @@ def action_authority(kind):
 
 SETUP_SCOPE_FIELDS = ("repo", "visibility", "board_operations",
                       "check_profiles", "capacity")
+
+# Fields a setup scope may carry but need not.
+#
+# `github_accounts` maps a Cabinet role to a GitHub account the owner has
+# confirmed is real. It is optional because the honest default is to have none:
+# with no mapping, work ownership stays in Cabinet's assignment record and no
+# issue is assigned to anybody. A role name is not an account, and Cabinet
+# never invents one to fill the field.
+#
+# `visibility_source` says whether the recorded visibility came from a live
+# read of the repository or only from what the scope declared. The two lead to
+# different confidence in the public-prose rule, so they are not merged.
+OPTIONAL_SETUP_FIELDS = ("github_accounts", "visibility_source")
+VISIBILITY_SOURCES = ("live", "declared")
 CHECK_PROFILE_FIELDS = ("profile_id", "argv", "env")
 VISIBILITIES = ("private", "public")
 SETUP_CAPACITY_FIELDS = ("implementation_workers",)
+
+# GitHub's own account-name rule: alphanumerics and single inner hyphens, at
+# most 39 characters. It rejects obvious nonsense; only a live assignability
+# check proves an account exists, and the adapter runs one before every assign.
+GITHUB_LOGIN_PATTERN = re.compile(
+    r"^[A-Za-z0-9](?:[A-Za-z0-9]|-(?=[A-Za-z0-9])){0,38}$")
 
 
 def validate_setup_scope(scope):
     """Return a validated copy of a setup grant's scope, or raise CabinetError."""
 
-    _check_fields(scope, SETUP_SCOPE_FIELDS, "setup")
+    _check_fields(scope, SETUP_SCOPE_FIELDS, "setup", OPTIONAL_SETUP_FIELDS)
     parse_repo(scope["repo"])
     if scope["visibility"] not in VISIBILITIES:
         raise CabinetError("FIELD_INVALID", "setup.visibility must be one of %s"
                            % (VISIBILITIES,))
+    source = scope.get("visibility_source", "declared")
+    if source not in VISIBILITY_SOURCES:
+        raise CabinetError("FIELD_INVALID",
+                           "setup.visibility_source must be one of %s"
+                           % (VISIBILITY_SOURCES,))
+    accounts = scope.get("github_accounts", {})
+    _require_mapping(accounts, "setup.github_accounts")
+    for role, login in accounts.items():
+        _text(role, "setup.github_accounts key")
+        _text(login, "setup.github_accounts[%s]" % role)
+        if not GITHUB_LOGIN_PATTERN.match(login):
+            raise CabinetError(
+                "FIELD_INVALID",
+                "setup.github_accounts[%s] is %r, which is not a GitHub "
+                "account name" % (role, login))
 
     operations = scope["board_operations"]
     if not isinstance(operations, list) or not operations:

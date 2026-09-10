@@ -59,6 +59,17 @@ DUE_HANDOFF_STATES = contracts.DUE_HANDOFF_STATES
 #: next opening reconciles whatever changed while it was shut.
 BOARD_INTERVAL_SECONDS = 300
 
+#: Execution operations that start work against the board's current shape. A
+#: board that could not be read whole does not say what is startable, so these
+#: refuse rather than dispatch against a board with a hole in it.
+DISPATCH_OPERATIONS = ("worker.launch", "workspace.create", "workspace.reserve")
+
+#: Provider refusals a later attempt could get past: the board moved, the
+#: credential lapsed, the limit will reset. These leave the action `blocked`.
+#: Everything else is `failed`, because repeating it would fail the same way.
+RECOVERABLE_ACTION_CODES = ("SOURCE_CHANGED", "RATE_LIMITED", "AUTH_REQUIRED",
+                            "SOURCE_INCOMPLETE", "PROVIDER_UNCERTAIN")
+
 #: Kinds a role may register itself under. A worker's address arrives through
 #: `register_session` with its assignment; a teammate's through
 #: `register_staff`, because a teammate has no assignment of its own.
@@ -102,6 +113,20 @@ _INTEGER = {"type": "integer"}
 _NUMBER = {"type": "number"}
 _OBJECT = {"type": "object"}
 _ARRAY = {"type": "array"}
+
+
+def _evidence_help():
+    """The required claims per transition, in one line each.
+
+    Generated rather than written out, because a check the schema does not
+    advertise is one a caller only learns about by failing.
+    """
+
+    return "What actually happened, as a keyed record. Required claims: " \
+        + "; ".join("%s needs %s" % (transition, ", ".join(fields))
+                    for transition, fields in REQUIRED_EVIDENCE.items()) \
+        + ". Extra keys such as message_id, response, assignment_id and " \
+          "revision_sha are kept."
 
 
 def _schema(properties=None, required=()):
@@ -157,11 +182,18 @@ TOOL_SPECS = {
         # happened — the transport and its result, or the session that
         # replied and the generation it replied at — so it is an object
         # rather than the list of artifact references an action carries.
+        #
+        # Which keys are required depends on the transition, and the schema
+        # says so rather than letting a caller discover it by being refused.
+        # The text is built from REQUIRED_EVIDENCE, so a claim added to the
+        # check appears in the schema without anyone remembering to add it.
         "write", _schema({"handoff_id": _STRING,
                           "transition": _enum(HANDOFF_TRANSITIONS),
-                          "evidence": _OBJECT},
+                          "evidence": dict(_OBJECT, description=_evidence_help())},
                          ("handoff_id", "transition")),
-        "Move a recorded handoff through its state machine with evidence."),
+        "Move a recorded handoff through its state machine with evidence. "
+        "Each transition is checked against specific claims; see the evidence "
+        "field for which ones."),
     "prepare_action": (
         "write", _schema({"envelope": _OBJECT}, ("envelope",)),
         "Validate an action envelope and persist the intent to run it. "
@@ -286,6 +318,10 @@ class CabinetService:
         self.board_interval_seconds = float(board_interval_seconds)
         self._board_last_read = None
         self._board_cursor = None
+        #: What the last board read said about its own completeness. `None`
+        #: means no read has happened; a read that lost a page makes this
+        #: false, and a false board authorizes no dispatch.
+        self._board_state = None
 
     # --- the exposed surface -----------------------------------------------
 
@@ -370,7 +406,8 @@ class CabinetService:
             "events": events[-limit:] if limit else [],
             "freshness": {"observed": self.clock(),
                           "max_event_seq": self.store.max_event_seq(),
-                          "events_returned": min(limit, len(events))},
+                          "events_returned": min(limit, len(events)),
+                          "board": self._board_state},
         }
 
     def doctor(self):
@@ -492,8 +529,10 @@ class CabinetService:
         self._board_last_read = now
         issues = list(self.board_reader.read_changed_issues(self._board_cursor))
         checked = self.clock()
+        self._board_state = self._read_board_state(checked)
         if not issues:
-            return {"checked": checked, "changed": 0, "since": self._board_cursor}
+            return dict(self._board_state, changed=0,
+                        since=self._board_cursor)
         numbers = [item["number"] for item in issues]
         stamps = [item.get("updated_at") for item in issues
                   if item.get("updated_at")]
@@ -504,9 +543,23 @@ class CabinetService:
              "checked": checked, "changed": len(numbers)})
         if stamps:
             self._board_cursor = max(stamps)
-        return {"checked": checked, "changed": len(numbers),
-                "issues": numbers, "since": event["payload"]["since"],
-                "event_id": event["event_id"]}
+        return dict(self._board_state, changed=len(numbers), issues=numbers,
+                    since=event["payload"]["since"],
+                    event_id=event["event_id"])
+
+    def _read_board_state(self, checked):
+        """What the reader observed about its own completeness, or a default.
+
+        A reader that cannot say is treated as complete: O2's fake board and
+        any future reader without the method are not claiming a partial read,
+        and inventing one would block dispatch on a company that is fine.
+        """
+
+        reported = getattr(self.board_reader, "board_state", None)
+        state = reported() if callable(reported) else {}
+        return {"checked": checked,
+                "complete": bool(state.get("complete", True)),
+                "errors": list(state.get("errors") or [])}
 
     def _liveness(self):
         """What the workspace adapter can see, and nothing more.
@@ -534,8 +587,33 @@ class CabinetService:
                 "paused": lease["paused"], "session_id": session}
 
     def setup(self, scope):
+        """Ask the owner once, over a scope whose visibility was read live.
+
+        Visibility decides whether prose writes are automatic, so it is read
+        from the repository rather than taken from what the caller declared. A
+        scope that says private about a public repository is corrected before
+        the owner is shown it, and the grant records which of the two the
+        value came from.
+        """
+
         self._check_dialog()
-        return self._approvals().request_setup(scope)
+        return self._approvals().request_setup(self._with_live_visibility(scope))
+
+    def _with_live_visibility(self, scope):
+        if not isinstance(scope, dict):
+            return scope
+        scope = dict(scope)
+        reader = getattr(self.github, "read_visibility", None)
+        if not callable(reader):
+            scope.setdefault("visibility_source", "declared")
+            return scope
+        try:
+            scope["visibility"] = reader()
+        except CabinetError:
+            scope.setdefault("visibility_source", "declared")
+            return scope
+        scope["visibility_source"] = "live"
+        return scope
 
     def _check_dialog(self):
         """Refuse before recording anything when no dialog can be shown.
@@ -578,16 +656,191 @@ class CabinetService:
         The order is the contract: a kind with no executor at any approval
         level must fail as forbidden, not as unfinished, so that adding an
         adapter later can never turn a refusal into an execution.
+
+        One refusal is not the end of the road. A prose write on a public
+        board is refused as automatic, and what comes back is the exact
+        content for the owner to publish themselves. The action stays
+        `prepared`, because nothing was done.
         """
 
         stored = self.store.get_action(action_id)
         envelope = {field: stored[field] for field in contracts.ACTION_FIELDS}
-        grant = Policy(self.store).authorize(envelope)
+        try:
+            grant = Policy(self.store).authorize(envelope)
+        except CabinetError as refusal:
+            if refusal.code == "PUBLIC_PROSE_FORBIDDEN":
+                return self._prose_for_owner(stored, refusal)
+            raise
+        if stored["kind"] in contracts.SETUP_BOARD_OPERATIONS:
+            return self._run_board_action(stored, grant)
+        if stored["kind"] in DISPATCH_OPERATIONS:
+            self._require_whole_board(stored["kind"])
         raise CabinetError(
             "NOT_IMPLEMENTED_YET",
             "%s is authorized under grant %s but has no executor in this "
-            "release: O3 lands the board adapter and O4 the workspace adapter"
+            "release: O4 lands the workspace adapter"
             % (stored["kind"], grant["grant_id"]))
+
+    # --- board actions ------------------------------------------------------
+
+    def _prose_for_owner(self, stored, refusal):
+        """The exact content of a refused public prose write, for the owner.
+
+        Nothing is executed and nothing is recorded as done. This is the
+        artifact the owner reads and publishes by hand, and the action stays
+        where it was so that a later private-board decision can still run it.
+        """
+
+        return {"action_id": stored["action_id"], "kind": stored["kind"],
+                "state": stored["state"], "owner_approval_required": True,
+                "reason": refusal.code, "detail": refusal.message,
+                "artifact": {"repo": self.store.identity["repo"],
+                             "operation": stored["kind"],
+                             "payload": stored["payload"],
+                             "prepared": self.clock()}}
+
+    def _require_whole_board(self, kind):
+        state = self._board_state
+        if state is not None and not state["complete"]:
+            raise CabinetError(
+                "SOURCE_INCOMPLETE",
+                "the last board read lost %d page(s), so what is startable is "
+                "not known; %s would dispatch against a board that is missing "
+                "work" % (len(state["errors"]) or 1, kind))
+
+    def _run_board_action(self, stored, grant):
+        """Policy, then the gates, then the adapter, then the readback.
+
+        The write transaction is closed before the network call and reopened
+        after it. Holding one across the provider would make one slow request
+        block every other writer for as long as the provider took.
+        """
+
+        if self.github is None:
+            raise CabinetError("NOT_IMPLEMENTED_YET",
+                               "this company has no board adapter configured")
+        self._check_board_gates(stored, grant)
+        running = self.store.update_action(stored["action_id"], "running")
+        try:
+            result = self.github.apply(stored["kind"],
+                                       self._board_payload(stored),
+                                       expected_before=stored["expected_before"])
+        except CabinetError as problem:
+            state = "blocked" if problem.code in RECOVERABLE_ACTION_CODES \
+                else "failed"
+            self.store.update_action(
+                running["action_id"], state,
+                evidence={"code": problem.code, "message": problem.message,
+                          "observed": self.clock()})
+            raise
+        return self.store.update_action(
+            running["action_id"],
+            "verified" if result.get("outcome") == "verified" else "uncertain",
+            external_ref=result.get("external_ref"), evidence=result)
+
+    @staticmethod
+    def _board_payload(stored):
+        """The payload the adapter runs, carrying the action's own key.
+
+        A create is made idempotent by a marker in the issue body, and the
+        marker is the action's idempotency key. It lives on the envelope
+        rather than inside the payload, so it is put there here rather than
+        asked of a caller who would have to repeat it.
+        """
+
+        payload = dict(stored["payload"])
+        if stored["kind"] == "github.create_issue":
+            payload.setdefault("idempotency_key", stored["idempotency_key"])
+        return payload
+
+    def _check_board_gates(self, stored, grant):
+        """The two gates that are Cabinet's rules rather than the provider's."""
+
+        kind, payload = stored["kind"], stored["payload"]
+        if kind == "github.set_state":
+            self._check_state_change(payload)
+        if kind == "github.set_assignees":
+            self._check_assignees(payload, grant)
+
+    def _check_state_change(self, payload):
+        number = payload.get("issue_number")
+        reason = payload.get("state_reason")
+        if reason == "completed":
+            verdict = self._acceptance_verdict(number)
+            if verdict is None:
+                raise CabinetError(
+                    "ACCEPTANCE_REQUIRED",
+                    "issue %s has no passing QA verdict, so closing it as "
+                    "completed would be Cabinet asserting an acceptance "
+                    "nobody verified" % (number,))
+        elif reason == "not_planned" and self._in_approved_batch(number) \
+                and not self._owner_decided(number):
+            raise CabinetError(
+                "OWNER_DECISION_REQUIRED",
+                "issue %s is in the batch the owner approved; dropping it "
+                "changes an approved outcome, which is the owner's call and "
+                "not a role's" % (number,))
+
+    def _acceptance_verdict(self, number):
+        """A passing QA verdict on an assignment for this issue, or None.
+
+        The contract wants this bound to the batch's integrated SHA. The
+        integration record that would name that SHA arrives with the workspace
+        adapter, so today this checks the strongest fact that exists: an
+        independent QA pass recorded at an exact revision for an assignment on
+        this issue. It is stated here rather than claimed as the stronger
+        check.
+        """
+
+        for assignment in self.store.get_assignments():
+            if assignment["issue_number"] != number:
+                continue
+            for verdict in self.store.verdicts_for(assignment["assignment_id"]):
+                if verdict["reviewer_role"] == "qa" \
+                        and verdict["outcome"] == "pass":
+                    return verdict
+        return None
+
+    def _in_approved_batch(self, number):
+        for batch in self.store.get_batches():
+            if batch["state"] in ("proposed", "superseded"):
+                continue
+            stored = self.store.get_batch(batch["batch_id"], batch["revision"])
+            if number in stored["body"]["issues"] \
+                    and self.store.has_grant_for_batch(batch["batch_id"]):
+                return True
+        return False
+
+    def _owner_decided(self, number):
+        subject = "issue-%s" % number
+        for event in self.store.get_events():
+            if event["kind"] != "owner.decision":
+                continue
+            payload = event["payload"]
+            if payload.get("subject") == subject and payload.get("decided"):
+                return True
+        return False
+
+    def _check_assignees(self, payload, grant):
+        """An assignee is a real account the owner mapped, or there is none.
+
+        With no mapping the company still knows who owns the work: the
+        assignment record does. What it must never do is invent a username
+        that looks like a role, because somebody reading the board would take
+        it for a person.
+        """
+
+        wanted = payload.get("assignees") or []
+        if not wanted:
+            return
+        mapped = (grant["scope"].get("github_accounts") or {}).values()
+        unmapped = [login for login in wanted if login not in mapped]
+        if unmapped:
+            raise CabinetError(
+                "ASSIGNEE_NOT_CONFIGURED",
+                "%s is not one of the GitHub accounts the owner confirmed at "
+                "setup; work ownership stays in Cabinet's assignment record "
+                "until a real account is mapped" % ", ".join(sorted(unmapped)))
 
     # --- handoffs -----------------------------------------------------------
 

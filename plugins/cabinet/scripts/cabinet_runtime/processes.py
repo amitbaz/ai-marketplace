@@ -161,12 +161,25 @@ def _check_cwd(cwd):
 
 
 def run_argv(argv, cwd, env, timeout, runner=subprocess.run,
-             output_limit=OUTPUT_LIMIT, clock=time.monotonic):
+             output_limit=OUTPUT_LIMIT, clock=time.monotonic,
+             input_text=None, redact_output=True):
     """Run `argv` and return a bounded, redacted result.
 
     The returned dictionary carries `returncode`, `stdout`, `stderr`,
     `timed_out`, `duration` and `classification`. It never carries the
     environment, and a timeout is classified rather than retried here.
+
+    `input_text` is written to the child's standard input. It exists so a
+    request body travels as data rather than as words in a command line: a
+    title someone wrote is never parsed by anything on its way to the
+    provider. With no input the child gets no standard input at all.
+
+    `redact_output` may be turned off only by a caller that parses the output
+    structurally and returns selected fields rather than the text. Redaction
+    rewrites anything shaped like `key: value`, which is a safe thing to do to
+    a log line and a corrupting thing to do to JSON — `"key":"mit"` in a
+    licence object comes back as invalid syntax. A caller that turns it off
+    owns redacting whatever it surfaces from the result.
     """
 
     argv = _check_argv(argv)
@@ -184,15 +197,23 @@ def run_argv(argv, cwd, env, timeout, runner=subprocess.run,
     if timeout <= 0:
         raise CabinetError("FIELD_INVALID", "timeout must be positive")
 
+    if input_text is not None and not isinstance(input_text, str):
+        raise CabinetError("FIELD_INVALID",
+                           "standard input must be text already serialized")
+    fed = {"input": input_text} if input_text is not None \
+        else {"stdin": subprocess.DEVNULL}
+
+    clean = redact if redact_output else (lambda text: text)
+
     started = clock()
     try:
         completed = runner(argv, cwd=cwd, env=dict(env), timeout=timeout,
                            shell=False, capture_output=True, text=True,
-                           check=False, stdin=subprocess.DEVNULL)
+                           check=False, **fed)
     except subprocess.TimeoutExpired as expired:
         return {
             "returncode": None,
-            "stdout": bound(redact(_captured(expired.stdout)), output_limit),
+            "stdout": bound(clean(_captured(expired.stdout)), output_limit),
             "stderr": bound(redact(_captured(expired.stderr)), output_limit),
             "timed_out": True,
             "duration": clock() - started,
@@ -200,7 +221,7 @@ def run_argv(argv, cwd, env, timeout, runner=subprocess.run,
         }
     return {
         "returncode": completed.returncode,
-        "stdout": bound(redact(_captured(completed.stdout)), output_limit),
+        "stdout": bound(clean(_captured(completed.stdout)), output_limit),
         "stderr": bound(redact(_captured(completed.stderr)), output_limit),
         "timed_out": False,
         "duration": clock() - started,

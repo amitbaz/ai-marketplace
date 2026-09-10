@@ -9,11 +9,13 @@ Import as `from support import batch, action, FakeClock` with
 """
 
 import copy
+import json
 import os
 import shutil
 import tempfile
 import unittest
 from pathlib import Path
+from urllib.parse import unquote
 
 FIXTURES = Path(__file__).resolve().parent / "fixtures"
 
@@ -128,12 +130,13 @@ def guarded_execute(policy, executor, envelope):
 
 
 def setup_scope(repo="demo/company", visibility="private", operations=None,
-                profiles=None, workers=1):
+                profiles=None, workers=1, accounts=None):
     """The setup scope the owner is asked to approve in the setup dialog."""
 
     if profiles is None:
         profiles = ["local-unit"]
     return {
+        "github_accounts": dict(accounts or {}),
         "repo": repo,
         "visibility": visibility,
         "board_operations": list(operations if operations is not None else (
@@ -609,3 +612,359 @@ class RpcHarness:
         result = self.take(lambda m: m.get("id") == message_id)
         self.send({"jsonrpc": "2.0", "method": "notifications/initialized"})
         return result
+
+
+# --- the GitHub provider double ---------------------------------------------
+
+#: The synthetic base the fake hands back in a `Link` header. It is not a real
+#: host: the adapter must follow the URL it was given rather than rebuild one,
+#: and a fake host is how a test proves that.
+FAKE_BASE = "https://api.github.com/cabinet-fake"
+
+
+class FakeGithubRun:
+    """Stands in for the `run` callable the GitHub adapter is built with.
+
+    It speaks the same shape as `processes.run_argv` — argv in, a bounded
+    result dictionary out — and answers as `gh api -i` does, with a header
+    block, a blank line and a JSON body. Everything the adapter learns about
+    the provider therefore travels the same path in tests as in production.
+
+    Three distinctions are deliberate, because each one is a real defect this
+    fake exists to catch:
+
+    * an issue is keyed by number **and**, separately, by database ID, so an
+      adapter that sends a number where an ID belongs gets a miss rather than
+      a plausible answer;
+    * a page that was told to fail fails on its own, leaving the pages before
+      it intact, so a partial collection is observable; and
+    * a write can be told to time out *after* it has already taken effect,
+      which is the outcome that makes a blind retry unsafe.
+    """
+
+    def __init__(self, repo="demo/company", visibility="private"):
+        self.repo = repo
+        self.visibility = visibility
+        self.requests = []
+        self.sleeps = []
+        self.issues = {}
+        self.by_id = {}
+        self.collections = {}
+        self.failed_pages = {}
+        self.assignable = set()
+        self.timeout_paths = set()
+        self.rate_limited = 0
+        self.rate_retry_after = "1"
+        #: When set, a write is recorded and answered but never applied, so the
+        #: adapter's readback disagrees with what it asked for.
+        self.readback_refuses = False
+        #: Issue numbers whose document omits the relationship summaries, the
+        #: way a pull request or an older API version does. Their edges then
+        #: read as unknown rather than as none.
+        self.hide_relationships = set()
+        self.page_size = 100
+        self._next_id = 9000
+
+    # --- fixtures ---------------------------------------------------------
+
+    def issue(self, number, data=None):
+        """Register one issue, reachable by number and by database ID."""
+
+        record = {"number": number, "title": "Issue %d" % number, "body": "",
+                  "state": "open", "state_reason": None, "labels": [],
+                  "assignees": [], "updated_at": "2026-09-09T10:00:00Z",
+                  "sub_issues_summary": {"total": 0, "completed": 0,
+                                         "percent_completed": 0},
+                  "issue_dependencies_summary": {"blocked_by": 0,
+                                                 "total_blocked_by": 0,
+                                                 "blocking": 0,
+                                                 "total_blocking": 0}}
+        record.update(data or {})
+        record.setdefault("id", self._mint_id())
+        record.setdefault("node_id", "I_%d" % record["id"])
+        record.setdefault("html_url", "https://github.com/%s/issues/%d"
+                          % (self.repo, number))
+        record.setdefault("url", "%s/repos/%s/issues/%d"
+                          % (FAKE_BASE, self.repo, number))
+        record.setdefault("children", [])
+        record.setdefault("blocked_by", [])
+        self.issues[number] = record
+        self.by_id[record["id"]] = record
+        return record
+
+    def _mint_id(self):
+        self._next_id += 1
+        return self._next_id
+
+    def collection(self, name, items, page_size=None):
+        """Store a whole collection, chunked into pages the way gh returns them."""
+
+        size = page_size or self.page_size
+        pages = [items[start:start + size]
+                 for start in range(0, max(len(items), 1), size)] or [[]]
+        self.collections[name] = pages
+        return pages
+
+    def fail_page(self, collection, page):
+        """Make the named one-based page of a collection return a provider error."""
+
+        self.failed_pages.setdefault(collection, set()).add(page)
+
+    def timeout_after_write(self, path):
+        """Apply the next write to this path, then report a timeout for it."""
+
+        self.timeout_paths.add(path)
+
+    def rate_limit(self, times=1, retry_after="1"):
+        self.rate_limited = times
+        self.rate_retry_after = str(retry_after)
+
+    def sleeper(self, seconds):
+        """The adapter's injected sleeper, so a busy loop is visible as zeros."""
+
+        self.sleeps.append(seconds)
+
+    # --- assertions -------------------------------------------------------
+
+    def mutations(self):
+        return [row for row in self.requests if row["method"] != "GET"]
+
+    def last_mutation(self):
+        """The last captured method, path and body. Carries no credential data."""
+
+        rows = self.mutations()
+        if not rows:
+            raise AssertionError("no mutation was attempted")
+        row = rows[-1]
+        return {"method": row["method"], "path": row["path"],
+                "body": copy.deepcopy(row["body"])}
+
+    def paths(self, method=None):
+        return [row["path"] for row in self.requests
+                if method is None or row["method"] == method]
+
+    # --- the run callable -------------------------------------------------
+
+    def __call__(self, argv, input_text=None):
+        method, endpoint = _parse_gh_argv(argv)
+        path, query = _split_endpoint(endpoint)
+        # Captured without a leading slash, exactly as the adapter wrote it, so
+        # an assertion in a test reads as the endpoint the provider documents.
+        body = json.loads(input_text) if input_text else None
+        self.requests.append({"method": method, "path": path, "query": query,
+                              "body": copy.deepcopy(body), "argv": list(argv)})
+        if self.rate_limited > 0:
+            self.rate_limited -= 1
+            return _response(429, {"message": "You have exceeded a secondary "
+                                              "rate limit"},
+                             {"Retry-After": self.rate_retry_after,
+                              "X-RateLimit-Remaining": "0"})
+        status, payload, headers = self._route(method, path, query, body)
+        if method != "GET" and path in self.timeout_paths:
+            self.timeout_paths.discard(path)
+            return {"returncode": None, "stdout": "", "stderr": "",
+                    "timed_out": True,
+                    "classification": "timeout_after_possible_dispatch"}
+        return _response(status, payload, headers)
+
+    # --- routing ----------------------------------------------------------
+
+    def _route(self, method, path, query, body):
+        parts = path.split("/")
+        if parts[:1] == ["cabinet-fake"]:
+            return self._page(parts[1], int(query.get("page", "1")))
+        if len(parts) == 3 and parts[0] == "repos":
+            return 200, {"full_name": self.repo, "visibility": self.visibility,
+                         "private": self.visibility != "public"}, {}
+        if len(parts) < 4 or parts[0] != "repos":
+            return 404, {"message": "Not Found"}, {}
+        named = "/".join(parts[1:3])
+        if named != self.repo:
+            return 404, {"message": "Not Found"}, {}
+        rest = parts[3:]
+        if rest[0] == "assignees" and len(rest) == 2:
+            return (204, None, {}) if rest[1] in self.assignable \
+                else (404, {"message": "Not Found"}, {})
+        if rest[0] in ("issues", "pulls", "branches") and len(rest) == 1 \
+                and method == "GET":
+            return self._page(rest[0], int(query.get("page", "1")))
+        if rest[0] != "issues":
+            return 404, {"message": "Not Found"}, {}
+        return self._issue_route(method, rest, path, body)
+
+    def _issue_route(self, method, rest, path, body):
+        if len(rest) == 1:
+            return self._create(body)
+        try:
+            number = int(rest[1])
+        except ValueError:
+            return 404, {"message": "Not Found"}, {}
+        record = self.issues.get(number)
+        if record is None:
+            return 404, {"message": "Not Found"}, {}
+        tail = rest[2:]
+        if not tail:
+            return self._issue_document(method, record, body)
+        if tail[0] == "sub_issues":
+            return self._sub_issues(method, record, body)
+        if tail[0] == "sub_issue":
+            return self._remove_child(record, body)
+        if tail[:2] == ["dependencies", "blocked_by"]:
+            return self._blocked_by(method, record, tail, body)
+        if tail[0] == "labels":
+            if not self.readback_refuses:
+                record["labels"] = [{"name": name} for name in body["labels"]]
+            return 200, [{"name": name} for name in body["labels"]], {}
+        return 404, {"message": "Not Found"}, {}
+
+    def _issue_document(self, method, record, body):
+        if method == "GET" or self.readback_refuses:
+            return 200, self._render(record), {}
+        for field in ("title", "body", "state", "state_reason"):
+            if body and field in body:
+                record[field] = body[field]
+        if body and "labels" in body:
+            record["labels"] = [{"name": name} for name in body["labels"]]
+        if body and "assignees" in body:
+            record["assignees"] = [{"login": name} for name in body["assignees"]]
+        return 200, self._render(record), {}
+
+    def _create(self, body):
+        number = max(self.issues) + 1 if self.issues else 1
+        record = self.issue(number, {
+            "title": body.get("title", ""), "body": body.get("body", ""),
+            "labels": [{"name": name} for name in body.get("labels", [])],
+            "assignees": [{"login": name}
+                          for name in body.get("assignees", [])]})
+        return 201, self._render(record), {}
+
+    def _sub_issues(self, method, record, body):
+        if method == "GET":
+            if 1 in self.failed_pages.get("sub_issues", ()):
+                return 500, {"message": "Server Error"}, {}
+            return 200, [self._render(self.issues[n])
+                         for n in record["children"]], {}
+        child = self.by_id.get(body["sub_issue_id"])
+        if child is None:
+            return 422, {"message": "sub_issue_id is not an issue"}, {}
+        if child["number"] not in record["children"]:
+            record["children"].append(child["number"])
+        child["parent"] = record["number"]
+        return 201, self._render(record), {}
+
+    def _remove_child(self, record, body):
+        child = self.by_id.get(body["sub_issue_id"])
+        if child is None or child["number"] not in record["children"]:
+            return 404, {"message": "Not Found"}, {}
+        record["children"].remove(child["number"])
+        child.pop("parent", None)
+        return 200, self._render(record), {}
+
+    def _blocked_by(self, method, record, tail, body):
+        if method == "GET":
+            if 1 in self.failed_pages.get("blocked_by", ()):
+                return 500, {"message": "Server Error"}, {}
+            return 200, [self._render(self.issues[n])
+                         for n in record["blocked_by"]], {}
+        if method == "DELETE":
+            blocker = self.by_id.get(int(tail[2]))
+            if blocker is None or blocker["number"] not in record["blocked_by"]:
+                return 404, {"message": "Not Found"}, {}
+            record["blocked_by"].remove(blocker["number"])
+            return 204, None, {}
+        blocker = self.by_id.get(body["issue_id"])
+        if blocker is None:
+            return 422, {"message": "issue_id is not an issue"}, {}
+        if blocker["number"] not in record["blocked_by"]:
+            record["blocked_by"].append(blocker["number"])
+        return 201, self._render(record), {}
+
+    def _page(self, collection, page):
+        pages = self.collections.get(collection)
+        if pages is None:
+            return 200, [], {}
+        if page in self.failed_pages.get(collection, ()):
+            return 500, {"message": "Server Error"}, {}
+        if page < 1 or page > len(pages):
+            return 200, [], {}
+        headers = {}
+        if page < len(pages):
+            headers["Link"] = '<%s/%s?page=%d>; rel="next"' % (
+                FAKE_BASE, collection, page + 1)
+        return 200, pages[page - 1], headers
+
+    def _render(self, record):
+        shown = {key: value for key, value in record.items()
+                 if key not in ("children", "blocked_by", "parent")}
+        if record["number"] in self.hide_relationships:
+            shown.pop("sub_issues_summary", None)
+            shown.pop("issue_dependencies_summary", None)
+            return shown
+        summary = dict(shown.get("sub_issues_summary") or {})
+        summary["total"] = len(record["children"])
+        shown["sub_issues_summary"] = summary
+        dependencies = dict(shown.get("issue_dependencies_summary") or {})
+        dependencies["total_blocked_by"] = len(record["blocked_by"])
+        dependencies["blocked_by"] = len(
+            [n for n in record["blocked_by"]
+             if self.issues[n]["state"] == "open"])
+        shown["issue_dependencies_summary"] = dependencies
+        if record.get("parent") is not None:
+            shown["parent_issue_url"] = "%s/repos/%s/issues/%d" % (
+                FAKE_BASE, self.repo, record["parent"])
+        return shown
+
+
+def _parse_gh_argv(argv):
+    """Recover the method and endpoint from a `gh api` command line."""
+
+    method, endpoint, index = "GET", None, 0
+    while index < len(argv):
+        word = argv[index]
+        if word == "--method":
+            method, index = argv[index + 1], index + 2
+        elif word in ("-H", "--header", "--input"):
+            index += 2
+        elif word in ("gh", "api"):
+            index += 1
+        elif word.startswith("-"):
+            index += 1
+        else:
+            endpoint, index = word, index + 1
+    return method, endpoint
+
+
+def _split_endpoint(endpoint):
+    """Split `path?query` — a full URL included — into a path and a mapping."""
+
+    text = endpoint or ""
+    for prefix in ("https://api.github.com/", "http://api.github.com/"):
+        if text.startswith(prefix):
+            text = text[len(prefix):]
+            break
+    path, _, raw = text.partition("?")
+    query = {}
+    for pair in raw.split("&"):
+        if not pair:
+            continue
+        name, _, value = pair.partition("=")
+        query[name] = unquote(value)
+    return path.strip("/"), query
+
+
+def _response(status, payload, headers=None):
+    """Render one `gh api -i` result: header block, blank line, JSON body."""
+
+    reasons = {200: "OK", 201: "Created", 204: "No Content", 401: "Unauthorized",
+               403: "Forbidden", 404: "Not Found", 422: "Unprocessable Entity",
+               429: "Too Many Requests", 500: "Internal Server Error"}
+    lines = ["HTTP/2.0 %d %s" % (status, reasons.get(status, "Unknown"))]
+    lines.append("Content-Type: application/json; charset=utf-8")
+    lines.append("X-Github-Api-Version-Selected: 2026-03-10")
+    for name, value in (headers or {}).items():
+        lines.append("%s: %s" % (name, value))
+    body = "" if payload is None else json.dumps(payload)
+    stdout = "\r\n".join(lines) + "\r\n\r\n" + body
+    stderr = "" if status < 400 else "gh: HTTP %d\n" % status
+    return {"returncode": 0 if status < 400 else 1, "stdout": stdout,
+            "stderr": stderr, "timed_out": False, "classification": "completed"}

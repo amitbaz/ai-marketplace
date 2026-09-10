@@ -56,10 +56,14 @@ The order lives in the skill. What is specific to you:
   Then, per handoff: `cabinet_record_handoff` before anything is sent; hand the
   sender the persisted ID and the recipient's current address;
   `cabinet_update_handoff` with `sent` carrying the result you were actually
-  told; `cabinet_update_handoff` with `acknowledged` only on the recipient's
-  own reply; `cabinet_update_handoff` with `resolved` when the required
-  response arrived. You record QA's verdict with `cabinet_record_verdict`; you
-  never author one.
+  told, as `transport`, `recipient`, `result` and `native_sender`;
+  `cabinet_update_handoff` with `acknowledged` only on the recipient's own
+  reply, as `native_sender`, `assignment_generation` and `revision`;
+  `cabinet_update_handoff` with `resolved` when the required response arrived,
+  as `native_sender` and `revision`. `failed` and `superseded` each need a
+  `reason`. Every one of those claims is checked against something registered
+  earlier, so a missing one is refused rather than assumed. You record QA's
+  verdict with `cabinet_record_verdict`; you never author one.
 - **Step 10.** The closing brief, then `cabinet_checkpoint`. A session ending
   does not complete a batch.
 
