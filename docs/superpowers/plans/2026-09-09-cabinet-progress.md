@@ -32,6 +32,8 @@ operational claim. Keep blocked gate and offline task progress separate.
 
 ## Requirement evidence
 
+| R04 | Owner approves exact batches before implementation | native_verified (2026-09-10): docs/cabinet/acceptance/f3-owner-approval.md — grant only after the owner's own dialog answer; decline → no grant; a new revision revoked the grant |
+
 R01–R18: all NOT_RUN except the row below. Populate one row per requirement
 from the master during implementation; every row must reference its own
 evidence. Do not substitute a single overall test count for this map.
@@ -70,7 +72,7 @@ A status here is `supported`, `unsupported` or `not_run`; `not_run` never means
 | `claude -p` child delivering into the parent session | not_run | The nearest evidence used an in-process `Agent`-tool subagent, which addresses `main` differently from a cross-session peer. Not folded in |
 | `ScheduleWakeup` timer | not_run | Tool name observed in a restricted child; schema not captured, never called |
 | MCP elicitation, print mode | **unsupported** | F4b drove the real Cabinet server from `claude -p`: the client advertises no form elicitation, so `cabinet_request_owner_approval` refused with `ELICITATION_UNSUPPORTED` and created no grant and no pending request. **A print-mode session can never approve a batch; the chief must run interactively** |
-| MCP elicitation, interactive | not_run — awaiting the owner | Needs one real owner answer in a dialog. Deliberately not simulated |
+| MCP elicitation, interactive | native_verified (2026-09-10) | Owner answered two real dialogs in an interactive restricted chief: approve → grant G430a9fe5c997 for T001 r1; decline → no grant; r2 revoked r1. Evidence: docs/cabinet/acceptance/f3-owner-approval.md. Client declares `"elicitation": {}` (fix 1f67df3) |
 | Cabinet MCP server under `claude -p` | supported (native_verified) | `initialize`, `tools/list` and `tools/call` all worked over `--mcp-config` on 2.1.267; the tool result came back verbatim |
 | `--tools` gates MCP tool names | **unsupported (they survive)** | With `--tools Read,Grep,Glob,Skill,Agent,SendMessage,ListAgents` a child held exactly those seven built-ins and all four `mcp__cabinet__*` names. F4a concern 1 settled: `include_service_tools_in_tools_flag` stays False |
 | An MCP tool call needs a permission grant | supported | Without `--allowedTools` the print-mode child answered `I don't have permission to use the cabinet_doctor tool`. The chief profile's `manual` default mode therefore prompts per call |
