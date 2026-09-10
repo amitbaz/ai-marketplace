@@ -114,16 +114,21 @@ def redact(text):
 
 
 def bound(text, limit):
-    """Return at most `limit` characters of `text`, marking any loss."""
+    """Return at most `limit` bytes of `text`, marking any loss.
+
+    The bound is in bytes because that is what `OUTPUT_LIMIT` promises;
+    slicing characters would let multibyte output run several times over it.
+    """
 
     if text is None:
         return ""
     if not isinstance(text, str):
         text = text.decode("utf-8", "replace")
-    if len(text) <= limit:
+    raw = text.encode("utf-8")
+    if len(raw) <= limit:
         return text
-    return text[:limit] + ("\n[cabinet: output truncated at %d characters]"
-                           % limit)
+    return raw[:limit].decode("utf-8", "ignore") + (
+        "\n[cabinet: output truncated at %d bytes]" % limit)
 
 
 def _check_argv(argv):

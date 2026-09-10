@@ -64,6 +64,8 @@ ERROR_CODES = {
     "PROFILE_SANDBOX_REQUIRED": "A worker profile lacks the mandatory sandbox.",
     "PROFILE_SETTINGS_WIDENING": "A profile's settings widen permissions.",
     "PROFILE_CREDENTIALS_EXPOSED": "A profile exposes a credential directory.",
+    "PROFILE_ARGV_MISMATCH": "A launch command line contradicts its profile.",
+    "PROFILE_HOOK_MISSING": "A profile does not register the dispatch check.",
     # Backup and restore
     "BACKUP_DESTINATION_EXISTS": "The backup destination already exists.",
     "RESTORE_DESTINATION_EXISTS": "The restore destination already exists.",

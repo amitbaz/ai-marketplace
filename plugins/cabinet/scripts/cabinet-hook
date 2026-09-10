@@ -99,6 +99,11 @@ def _decide_agent(kind, tool_input):
     wanted = tool_input.get("subagent_type")
     if not isinstance(wanted, str) or not wanted:
         return DENY, "Agent needs a subagent_type from the packaged registry."
+    bare = wanted.split(":", 1)[1] if wanted.startswith("cabinet:") else wanted
+    if bare in WORKER_TYPES:
+        return DENY, ("%r runs as its own isolated session with its own "
+                      "profile; it is never dispatched as a child of this one."
+                      % bare)
     if wanted not in registered_types():
         return DENY, ("%r is not a packaged Cabinet role. Registered: %s."
                       % (wanted, ", ".join(STAFF_AGENT_TYPES)))
@@ -149,6 +154,24 @@ def _load_peers(path):
     return peers, ""
 
 
+def safe_decide(event, env):
+    """Run `decide`, turning any unexpected failure into a denial.
+
+    An exception would otherwise leave the process at a non-zero exit that is
+    read as a hook error rather than a refusal, and the tool would proceed. A
+    check that cannot run has not established anything, so it refuses.
+    """
+
+    try:
+        return decide(event, env)
+    except Exception as problem:  # noqa: BLE001 - a refusal is the safe outcome
+        if env.get("CABINET_PROFILE_KIND") not in PROFILE_KINDS:
+            return NOOP, ""
+        return DENY, ("The Cabinet dispatch check could not run (%s: %s), so "
+                      "nothing about this call has been confirmed."
+                      % (type(problem).__name__, problem))
+
+
 def emit_deny(reason, tool):
     body = {"hookSpecificOutput": {"hookEventName": "PreToolUse",
                                    "permissionDecision": "deny",
@@ -173,7 +196,7 @@ def main(argv):
         sys.stderr.write("cabinet-hook: event on stdin was not JSON; "
                          "no decision made\n")
         return 0
-    decision, reason = decide(event, os.environ)
+    decision, reason = safe_decide(event, os.environ)
     if decision == DENY:
         tool = event.get("tool_name") if isinstance(event, dict) else "tool"
         return emit_deny(reason, tool)

@@ -1,20 +1,26 @@
 """Restricted launch profiles for the chief, the staff roles and the workers.
 
 A profile is the whole description of one session's authority: the tool names
-it may hold, the directories it may reach, the deny rules and sandbox block
-written into its settings, and the argv that starts it. `build_profile` writes
-one; `verify_profile` refuses one that would hand a role something it must not
-have; `worker_launch` turns a worker profile into argv without running it.
+it may hold, the directories it may reach, the deny rules, hook registration
+and sandbox block written into its settings, the environment the check hook
+reads, and the argv that starts it. `build_profile` writes one;
+`verify_profile` refuses one that would hand a role something it must not have;
+`worker_launch` turns a worker profile into argv without running it.
 
-Two properties are worth stating because they are what the refusals protect:
+Four properties are worth stating because they are what the refusals protect:
 
-* a profile carries no hooks. An `Elicitation` or `ElicitationResult` hook can
-  answer a dialog before the owner sees it, so a session that must obtain real
-  consent cannot carry one, and an unrecognised hook is refused for the same
-  reason rather than inspected.
+* the argv is derived from the profile's own fields, and `verify_profile`
+  re-derives it and compares. A command line that says something the profile
+  does not say is refused, because the command line is what actually runs.
+* a profile's only hook is Cabinet's own dispatch check. An `Elicitation` or
+  `ElicitationResult` hook can answer a dialog before the owner sees it, and
+  any other hook is refused rather than inspected.
 * every path is absolute and comes from the trusted worktree or toolchain. No
   path is assembled from a ticket, an issue title or any other text a model
   produced, and a path carrying shell syntax is refused rather than quoted.
+* a session cannot read what authenticates the owner. The deny set names the
+  credential stores, and `~/.cabinet/**/runtime` with them, while leaving the
+  company's own public views readable.
 
 Flag names follow the measured environment contract in
 docs/cabinet/acceptance/environment.md: `--tools` is the flag that narrows the
@@ -22,6 +28,7 @@ tool set, and `crossSessionInbound` has no flag at all, so it is passed as
 settings.
 """
 
+import json
 import os
 import re
 import uuid
@@ -52,6 +59,12 @@ SERVICE_METHODS = (
 SERVICE_TOOLS = tuple("mcp__cabinet__cabinet_%s" % name
                       for name in SERVICE_METHODS)
 
+#: The read-only slice of the service. An advisory role reads company state and
+#: says what it thinks; it changes nothing, so it holds nothing that writes.
+STAFF_SERVICE_TOOLS = ("mcp__cabinet__cabinet_snapshot",
+                       "mcp__cabinet__cabinet_context",
+                       "mcp__cabinet__cabinet_doctor")
+
 CHIEF_TOOLS = ("Read", "Grep", "Glob", "Skill", "Agent", "SendMessage",
                "ListAgents")
 STAFF_TOOLS = ("Read", "Grep", "Glob", "Skill", "SendMessage", "ListAgents")
@@ -60,30 +73,68 @@ IMPLEMENTER_TOOLS = ("Read", "Edit", "Write", "Grep", "Glob", "SendMessage",
 TEST_RUNNER_TOOLS = ("Read", "Grep", "Glob", "Bash", "SendMessage",
                      "ListAgents")
 
-#: Directories whose contents authenticate somebody. A worker that can read one
-#: of these has the owner's credentials, whatever its tool list says.
-CREDENTIAL_HOME_DIRS = (".claude", ".cabinet", ".ssh", ".aws", ".docker",
-                        ".config/gh", ".config/gcloud")
+#: Directories whose contents authenticate somebody.
+CREDENTIAL_HOME_DIRS = (".ssh", ".aws", ".docker", ".config/gh",
+                        ".config/gcloud")
 CREDENTIAL_ABSOLUTE_DIRS = ("/var/run/docker.sock", "/run/docker.sock")
 
-SETTINGS_KEYS = ("crossSessionInbound", "permissions", "sandbox")
+#: Cabinet's own private state. The company's public views sit beside this and
+#: stay readable; `runtime/` holds the database, the generated profiles and the
+#: backups, and nothing a role runs reads those.
+RUNTIME_PATTERNS = (".cabinet/**/runtime",)
+
+CLAUDE_HOME = ".claude"
+
+#: Read denies used when the plugin itself is installed under `~/.claude`, so
+#: the tree cannot be denied whole. These are the parts that carry credentials,
+#: other sessions' transcripts, or settings that could widen this session.
+CLAUDE_PRIVATE_DIRS = (
+    ".claude/.credentials.json", ".claude/settings.json",
+    ".claude/settings.local.json", ".claude/projects", ".claude/sessions",
+    ".claude/session-env", ".claude/shell-snapshots", ".claude/history.jsonl",
+    ".claude/todos", ".claude/statsig", ".claude/ide", ".claude/daemon",
+    ".claude/tasks", ".claude/teams", ".claude/backups",
+    ".claude/file-history", ".claude/downloads", ".claude/cache",
+)
+
+SETTINGS_KEYS = ("crossSessionInbound", "permissions", "sandbox", "hooks")
 PERMISSION_KEYS = ("defaultMode", "deny", "disableBypassPermissionsMode")
 WIDENING_MODES = ("bypassPermissions", "auto", "dontAsk")
 INBOUND_VALUES = ("accept", "refuse")
 WRITE_TOOLS = ("Edit", "Write", "NotebookEdit")
 
+#: Flags that would hand a session more than its profile says, whatever else
+#: the command line contains.
+FORBIDDEN_ARGV_FLAGS = (
+    "--dangerously-skip-permissions", "--dangerously-bypass-approvals-and-sandbox",
+    "--permission-mode", "--allowedtools", "--allowed-tools",
+    "--disallowedtools", "--disallowed-tools", "--setting-sources", "--agents",
+)
+
+HOOK_MATCHER = "Agent|SendMessage"
+HOOK_TIMEOUT = 10
+ENV_NAMES = ("CABINET_PROFILE_KIND", "CABINET_CHIEF_NAME",
+             "CABINET_PEER_REGISTRY")
+
 _SAFE_PATH = re.compile(r"^/[^\s;|&<>$`\"'\\!*?\n\r\x00]*$")
+_SAFE_PATTERN = re.compile(r"^/[^\s;|&<>$`\"'\\!?\n\r\x00]*$")
 _SLUG = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._-]{0,63}$")
 _PROGRAM = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._-]*$")
 _ARGV_WORD = re.compile(r"^[^;|&<>$`\"'\\\n\r\x00]*$")
 
-WORKSPACE_FIELDS = ("assignment", "path", "claude_path", "plugin_root",
-                    "mcp_config", "settings_path", "session_id")
+ALLOWED_WORKSPACE = {
+    "chief": ("assignment", "path", "claude_path", "plugin_root", "mcp_config",
+              "settings_path", "session_id", "peer_registry"),
+    "staff": ("plugin_root",),
+    "worker": ("assignment", "path", "claude_path", "plugin_root",
+               "chief_name", "peer_registry"),
+}
 REQUIRED_WORKSPACE = {
     "chief": ("assignment", "claude_path", "plugin_root", "mcp_config",
               "settings_path", "session_id"),
     "staff": ("plugin_root",),
-    "worker": ("assignment", "path", "claude_path", "plugin_root"),
+    "worker": ("assignment", "path", "claude_path", "plugin_root",
+               "chief_name"),
 }
 
 PROMPT_LIMIT = 128 * 1024
@@ -124,7 +175,124 @@ def digest_of(profile):
     return contracts.digest(body)
 
 
-# --- validation helpers -----------------------------------------------------
+# --- paths ------------------------------------------------------------------
+
+def safe_path(value, label):
+    """Return an absolute, non-traversing, shell-inert path, or raise."""
+
+    if not isinstance(value, str) or not value:
+        raise CabinetError("PROFILE_PATH_UNSAFE", "%s must be a path" % label)
+    if not value.startswith("/"):
+        raise CabinetError("PROFILE_PATH_UNSAFE",
+                           "%s must be absolute: %r" % (label, value))
+    if ".." in value.split("/"):
+        raise CabinetError("PROFILE_PATH_UNSAFE",
+                           "%s must not traverse: %r" % (label, value))
+    if not _SAFE_PATH.match(value):
+        raise CabinetError("PROFILE_PATH_UNSAFE",
+                           "%s carries shell syntax: %r" % (label, value))
+    return value.rstrip("/") or "/"
+
+
+def safe_pattern(value, label):
+    """Like `safe_path`, but `*` and `**` are allowed as path segments."""
+
+    if not isinstance(value, str) or not value.startswith("/"):
+        raise CabinetError("PROFILE_PATH_UNSAFE",
+                           "%s must be an absolute pattern: %r" % (label, value))
+    if ".." in value.split("/") or not _SAFE_PATTERN.match(value):
+        raise CabinetError("PROFILE_PATH_UNSAFE",
+                           "%s is not a safe pattern: %r" % (label, value))
+    return value.rstrip("/") or "/"
+
+
+def _segments(text):
+    return [part for part in text.strip("/").split("/") if part]
+
+
+def _match(pattern, parts):
+    if not pattern:
+        return True
+    if pattern[0] == "**":
+        if _match(pattern[1:], parts):
+            return True
+        return bool(parts) and _match(pattern, parts[1:])
+    if not parts:
+        return False
+    if pattern[0] != "*" and pattern[0] != parts[0]:
+        return False
+    return _match(pattern[1:], parts[1:])
+
+
+def covers(pattern, path):
+    """True when `path` is `pattern` or sits inside it. `*`/`**` are segments."""
+
+    return _match(_segments(pattern), _segments(path))
+
+
+def safe_slug(value, label):
+    if not isinstance(value, str) or not _SLUG.match(value):
+        raise CabinetError("PROFILE_PATH_UNSAFE",
+                           "%s must be a plain identifier: %r" % (label, value))
+    return value
+
+
+def safe_session_id(value):
+    try:
+        uuid.UUID(str(value))
+    except (ValueError, AttributeError, TypeError):
+        raise CabinetError("FIELD_INVALID",
+                           "a session id must be a UUID: %r" % (value,))
+    return str(value)
+
+
+def credential_paths(home=None, plugin_root=None):
+    """Return every path pattern a Cabinet session must not read.
+
+    `~/.claude` is denied whole unless the plugin itself is installed inside it,
+    which is where an installed Claude Code plugin lives. In that case the parts
+    that carry credentials, other sessions' transcripts and settings are denied
+    individually, so the plugin stays readable and nothing else does.
+    """
+
+    home = safe_path(home or os.path.expanduser("~"), "home")
+    paths = [safe_path("%s/%s" % (home, name), "credential path")
+             for name in CREDENTIAL_HOME_DIRS]
+    paths.extend(CREDENTIAL_ABSOLUTE_DIRS)
+    paths.extend(safe_pattern("%s/%s" % (home, name), "runtime pattern")
+                 for name in RUNTIME_PATTERNS)
+    claude_home = "%s/%s" % (home, CLAUDE_HOME)
+    if plugin_root and covers(claude_home, plugin_root):
+        paths.extend(safe_path("%s/%s" % (home, name), "private path")
+                     for name in CLAUDE_PRIVATE_DIRS)
+    else:
+        paths.append(safe_path(claude_home, "private path"))
+    return tuple(paths)
+
+
+def required_deny(plugin_root, public_context, creds):
+    """Deny rules every profile carries, whatever else it is allowed to do."""
+
+    rules = []
+    for base in (plugin_root, public_context):
+        for tool in WRITE_TOOLS:
+            rules.append("%s(%s/**)" % (tool, base))
+    for path in creds:
+        for tool in ("Read",) + WRITE_TOOLS:
+            rules.append("%s(%s/**)" % (tool, path))
+    return tuple(rules)
+
+
+def hook_entries(plugin_root):
+    """The one hook a profile registers: Cabinet's own dispatch check."""
+
+    command = 'python3 "%s/scripts/cabinet-hook"' % plugin_root
+    return {"PreToolUse": [{"matcher": HOOK_MATCHER,
+                            "hooks": [{"type": "command", "command": command,
+                                       "timeout": HOOK_TIMEOUT}]}]}
+
+
+# --- role registry ----------------------------------------------------------
 
 def role_kind(role):
     """Return `chief`, `staff` or `worker`, or raise ROLE_UNKNOWN."""
@@ -148,69 +316,33 @@ def expected_tools(role):
     return IMPLEMENTER_TOOLS if role == "implementer" else TEST_RUNNER_TOOLS
 
 
-def safe_path(value, label):
-    """Return an absolute, non-traversing, shell-inert path, or raise."""
-
-    if not isinstance(value, str) or not value:
-        raise CabinetError("PROFILE_PATH_UNSAFE", "%s must be a path" % label)
-    if not value.startswith("/"):
-        raise CabinetError("PROFILE_PATH_UNSAFE",
-                           "%s must be absolute: %r" % (label, value))
-    if ".." in value.split("/"):
-        raise CabinetError("PROFILE_PATH_UNSAFE",
-                           "%s must not traverse: %r" % (label, value))
-    if not _SAFE_PATH.match(value):
-        raise CabinetError("PROFILE_PATH_UNSAFE",
-                           "%s carries shell syntax: %r" % (label, value))
-    return value.rstrip("/") or "/"
+def expected_service_tools(role):
+    kind = role_kind(role)
+    if kind == "chief":
+        return SERVICE_TOOLS
+    return STAFF_SERVICE_TOOLS if kind == "staff" else ()
 
 
-def safe_slug(value, label):
-    if not isinstance(value, str) or not _SLUG.match(value):
-        raise CabinetError("PROFILE_PATH_UNSAFE",
-                           "%s must be a plain identifier: %r" % (label, value))
-    return value
+def tools_flag(body):
+    """The value of `--tools` for this profile."""
+
+    names = list(body.get("tools") or ())
+    if body.get("tools_flag_includes_service"):
+        names.extend(body.get("service_tools") or ())
+    return ",".join(names)
 
 
-def safe_session_id(value):
-    try:
-        uuid.UUID(str(value))
-    except (ValueError, AttributeError, TypeError):
-        raise CabinetError("FIELD_INVALID",
-                           "a session id must be a UUID: %r" % (value,))
-    return str(value)
-
-
-def credential_paths(home=None):
-    """Return every directory a Cabinet session must never read."""
-
-    home = safe_path(home or os.path.expanduser("~"), "home")
-    paths = [safe_path(os.path.join(home, name), "credential path")
-             for name in CREDENTIAL_HOME_DIRS]
-    paths.extend(CREDENTIAL_ABSOLUTE_DIRS)
-    return tuple(paths)
-
-
-def required_deny(plugin_root, public_context, creds):
-    """Deny rules every profile carries, whatever else it is allowed to do."""
-
-    rules = []
-    for base in (plugin_root, public_context):
-        for tool in WRITE_TOOLS:
-            rules.append("%s(%s/**)" % (tool, base))
-    for path in creds:
-        for tool in ("Read",) + WRITE_TOOLS:
-            rules.append("%s(%s/**)" % (tool, path))
-    return tuple(rules)
-
+# --- workspace and check profiles -------------------------------------------
 
 def _validate_workspace(kind, workspace):
     if not isinstance(workspace, dict):
         raise CabinetError("FIELD_INVALID", "workspace must be an object")
+    allowed = ALLOWED_WORKSPACE[kind]
     for key in workspace:
-        if key not in WORKSPACE_FIELDS:
+        if key not in allowed:
             raise CabinetError("FIELD_UNKNOWN",
-                               "workspace.%s is not a launch field" % key)
+                               "workspace.%s is not a %s launch field"
+                               % (key, kind))
     for key in REQUIRED_WORKSPACE[kind]:
         if key not in workspace:
             raise CabinetError("FIELD_MISSING",
@@ -218,12 +350,15 @@ def _validate_workspace(kind, workspace):
                                % (key, kind))
     checked = {}
     for key in ("path", "claude_path", "plugin_root", "mcp_config",
-                "settings_path"):
+                "settings_path", "peer_registry"):
         if key in workspace:
             checked[key] = safe_path(workspace[key], "workspace.%s" % key)
     if "assignment" in workspace:
         checked["assignment"] = safe_slug(workspace["assignment"],
                                           "workspace.assignment")
+    if "chief_name" in workspace:
+        checked["chief_name"] = safe_slug(workspace["chief_name"],
+                                          "workspace.chief_name")
     if "session_id" in workspace:
         checked["session_id"] = safe_session_id(workspace["session_id"])
     return checked
@@ -251,9 +386,8 @@ def _validate_check_profiles(role, check_profiles):
                 raise CabinetError("PROFILE_PATH_UNSAFE",
                                    "check profile argv[%d] carries shell "
                                    "syntax: %r" % (position, word))
-        program = argv[0]
-        if not _PROGRAM.match(program):
-            safe_path(program, "check profile program")
+        if not _PROGRAM.match(argv[0]):
+            safe_path(argv[0], "check profile program")
         env = item["env"]
         if not isinstance(env, dict):
             raise CabinetError("FIELD_INVALID", "check profile env must be an object")
@@ -276,7 +410,7 @@ def worker_sandbox(plugin_root, public_context, creds):
     `sandbox.allowUnsandboxedCommands`, `sandbox.excludedCommands`,
     `sandbox.filesystem.disabled`, `sandbox.network.strictAllowlist` and
     `sandbox.network.allowedDomains`. An empty allowlist with the strict flag
-    set is the documented shape for no external egress.
+    set is the documented shape for denying every non-allowlisted host.
     """
 
     return {
@@ -297,19 +431,51 @@ def worker_sandbox(plugin_root, public_context, creds):
     }
 
 
+# --- argv -------------------------------------------------------------------
+
+def build_argv(profile):
+    """Derive the launch command line from the profile's own fields.
+
+    This is the single source of truth for what runs. `verify_profile` calls it
+    again and compares, so a command line that says something the profile does
+    not say is refused.
+    """
+
+    body = plain(profile)
+    kind = body.get("kind")
+    if kind == "staff":
+        return ()
+    argv = [body["claude_path"], "--restricted", "--strict-mcp-config"]
+    if kind == "chief":
+        argv += ["--mcp-config", body["mcp_config"],
+                 "--settings", body["settings_path"],
+                 "--plugin-dir", body["plugin_root"],
+                 "--agent", "cabinet:%s" % CHIEF_ROLE]
+    else:
+        argv += ["--settings", contracts.canonical_json(body["settings"])]
+    for directory in body.get("add_dirs") or ():
+        argv += ["--add-dir", directory]
+    argv += ["--tools", tools_flag(body)]
+    if kind == "chief":
+        argv += ["--session-id", body["session_id"], "--name",
+                 body["session_name"]]
+    return tuple(argv)
+
+
 # --- building ---------------------------------------------------------------
 
 def build_profile(role, workspace, public_context, check_profiles=(),
-                  home=None):
+                  home=None, include_service_tools_in_tools_flag=False):
     """Return the immutable launch profile for one role."""
 
     kind = role_kind(role)
     space = _validate_workspace(kind, workspace)
     public = safe_path(public_context, "public_context")
     plugin_root = space["plugin_root"]
-    creds = credential_paths(home)
+    creds = credential_paths(home, plugin_root)
     checks = _validate_check_profiles(role, check_profiles)
     tools = expected_tools(role)
+    service_tools = expected_service_tools(role)
     deny = required_deny(plugin_root, public, creds)
 
     permissions = {"defaultMode": "acceptEdits" if kind == "worker" else "manual",
@@ -322,60 +488,57 @@ def build_profile(role, workspace, public_context, check_profiles=(),
     if kind == "worker":
         sandbox = worker_sandbox(plugin_root, public, creds)
         settings["sandbox"] = sandbox
+        # A worker has no --plugin-dir, and --restricted ignores the settings
+        # files a plugin hook would otherwise be discovered through, so the
+        # check is registered here or it does not run at all.
+        settings["hooks"] = hook_entries(plugin_root)
 
     if kind == "chief":
         session_name = "cabinet-chief-%s" % space["assignment"]
         add_dirs = (public, plugin_root)
-        service_tools = SERVICE_TOOLS
-        mcp_servers = ("cabinet",)
-        argv = (
-            space["claude_path"], "--restricted", "--strict-mcp-config",
-            "--mcp-config", space["mcp_config"],
-            "--settings", space["settings_path"],
-            "--plugin-dir", plugin_root,
-            "--agent", "cabinet:%s" % CHIEF_ROLE,
-            "--add-dir", public, "--add-dir", plugin_root,
-            "--tools", ",".join(tools),
-            "--session-id", space["session_id"],
-            "--name", session_name,
-        )
+        chief_name = session_name
     elif kind == "staff":
         # Staff run as the chief's in-process subagents, so they have no argv
-        # of their own; their enumerated `tools:` grant is the whole surface.
+        # and no environment of their own; they inherit the chief's.
         session_name = "cabinet-staff-%s" % role
         add_dirs = (public, plugin_root)
-        service_tools = ()
-        mcp_servers = ()
-        argv = ()
+        chief_name = None
     else:
         session_name = "cabinet-worker-%s" % space["assignment"]
         add_dirs = (space["path"],)
-        service_tools = ()
-        mcp_servers = ()
-        argv = (
-            space["claude_path"], "--restricted", "--strict-mcp-config",
-            "--settings", contracts.canonical_json(settings),
-            "--add-dir", space["path"],
-            "--tools", ",".join(tools),
-        )
+        chief_name = space["chief_name"]
+
+    env = {}
+    if kind != "staff":
+        env["CABINET_PROFILE_KIND"] = kind
+        env["CABINET_CHIEF_NAME"] = chief_name
+        if "peer_registry" in space:
+            env["CABINET_PEER_REGISTRY"] = space["peer_registry"]
 
     body = {
         "role": role,
         "kind": kind,
         "tools": list(tools),
         "service_tools": list(service_tools),
-        "mcp_servers": list(mcp_servers),
+        "tools_flag_includes_service": bool(include_service_tools_in_tools_flag),
+        "mcp_servers": ["cabinet"] if kind == "chief" else [],
         "add_dirs": list(add_dirs),
         "deny": list(deny),
         "credential_paths": list(creds),
         "plugin_root": plugin_root,
         "public_context": public,
+        "workspace_path": space.get("path"),
+        "claude_path": space.get("claude_path"),
+        "mcp_config": space.get("mcp_config"),
+        "settings_path": space.get("settings_path"),
+        "session_id": space.get("session_id"),
         "check_profiles": checks,
         "sandbox": sandbox,
         "settings": settings,
-        "argv": list(argv),
+        "env": env,
         "session_name": session_name,
     }
+    body["argv"] = list(build_argv(body))
     body["digest"] = contracts.digest(body)
     verify_profile(body)
     return _freeze(body)
@@ -388,8 +551,8 @@ def verify_profile(profile):
 
     The checks run in the order a reviewer would ask them: what could answer a
     dialog for the owner, what tools does it hold, what can it talk to, what
-    can it read, and only then whether its settings and sandbox say what they
-    are supposed to say.
+    can it read, what does its command line actually say, and only then whether
+    its settings and sandbox say what they are supposed to say.
     """
 
     body = plain(profile)
@@ -400,29 +563,41 @@ def verify_profile(profile):
                            "%r is a %s role, not %r" % (role, kind,
                                                         body.get("kind")))
     settings = body.get("settings") or {}
-    _verify_hooks(settings)
+    _verify_hooks(kind, body, settings)
     _verify_tools(role, kind, body)
     _verify_mcp(kind, body)
     _verify_directories(body)
+    _verify_env(kind, body)
+    _verify_argv(kind, body)
     _verify_settings(kind, body, settings)
     _verify_sandbox(kind, body, settings)
     return True
 
 
-def _verify_hooks(settings):
+def _verify_hooks(kind, body, settings):
     hooks = settings.get("hooks")
-    if not hooks:
+    if hooks is None:
+        if kind == "worker":
+            raise CabinetError(
+                "PROFILE_HOOK_MISSING",
+                "a worker loads no plugin, so its settings register the "
+                "dispatch check or nothing checks its messages")
         return
-    names = sorted(hooks) if isinstance(hooks, dict) else [str(hooks)]
-    for name in names:
+    if not isinstance(hooks, dict):
+        raise CabinetError("PROFILE_HOOKS_FORBIDDEN",
+                           "a profile's hooks must be an object")
+    for name in sorted(hooks):
         if name in ("Elicitation", "ElicitationResult"):
             raise CabinetError(
                 "PROFILE_HOOKS_FORBIDDEN",
                 "a %s hook can answer an owner dialog before the owner sees "
                 "it; a profile that must obtain consent carries none" % name)
-    raise CabinetError("PROFILE_HOOKS_FORBIDDEN",
-                       "a launch profile registers no hooks; found %s"
-                       % ", ".join(names))
+    expected = hook_entries(body.get("plugin_root"))
+    if hooks != expected:
+        raise CabinetError(
+            "PROFILE_HOOKS_FORBIDDEN",
+            "a profile registers Cabinet's PreToolUse check and nothing else; "
+            "found %s" % ", ".join(sorted(hooks)))
 
 
 def _verify_tools(role, kind, body):
@@ -436,12 +611,13 @@ def _verify_tools(role, kind, body):
             "a %s profile holds exactly %s; extra %s, missing %s"
             % (role, ",".join(wanted), extra or "none", missing or "none"))
     service = tuple(body.get("service_tools") or ())
-    allowed = SERVICE_TOOLS if kind == "chief" else ()
+    allowed = expected_service_tools(role)
     if service != allowed:
         raise CabinetError(
             "PROFILE_TOOLS_FORBIDDEN",
-            "only the chief holds the Cabinet service tools; a %s profile "
-            "named %s" % (kind, ", ".join(service) or "none"))
+            "a %s profile holds %s of the Cabinet service; it named %s"
+            % (kind, ", ".join(allowed) or "none",
+               ", ".join(service) or "none"))
 
 
 def _verify_mcp(kind, body):
@@ -456,19 +632,101 @@ def _verify_mcp(kind, body):
 
 
 def _verify_directories(body):
-    creds = list(body.get("credential_paths") or ())
+    creds = [safe_pattern(path, "credential path")
+             for path in body.get("credential_paths") or ()]
     creds.extend(CREDENTIAL_ABSOLUTE_DIRS)
     for directory in body.get("add_dirs") or ():
         safe_path(directory, "add_dirs entry")
-        for path in creds:
-            if directory == path or directory.startswith(path.rstrip("/") + "/"):
+        for pattern in creds:
+            if covers(pattern, directory):
                 raise CabinetError(
                     "PROFILE_CREDENTIALS_EXPOSED",
-                    "%s is inside %s, which authenticates the owner"
-                    % (directory, path))
-    for word in body.get("argv") or ():
-        if isinstance(word, str) and word.startswith("/"):
+                    "%s is inside %s, which is private to the owner or to the "
+                    "company runtime" % (directory, pattern))
+
+
+def _verify_env(kind, body):
+    env = body.get("env") or {}
+    if not isinstance(env, dict):
+        raise CabinetError("ENV_INVALID", "a profile environment is an object")
+    if kind == "staff":
+        if env:
+            raise CabinetError("ENV_INVALID",
+                               "a staff subagent runs in the chief's process "
+                               "and inherits its environment")
+        return
+    for name, value in env.items():
+        if name not in ENV_NAMES:
+            raise CabinetError("ENV_INVALID",
+                               "%s is not a Cabinet profile variable" % name)
+        if not isinstance(value, str) or not value:
+            raise CabinetError("ENV_INVALID",
+                               "%s must be a non-empty string" % name)
+    if env.get("CABINET_PROFILE_KIND") != kind:
+        raise CabinetError("ENV_INVALID",
+                           "CABINET_PROFILE_KIND must be %r, or the dispatch "
+                           "check does nothing" % kind)
+    if not env.get("CABINET_CHIEF_NAME"):
+        raise CabinetError("ENV_INVALID",
+                           "CABINET_CHIEF_NAME names the one session a worker "
+                           "may register with")
+    if "CABINET_PEER_REGISTRY" in env:
+        safe_path(env["CABINET_PEER_REGISTRY"], "CABINET_PEER_REGISTRY")
+
+
+def _verify_argv(kind, body):
+    argv = list(body.get("argv") or ())
+    for index, word in enumerate(argv):
+        if not isinstance(word, str):
+            raise CabinetError("PROFILE_ARGV_MISMATCH",
+                               "argv[%d] is not a string" % index)
+        lowered = word.lower()
+        for flag in FORBIDDEN_ARGV_FLAGS:
+            if lowered == flag or lowered.startswith(flag + "="):
+                raise CabinetError(
+                    "PROFILE_SETTINGS_WIDENING",
+                    "%s on the command line would widen this session past its "
+                    "profile" % word)
+        if word.startswith("/"):
             safe_path(word, "argv path")
+
+    if "--settings" in argv:
+        carried = argv[argv.index("--settings") + 1]
+        if carried.startswith("{"):
+            try:
+                decoded = json.loads(carried)
+            except ValueError:
+                raise CabinetError("PROFILE_ARGV_MISMATCH",
+                                   "the settings on the command line are not "
+                                   "readable JSON")
+            if decoded != body.get("settings"):
+                raise CabinetError(
+                    "PROFILE_ARGV_MISMATCH",
+                    "the settings on the command line are not the settings "
+                    "this profile was verified against")
+        elif carried != body.get("settings_path"):
+            raise CabinetError("PROFILE_ARGV_MISMATCH",
+                               "--settings names %r, not the profile's "
+                               "settings file" % carried)
+    if "--tools" in argv:
+        carried = argv[argv.index("--tools") + 1]
+        if carried != tools_flag(body):
+            raise CabinetError("PROFILE_ARGV_MISMATCH",
+                               "--tools names %r, not the profile's tool set"
+                               % carried)
+
+    expected = list(build_argv(body))
+    if argv != expected:
+        difference = [word for word in argv if word not in expected]
+        raise CabinetError(
+            "PROFILE_ARGV_MISMATCH",
+            "the command line does not match the profile it came from; "
+            "unexpected %s" % (difference[:4] or "ordering"))
+    if kind != "staff":
+        for flag in ("--restricted", "--strict-mcp-config"):
+            if flag not in argv:
+                raise CabinetError("PROFILE_ARGV_MISMATCH",
+                                   "%s is missing from the command line" % flag)
 
 
 def _verify_settings(kind, body, settings):
@@ -576,7 +834,7 @@ def _verify_sandbox(kind, body, settings):
 # --- launching --------------------------------------------------------------
 
 def worker_launch(profile, prompt_file, session_id):
-    """Return the argv and settings that start one worker. Runs nothing."""
+    """Return the argv, settings and environment for one worker. Runs nothing."""
 
     body = plain(profile)
     if body.get("kind") != "worker":
@@ -587,9 +845,9 @@ def worker_launch(profile, prompt_file, session_id):
     verify_profile(body)
     session_id = safe_session_id(session_id)
     prompt = _read_prompt(prompt_file)
-    argv = list(body["argv"]) + ["--session-id", session_id,
-                                 "--name", body["session_name"], prompt]
-    return {"argv": argv, "settings": body["settings"],
+    argv = list(build_argv(body)) + ["--session-id", session_id,
+                                     "--name", body["session_name"], prompt]
+    return {"argv": argv, "settings": body["settings"], "env": body["env"],
             "session_name": body["session_name"]}
 
 
