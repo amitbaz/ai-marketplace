@@ -39,6 +39,31 @@ and cannot derive it.
 If `exists=true` was already the case before this run, this is a re-run: go to
 *Re-running* below instead of interviewing from scratch.
 
+### Ask the runtime what it already knows, before asking the owner anything
+
+Call `mcp__cabinet__cabinet_doctor`. It changes nothing and it answers the two
+questions that decide how the rest of this command behaves:
+
+- **`identity`.** `bound` means a company already exists in the runtime for
+  this repository, and its documents are readable. `unbound` means this is a
+  first setup.
+- **`launch`.** `restricted` with a held lease is the chief's own session, and
+  it is the only one that can obtain the owner's setup grant. `ordinary` means
+  everything below still runs except that grant, which waits for section 5.
+
+When `identity` is `bound`, read what the runtime already holds with
+`mcp__cabinet__cabinet_context` before reading anything else. It returns the
+company's documents with their revisions and digests, and every fact in them is
+a fact you must not ask the owner to supply again. **A migration that
+interviews the owner about their own charter has failed even if every answer is
+correct**: the cost of setup is the owner's attention, and re-asking spends it
+on something already written down.
+
+If the Cabinet tools are not present in this session at all, say so in one
+line — the plugin is installed, its service is not connected here — and carry
+on with the file-based path below. Do not describe the runtime as absent when
+what happened is that this session cannot see it.
+
 ### If there is an old `.cabinet/` in the repository
 
 The output carries a `legacy_in_repo=` line when the worktree still holds a
@@ -120,6 +145,21 @@ Then read, from the snapshot and the sources rather than a call at a time:
   and whether any check is required.
 - Whatever project memory the harness exposes, read fresh, treated as one more
   source and never as authority.
+- **Everything the company already has**, when there is a company: the charter,
+  the decision record, the money ledger, the proposals list and every role
+  notebook, from `mcp__cabinet__cabinet_context` if the runtime holds them and
+  from `<memory>/` otherwise. Three things in there are the ones a rewrite
+  destroys and nobody notices for weeks:
+
+  - **Sources.** Every charter line carries where it came from and, where it can
+    go stale, the condition that ends it. A redrafted line without its source
+    is a line nobody can challenge.
+  - **Rejected decisions.** A decision *not* to do something is the rarest
+    thing in the record and the easiest to lose, because a rewrite that keeps
+    only what the company is doing looks complete.
+  - **Calibration history.** What a role predicted the owner would decide, how
+    confident it was, and what the owner actually answered, with dates. That
+    pairing is the whole diagnostic; either half alone is worthless.
 
 You may skip `inventory.skip_these_unless_asked` — implementation plans and
 specs record how something was built, which the code already answers. Say how
@@ -133,6 +173,12 @@ fall back to the MCP tools. The draft will be thinner; say that too, rather
 than presenting it as though it were not.
 
 ## 3. Draft the charter and present it for correction
+
+**Draft only what is missing.** Where a company already exists, this step is a
+gap list, not a charter: keep every existing line exactly as it stands, and
+draft only the fields nothing answered. A line you would have written
+differently is not a gap — it is a proposed amendment, and it goes to the owner
+as one under section 5's rule, never as an edit you make while drafting.
 
 Show the draft in the terminal with a source against every line, then ask only
 about the gaps. Typically only four things cannot be found anywhere:
@@ -205,11 +251,82 @@ offer to fix it here: what replaces those properties is an open design
 question, and inventing an answer during setup is how a decision gets made by
 accident.
 
-## 5. Hire the roles this stage needs
+### These files are what the runtime imports
 
-Six ship with the plugin: `delivery-lead`, `architect`, `qa`, `counsel`,
-`cfo`, `brand`. Recommend a starting set from the stage rather than turning
-all of them on, explain each in one line, and let the owner change it.
+The company directory is the runtime's own root, and the import is
+non-destructive and keyed by file name: identical content adds no revision and
+no event, the originals stay byte-identical, and copies land in the company's
+private backup directory. Nothing in a notebook ever becomes a batch, a grant
+or an assignment — text is text.
+
+Three consequences bind what you write here, and each is a way to silently
+break an existing company:
+
+- **Never renumber or reformat.** Decision numbers are how the owner refers to
+  decisions, and a renumbering answers a different question in the same words.
+- **Never merge two files into one, or split one into two.** The import is
+  keyed by name; a rename looks like a deletion plus a new document.
+- **`company.md` must not name a repository other than the bound one.** The
+  import refuses on that conflict rather than guessing which company it is
+  looking at, and the refusal is correct — fix the charter, not the check.
+
+## 5. Route the setup grant and every amendment to the owner
+
+Two things here are the owner's and are never a staff edit. Both go to them
+through a dialog, and a dialog is the only thing that creates either.
+
+**The setup grant.** It gives Cabinet standing authority to maintain this
+repository's board without asking per edit, and it is a different act from
+signing in: signing in proves who the owner is, this delegates. In the chief's
+own session — `launch: restricted` with a held lease — call
+`mcp__cabinet__cabinet_setup` with a `scope` naming exactly these five fields:
+
+| Field | What it holds |
+| --- | --- |
+| `repo` | `owner/repo`, the company this grant covers |
+| `visibility` | `private` or `public` |
+| `board_operations` | the board operations Cabinet may perform, named one by one |
+| `check_profiles` | each with its `profile_id`, its `argv` and its `env` |
+| `capacity` | `implementation_workers`, a whole number |
+
+Propose the narrowest scope the stage actually needs, show it before asking,
+and name what you left out — an operation absent from the list is one Cabinet
+will never perform, which is the point of enumerating them. The owner's answer
+to the dialog is the grant; a decline, a cancel or a timeout creates none, and
+none of them is a reason to ask again in different words.
+
+In any other session, `mcp__cabinet__cabinet_setup` refuses with
+`RESTRICTED_SESSION_REQUIRED`, and a print-mode session has no dialog at all
+and refuses with `ELICITATION_UNSUPPORTED`. Do not call it to demonstrate the
+error. Say that the grant needs the chief, finish everything else, and hand
+over the launcher:
+
+```
+python3 "${CLAUDE_PLUGIN_ROOT}"/scripts/cabinet-launch --repo <owner/repo>
+```
+
+Then record in the report that the grant is the one outstanding step.
+
+**Charter amendments.** Roles propose; only the owner amends. That holds during
+setup too, and it is the rule most easily lost here, because a command that is
+already writing `company.md` is one keystroke from rewriting a line it disagrees
+with. A superseded line stays, dated, with what changed and why, in the
+amendment log. `/cabinet:charter` is where an amendment is made. If this run
+found a line whose ending condition has been met, say so and let the owner
+decide; do not resolve it because the answer looks obvious.
+
+## 6. Hire the roles this stage needs
+
+Recommend a starting set from the stage rather than turning all of them on,
+explain each in one line, and let the owner change it.
+
+The core staff run continuously while a company session is open:
+`product`, `engineering`, `qa`, `delivery-lead`. The chief of staff is not
+hired — it is the session itself.
+
+These activate on demand, and deferring one never erases its remit:
+`architect`, `design`, `brand`, `marketing`, `cfo`, `counsel`. A privacy
+threshold activates counsel whether or not it was hired at setup.
 
 A role is hired by having a notebook; firing one is deleting its file. Say
 that plainly — it is what makes this a company rather than a fixed menu.
@@ -217,7 +334,7 @@ that plainly — it is what makes this a company rather than a fixed menu.
 Create an empty notebook for each hired role, `<memory>/<role>.md`, with a
 one-line header naming the role and the date it was hired.
 
-## 6. Offer the purchase deny block
+## 7. Offer the purchase deny block
 
 Ask before touching anything:
 
@@ -256,7 +373,7 @@ else, and record the answer in the charter.
 Say plainly which of the two blocks is which. A owner who wants the money
 block and not the second one has made a reasonable choice, not a mistake.
 
-## 7. Report
+## 8. Report
 
 Decisions first, one screen:
 

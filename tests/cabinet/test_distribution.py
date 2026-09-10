@@ -15,6 +15,8 @@ from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[2]
 AGENTS = ROOT / "plugins/cabinet/agents"
+COMMANDS = ROOT / "plugins/cabinet/commands"
+CONTRACTS = ROOT / "docs/superpowers/plans/2026-09-09-cabinet-contracts.md"
 SKILL = ROOT / "plugins/cabinet/skills/coordination-rules/SKILL.md"
 REFERENCES = SKILL.parent / "references"
 CHECKER = ROOT / "scripts/check-cabinet.py"
@@ -117,6 +119,116 @@ class CompanyStaff(unittest.TestCase):
             line = tools_line(role)
             self.assertEqual(line, ", ".join(tools), role)
             self.assertNotIn("mcp__cabinet__", line, role)
+
+
+class OperatingCommands(unittest.TestCase):
+    """The four commands O1 owns are the owner's entry into the company.
+
+    Each assertion here is about a property a reader cannot see by looking at
+    one file: that the command exists under the name the contract gives it,
+    that it loads the one workflow rather than restating it, that its
+    frontmatter parses, that it hands over the *verified* launcher instead of
+    inventing an argv, and that nothing in the command set teaches the owner a
+    flag that would switch the permission layer off.
+    """
+
+    #: The commands task O1 owns. Others in the contract layout belong to
+    #: later tasks and are deliberately not asserted present here.
+    OWNED = ("company", "batch", "hire", "ask")
+
+    #: Flags and settings that would hand a session authority the launcher and
+    #: the profile exist to withhold. None of them belongs in a command.
+    BYPASS_TOKENS = (
+        "--dangerously-skip-permissions",
+        "bypassPermissions",
+        "--permission-mode bypass",
+        "CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC",
+        "--permission-prompts none",
+    )
+
+    def command(self, name):
+        return (COMMANDS / ("%s.md" % name)).read_text()
+
+    def test_the_owned_commands_are_packaged(self):
+        for name in self.OWNED:
+            self.assertTrue((COMMANDS / ("%s.md" % name)).exists(),
+                            "commands/%s.md is missing" % name)
+
+    def test_the_owned_commands_load_the_workflow_skill(self):
+        """A command carries native syntax; the workflow lives in the skill.
+
+        `scripts/check-cabinet.py` enforces this across every command. It is
+        asserted here too because these four are the ones being written now.
+        """
+
+        for name in self.OWNED:
+            self.assertIn('Skill(skill: "cabinet:coordination-rules")',
+                          self.command(name), name)
+
+    def test_the_owned_commands_quote_their_argument_hint(self):
+        """An unquoted hint is invalid YAML and the command silently vanishes."""
+
+        for name in self.OWNED:
+            line = next(x for x in self.command(name).splitlines()
+                        if x.startswith("argument-hint:"))
+            value = line[len("argument-hint:"):].strip()
+            self.assertTrue(
+                len(value) >= 2 and value[0] == value[-1] and value[0] in "\"'",
+                "%s: argument-hint is not quoted: %s" % (name, value))
+
+    def test_company_and_batch_hand_over_the_verified_launcher(self):
+        """Only `cabinet-launch` can create a session allowed to write.
+
+        Both commands have to point at that script rather than describing a
+        `claude` invocation of their own, because an argv written into prose
+        cannot carry the capability handshake and would silently produce an
+        ordinary session that then fails every mutation.
+        """
+
+        for name in ("company", "batch"):
+            self.assertIn("scripts/cabinet-launch", self.command(name), name)
+
+    def test_no_command_teaches_a_bypass_flag(self):
+        for path in sorted(COMMANDS.glob("*.md")):
+            text = path.read_text()
+            for token in self.BYPASS_TOKENS:
+                self.assertNotIn(token, text, "%s names %s" % (path.name, token))
+
+    def test_owned_commands_match_the_contract_layout(self):
+        """The contract's file list is the name each command must ship under.
+
+        Parsed from the plan rather than restated, so a rename in one place
+        without the other fails here instead of at install time.
+        """
+
+        block = CONTRACTS.read_text().split("commands/", 1)[1]
+        listed = set()
+        for line in block.splitlines()[:6]:
+            for word in line.replace(",", " ").split():
+                if word.endswith(".md"):
+                    listed.add(word[:-len(".md")])
+            if line.strip().startswith("scripts/"):
+                break
+        for name in self.OWNED:
+            self.assertIn(name, listed,
+                          "the contract layout does not name commands/%s.md"
+                          % name)
+
+    def test_ask_offers_the_whole_role_registry(self):
+        """Every dispatchable staff type, not the six advisory roles alone."""
+
+        text = self.command("ask")
+        for role in profiles.STAFF_AGENT_TYPES:
+            if role == profiles.CHIEF_ROLE:
+                continue
+            self.assertIn(role, text, role)
+
+    def test_hire_migrates_through_the_runtime(self):
+        """Setup is an owner grant obtained through a dialog, not a staff edit."""
+
+        text = self.command("hire")
+        for marker in ("cabinet_setup", "cabinet_doctor"):
+            self.assertIn(marker, text, marker)
 
 
 class WorkflowSkill(unittest.TestCase):
