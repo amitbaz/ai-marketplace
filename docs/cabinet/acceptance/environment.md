@@ -222,3 +222,65 @@ undocumented key. `allowMachLookup` was such a key. Removed from `worker_sandbox
 restricts the block to documented keys. This is the root cause of the L1 A.2 "containment FAIL"
 (all probes ran unsandboxed). `failIfUnavailable` cannot fire in that state because the block never
 loads. Re-run of the mechanical probes follows with the corrected profile.
+
+## Addendum 2026-09-10 — Superset project discovery: cloud list vs local id, and an adapter defect found along the way (task L1 Part A.3)
+
+Probe, once the owner added a Superset project (`cabinet-fixture`,
+id `34da8ba1-4f8a-4650-8cd8-4d92a4309697`, `main_repo_path
+/Users/amitbaz/.superset/projects/cabinet-fixture`):
+
+```
+$ superset status
+{"running": true, "healthy": true, ..., "cloudRegistered": false, ...}
+$ superset hosts list --json
+[]
+$ superset projects list --json
+[]
+$ superset workspaces list --project 34da8ba1-... --json
+[]
+```
+
+`cloudRegistered: false` and an empty `hosts list` mean this host has no
+cloud registration, so `superset projects list` (which lists what the
+*cloud* knows this host can see) reports nothing even though the project
+exists in the app's own local record and its id is directly usable.
+`workspaces list --project <id> --json` for that id succeeds and returns
+`[]` without error — the id itself is accepted; only cloud-scoped listing
+is empty.
+
+`SupersetAdapter.probe()` run live against the id: `usable: True` (probe
+does not depend on cloud registration or project listing, only on
+`--version` and `auth whoami`).
+
+`SupersetAdapter.audit_setup_isolation()` run live against the id
+originally **raised**, not refused cleanly: `PROVIDER_ERROR: reading the
+Superset project failed with status 1: Error: Unknown command: get`.
+Superset 1.27.0's `projects` command has exactly three subcommands
+(`create`, `list`, `setup`) — there is no `get`. This is an adapter defect
+independent of the cloud-registration gap: `projects get --project <id>
+--json` would fail this way on any host, adopted or not. **Fixed**
+(`plugins/cabinet/scripts/cabinet_runtime/superset.py`,
+`audit_setup_isolation`): reads `projects list --local --json` and matches
+the row by id, the same pattern `create_workspace`'s sibling
+`reconcile_assignment` already uses for workspaces. A project not present
+in that list now returns a clean `contained: False` with a stated reason
+instead of raising.
+
+Re-run after the fix: `audit_setup_isolation()` returns `{'contained':
+False, 'reason': 'project 34da8ba1-4f8a-4650-8cd8-4d92a4309697 is not set
+up on this host (not in `superset projects list`); its setup commands
+cannot be read until it is', ...}` — no exception, a stated reason.
+`superset workspaces create --project 34da8ba1-... --name ... --branch ...
+--base-branch main --skip-branch-prefix --local --json` was also tried
+directly and refused: `Error: Project is not set up on this host` — the
+same underlying gap the audit fix now reports without raising.
+`service.py`'s `SETUP_ISOLATION_UNAVAILABLE` gate (which calls
+`audit_setup_isolation()` before any workspace is created) would correctly
+refuse a worker launch here on `contained: False`, before ever reaching
+`workspaces create`.
+
+**Not resolved by this fix — an owner action:** adopting the project on
+this host (`superset projects setup --project <id> --import
+/Users/amitbaz/.superset/projects/cabinet-fixture` or equivalent) or
+registering the host to the cloud (`superset start --org …`). Per the L1
+dispatch, neither was run; both are recorded as BLOCKED, not attempted.
